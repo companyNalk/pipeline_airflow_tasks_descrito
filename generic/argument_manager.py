@@ -3,13 +3,9 @@ import logging
 import os
 import sys
 
-from dotenv import load_dotenv
-
 
 class ArgumentManager:
     def __init__(self, description="Script para API"):
-        # Carrega variáveis de ambiente
-        load_dotenv()
 
         self.description = description
         self.logger = logging.getLogger("ArgManager")
@@ -23,7 +19,9 @@ class ArgumentManager:
         # Nome base do script (usado como padrão para alguns valores)
         self.script_name = os.path.splitext(os.path.basename(sys.argv[0]))[0]
 
-    def add(self, arg_name, env_var, help_text, required=False, default=None, arg_type=str, action=None):
+    def add(self, env_var, help_text, required=False, default=None, arg_type=str, action=None):
+        arg_name = env_var.lower().replace('_', '-')
+
         self.args.append({
             'name': arg_name,
             'env': env_var,

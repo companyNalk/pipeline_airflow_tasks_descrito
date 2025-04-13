@@ -29,10 +29,10 @@ Integrações de tarefas com Airflow.
 │   ├── argument_manager.py
 │   └── *.py
 │
-├── settings/
-│   └── credentials.json    # Credenciais GCP compartilhadas
-│
-├── .gitignore              # Arquivos ignorados pelo Git
+├── .flake8
+├── .gitignore
+├── Makefile
+└──  README.md
 ```
 
 ## Como executar
@@ -43,16 +43,13 @@ Cada ferramenta vai ser construída e executada independentemente, em Docker.
 
 ```bash
 # Construção da imagem
-docker build -t learn-words-mev -f crm-integrations/learn_words/Dockerfile .
+docker build --no-cache -t learn-words-mev -f crm-integrations/learn_words/Dockerfile .
 
 # Execução do container
-docker run --rm \
-  -v $(pwd)SEU_CAMINHO_DO_ARQUIV0_CREDENTIALS.JSON:/app/credentials/credentials.json \
+docker run --rm --name learn-words-mev \
   -e API_BASE_URL="https://api.example.com" \
   -e API_CLIENT_ID="client_id" \
   -e API_CLIENT_SECRET="client_secret" \
   -e LW_CLIENT="client_name" \
-  -e BUCKET_NAME="storage-bucket" \
-  -e GOOGLE_APPLICATION_CREDENTIALS="/app/credentials/credentials.json" \
   learn-words-mev
 ```

@@ -1,10 +1,7 @@
-# -*- coding: utf-8 -*-
-
 import argparse
 import logging
 import os
 
-# Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(levelname)s: %(message)s'
@@ -54,7 +51,7 @@ def generate_sql(project_id, bucket_name, tool, data_types):
         sql += f"# {data_type_upper}\n"
         sql += f"CREATE OR REPLACE TABLE `{{project_id}}.vendas.{tool}_{data_type}_gold`\n"
         sql += "AS\n"
-        sql += f"SELECT *\n"
+        sql += "SELECT *\n"
         sql += f"FROM `{{project_id}}.{tool}.{data_type}`;\n\n"
 
     return sql.rstrip()

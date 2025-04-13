@@ -13,8 +13,5 @@ COPY generic/ /app/generic/
 # Instala dependências
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Cria diretório para credenciais
-RUN mkdir -p /app/credentials
-
 # Comando de execução
 CMD ["python", "main.py"]
