@@ -6,6 +6,12 @@ Integrações de tarefas com Airflow.
 
 ```
 .
+├── commons/
+│   ├── test
+│   │   └── test_*.py
+│   ├── create_sheets.py
+│   └── *.py
+│
 ├── crm-integrations/
 │   ├── integration_one/
 │   │   ├── .env
@@ -21,23 +27,31 @@ Integrações de tarefas com Airflow.
 │   │
 │   └── ...
 │
-├── commons/
-│   ├── create_sheets.py
-│   └── *.py
-│
 ├── generic/
+│   ├── test
+│   │   └── test_*.py
 │   ├── argument_manager.py
 │   └── *.py
 │
 ├── .flake8
 ├── .gitignore
-├── Makefile
+├──  Makefile
+├──  pytest.ini
 └──  README.md
 ```
 
 ## Como executar
 
 Cada ferramenta vai ser construída e executada independentemente, em Docker. 
+
+## Antes de subir o código
+Antes de construir e executar qualquer integração, é altamente recomendado verificar a qualidade do código e executar os testes unitários disponíveis. Para isso, execute o comando abaixo na raiz do projeto:
+```bash
+make
+```
+Este comando executa verificações de linting (usando flake8) e roda os testes unitários localizados nas pastas commons/test/ e generic/test/. As pastas commons e generic contêm testes unitários implementados para garantir confiabilidade dos módulos compartilhados.
+
+Certifique-se de que todos os testes passaram antes de prosseguir com a construção da imagem Docker.
 
 ### Exemplo de execução o projeto LEARN WORDS (Necessario estar na raiz do projeto):
 

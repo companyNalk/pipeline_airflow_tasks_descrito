@@ -91,16 +91,25 @@ class Utils:
         """
         Normaliza uma chave de string aplicando transformações para padronização.
         """
+        # Detecta se é um verdadeiro camelCase (inicia com minúscula, depois tem maiúscula)
+        is_true_camel_case = bool(re.match(r'^[a-z].*[A-Z]', key))
+
+        # Se for camelCase, aplica a conversão para snake_case antes
+        if is_true_camel_case:
+            key = re.sub(r'([a-z])([A-Z])', r'\1_\2', key)
+
         # Converte para lowercase
         key = key.lower()
+
         # Remove acentos e outros caracteres Unicode
         key = unicodedata.normalize('NFKD', key).encode('ASCII', 'ignore').decode('ASCII')
+
         # Substitui caracteres especiais e espaços por underscores
         key = re.sub(r'[^a-z0-9]+', '_', key)
+
         # Remove underscores extras no início ou fim
         key = key.strip('_')
-        # Converte camelCase para snake_case
-        key = re.sub(r'(?<!^)(?=[A-Z])', '_', key).lower()
+
         return key
 
     @staticmethod
