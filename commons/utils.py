@@ -157,16 +157,25 @@ class Utils:
         try:
             # Diretório base de saída
             base_output_dir = "output"
-            os.makedirs(base_output_dir, exist_ok=True)
 
             # Diretório específico
             output_dir = os.path.join(base_output_dir, file_name)
-            os.makedirs(output_dir, exist_ok=True)
+
+            # Verificar por segurança
+            if not os.path.exists(output_dir):
+                logging.warning(f"Diretório '{output_dir}' não existe mesmo após criação prévia. Criando novamente...")
+                os.makedirs(output_dir, exist_ok=True)
 
             csv_filename = os.path.join(output_dir, f"{file_name}.csv")
 
             # Salvar o arquivo
             df.to_csv(csv_filename, sep=separator, index=False)
+
+            # Verificar se o arquivo foi realmente criado
+            if not os.path.exists(csv_filename):
+                logging.error(f"Falha ao criar o arquivo: {csv_filename}")
+                return False
+
             logging.info(f"Arquivo salvo com sucesso: {csv_filename}")
             return True
 
@@ -215,3 +224,20 @@ class Utils:
         except Exception as e:
             logging.error(f"Erro no processamento de dados para {endpoint_name}: {str(e)}")
             raise
+
+    @staticmethod
+    def ensure_output_directories(*endpoint_dicts):
+        """
+        Cria antecipadamente todos os diretórios necessários para salvar os arquivos.
+        """
+        base_output_dir = "output"
+        os.makedirs(base_output_dir, exist_ok=True)
+        logging.info(f"Diretório base criado/verificado: {base_output_dir}")
+
+        # Processar todos os dicionários de endpoints passados como parâmetros
+        for endpoint_dict in endpoint_dicts:
+            if endpoint_dict and isinstance(endpoint_dict, dict):
+                for endpoint_name in endpoint_dict.keys():
+                    output_dir = os.path.join(base_output_dir, endpoint_name)
+                    os.makedirs(output_dir, exist_ok=True)
+                    logging.info(f"Diretório criado/verificado: {output_dir}")

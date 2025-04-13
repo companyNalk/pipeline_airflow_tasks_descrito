@@ -47,6 +47,8 @@ DEPENDENT_ENDPOINTS = {
     }
 }
 
+Utils.ensure_output_directories(ENDPOINTS, DEPENDENT_ENDPOINTS)
+
 
 def get_arguments():
     """Configura e retorna os argumentos da linha de comando."""

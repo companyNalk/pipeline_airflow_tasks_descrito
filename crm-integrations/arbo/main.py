@@ -14,6 +14,8 @@ ENDPOINTS = {
     "leads": "leads",
 }
 
+Utils.ensure_output_directories(ENDPOINTS)
+
 
 def get_arguments():
     """Configura e retorna os argumentos da linha de comando."""
@@ -104,6 +106,8 @@ def process_endpoint(endpoint_name, endpoint_path, token):
 
         endpoint_start = time.time()
         raw_data = fetch_all_pages(endpoint_path, token)
+
+        Utils.ensure_output_directories(endpoint_name)
 
         # Processar e salvar dados
         logger.info(f"💾 Processando e salvando {len(raw_data)} registros para {endpoint_name}")
