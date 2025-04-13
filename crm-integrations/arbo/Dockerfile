@@ -3,8 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copia somente o necessário - ajustado para o contexto raiz
-COPY crm-integrations/arbo_crm/main.py .
-COPY crm-integrations/arbo_crm/requirements.txt .
+COPY crm-integrations/arbo/main.py .
+COPY crm-integrations/arbo/requirements.txt .
 
 # Copia commons e generic como módulo
 COPY commons/ /app/commons/
