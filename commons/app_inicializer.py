@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 
 from commons.validate_env import load_env_file
@@ -31,6 +32,9 @@ class AppInitializer:
         """
         Inicializa a aplicação configurando o logger e carregando variáveis de ambiente.
         """
+        # Ampla permissão
+        os.umask(0)
+
         logger = cls._setup_logging(logger_name, level)
         cls._load_environment()
         return logger

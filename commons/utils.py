@@ -155,10 +155,15 @@ class Utils:
         Salva um DataFrame como arquivo CSV no diretório 'output/'.
         """
         try:
-            # Criar estrutura de diretórios
-            output_dir = f"output/{file_name}"
-            csv_filename = f"{output_dir}/{file_name}.csv"
+            # Diretório base de saída
+            base_output_dir = "output"
+            os.makedirs(base_output_dir, exist_ok=True)
+
+            # Diretório específico
+            output_dir = os.path.join(base_output_dir, file_name)
             os.makedirs(output_dir, exist_ok=True)
+
+            csv_filename = os.path.join(output_dir, f"{file_name}.csv")
 
             # Salvar o arquivo
             df.to_csv(csv_filename, sep=separator, index=False)
@@ -166,7 +171,7 @@ class Utils:
             return True
 
         except Exception as e:
-            logging.error(f"Erro ao salvar DataFrame como CSV: {str(e)}")
+            logging.error(f"Erro ao salvar DataFrame como CSV: {str(e)}", exc_info=True)
             raise
 
     @staticmethod

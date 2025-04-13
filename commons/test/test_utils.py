@@ -1,3 +1,4 @@
+import os
 from unittest.mock import patch, ANY
 
 import pandas as pd
@@ -487,9 +488,14 @@ class TestSaveLocalDataframe:
 
         # THEN
         assert result is True
-        mock_makedirs.assert_called_once_with(f"output/{file_name}", exist_ok=True)
+        # Verifica a criação do diretório base
+        mock_makedirs.assert_any_call("output", exist_ok=True)
+        # Verifica a criação do diretório específico
+        mock_makedirs.assert_any_call(os.path.join("output", file_name), exist_ok=True)
         mock_to_csv.assert_called_once()
-        mock_logging.info.assert_called_once_with(f"Arquivo salvo com sucesso: output/{file_name}/{file_name}.csv")
+        # Verifica a mensagem de log com o caminho correto do arquivo
+        csv_path = os.path.join("output", file_name, f"{file_name}.csv")
+        mock_logging.info.assert_called_once_with(f"Arquivo salvo com sucesso: {csv_path}")
 
     def test_save_dataframe_custom_separator(self):
         """Testa salvamento de DataFrame com separador personalizado."""
