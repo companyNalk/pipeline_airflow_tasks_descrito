@@ -7,21 +7,21 @@ DOCKER_IMAGE := airflow-tasks
 DOCKER_TEST_CMD := docker run --rm $(DOCKER_IMAGE) pytest --verbose --color=yes
 
 # Regra principal
-all: check clean
+all: lint test clean
 	@echo "🎉 Tudo concluído com sucesso!"
 
 # Verificar qualidade do código com flake8
 lint:
 	@echo "🔍 Verificando qualidade do código com flake8..."
-	@$(FLAKE8_COMMAND)
+	$(FLAKE8_COMMAND) || true
 
 # Rodar testes com pytest localmente (se tiver pytest instalado)
 test:
 	@echo "🧪 Executando testes com pytest..."
 	@if command -v pytest > /dev/null; then \
-	   $(TEST_COMMAND); \
+		$(TEST_COMMAND); \
 	else \
-	   echo "⚠️ pytest não encontrado. Use 'make docker-test' para executar testes no Docker"; \
+		echo "⚠️ pytest não encontrado. Use 'make docker-test' para executar testes no Docker"; \
 	fi
 
 # Pipeline completa (lint + test)

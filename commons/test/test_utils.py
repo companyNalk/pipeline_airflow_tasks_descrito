@@ -479,25 +479,23 @@ class TestSaveLocalDataframe:
         # GIVEN
         df = pd.DataFrame({"col": [1, 2, 3]})
         file_name = "test_file"
-        output_dir = os.path.join("output", file_name)
-        csv_filename = os.path.join(output_dir, f"{file_name}.csv")
 
         # WHEN
-        with patch('os.path.exists', return_value=True) as mock_exists:  # Simula que os diretórios existem
+        with patch('os.makedirs') as mock_makedirs:
             with patch('pandas.DataFrame.to_csv') as mock_to_csv:
                 with patch('commons.utils.logging') as mock_logging:
                     result = Utils._save_local_dataframe(df, file_name)
 
         # THEN
         assert result is True
-        # Verifica que exists() foi chamado para o diretório de saída
-        mock_exists.assert_any_call(output_dir)
-        # Verifica que exists() foi chamado para o arquivo CSV
-        mock_exists.assert_any_call(csv_filename)
-        # Verifica que to_csv foi chamado
+        # Verifica a criação do diretório base
+        mock_makedirs.assert_any_call("output", exist_ok=True)
+        # Verifica a criação do diretório específico
+        mock_makedirs.assert_any_call(os.path.join("output", file_name), exist_ok=True)
         mock_to_csv.assert_called_once()
         # Verifica a mensagem de log com o caminho correto do arquivo
-        mock_logging.info.assert_called_once_with(f"Arquivo salvo com sucesso: {csv_filename}")
+        csv_path = os.path.join("output", file_name, f"{file_name}.csv")
+        mock_logging.info.assert_called_once_with(f"Arquivo salvo com sucesso: {csv_path}")
 
     def test_save_dataframe_custom_separator(self):
         """Testa salvamento de DataFrame com separador personalizado."""
@@ -606,75 +604,3 @@ class TestProcessAndSaveData:
                     Utils.process_and_save_data(raw_data, endpoint_name)
 
         mock_logging.error.assert_called_once()
-
-
-class TestEnsureOutputDirectories:
-    """Testes para o método ensure_output_directories."""
-
-    def test_empty_parameters(self):
-        """Testa quando nenhum parâmetro é fornecido."""
-        # WHEN
-        with patch('os.makedirs') as mock_makedirs:
-            with patch('commons.utils.logging') as mock_logging:
-                Utils.ensure_output_directories()
-
-        # THEN
-        mock_makedirs.assert_called_once_with("output", exist_ok=True)
-        mock_logging.info.assert_called_once_with("Diretório base criado/verificado: output")
-
-    def test_single_dict_parameter(self):
-        """Testa com um único dicionário de endpoints."""
-        # GIVEN
-        endpoints = {"test_endpoint": "v2/test"}
-
-        # WHEN
-        with patch('os.makedirs') as mock_makedirs:
-            with patch('commons.utils.logging') as mock_logging:
-                Utils.ensure_output_directories(endpoints)
-
-        # THEN
-        # Verifica a criação do diretório base
-        mock_makedirs.assert_any_call("output", exist_ok=True)
-        # Verifica a criação do diretório do endpoint
-        mock_makedirs.assert_any_call(os.path.join("output", "test_endpoint"), exist_ok=True)
-        # Verifica os logs
-        mock_logging.info.assert_any_call("Diretório base criado/verificado: output")
-        mock_logging.info.assert_any_call("Diretório criado/verificado: output/test_endpoint")
-
-    def test_multiple_dict_parameters(self):
-        """Testa com múltiplos dicionários de endpoints."""
-        # GIVEN
-        endpoints1 = {"endpoint1": "v2/ep1"}
-        endpoints2 = {"endpoint2": "v2/ep2", "endpoint3": "v2/ep3"}
-
-        # WHEN
-        with patch('os.makedirs') as mock_makedirs:
-            with patch('commons.utils.logging'):
-                Utils.ensure_output_directories(endpoints1, endpoints2)
-
-        # THEN
-        # Verifica a criação do diretório base
-        mock_makedirs.assert_any_call("output", exist_ok=True)
-        # Verifica a criação dos diretórios dos endpoints
-        mock_makedirs.assert_any_call(os.path.join("output", "endpoint1"), exist_ok=True)
-        mock_makedirs.assert_any_call(os.path.join("output", "endpoint2"), exist_ok=True)
-        mock_makedirs.assert_any_call(os.path.join("output", "endpoint3"), exist_ok=True)
-
-    def test_nondict_parameters_ignored(self):
-        """Testa que parâmetros não-dicionário são ignorados."""
-        # GIVEN
-        endpoints = {"endpoint1": "v2/ep1"}
-        non_dict_param = "not_a_dict"
-
-        # WHEN
-        with patch('os.makedirs') as mock_makedirs:
-            with patch('commons.utils.logging'):
-                Utils.ensure_output_directories(endpoints, non_dict_param, None, {})
-
-        # THEN
-        # Verifica a criação do diretório base
-        mock_makedirs.assert_any_call("output", exist_ok=True)
-        # Verifica a criação apenas do diretório do endpoint válido
-        mock_makedirs.assert_any_call(os.path.join("output", "endpoint1"), exist_ok=True)
-        # Verifica que apenas foram chamados esses dois makedirs
-        assert mock_makedirs.call_count == 2
