@@ -7,7 +7,6 @@ import time
 import requests
 from dotenv import load_dotenv
 
-# Carrega as variáveis do arquivo .env
 load_dotenv()
 
 # Obtém as variáveis de ambiente com verificação
@@ -97,12 +96,6 @@ def main():
     # Mostrar os IDs
     if companies:
         print(f"\nColetadas {len(companies)} empresas no total.")
-
-        # Salvar os IDs em um arquivo de texto
-        with open("company_ids.txt", "w") as file:
-            for company in companies:
-                file.write(f"{company['id']}\n")
-        print("\nIDs salvos no arquivo 'company_ids.txt'")
 
         # Salvar os dados em um arquivo CSV
         csv_filename = "companies_data.csv"
