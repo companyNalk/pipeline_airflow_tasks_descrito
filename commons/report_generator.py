@@ -25,14 +25,14 @@ class ReportGenerator:
         minutes, seconds = divmod(int(total_time), 60)
 
         # Verificar se houve alguma falha
-        falhas = [name for name, stats in endpoint_stats.items() if "Falha" in stats["status"]]
+        any_erros = [name for name, stats in endpoint_stats.items() if "Falha" in stats["status"]]
 
         # Formatar em tabela para facilitar visualização no Airflow
         logger.info(f"{'#' * 100}")
         logger.info(f"📋 RESUMO DA EXECUÇÃO - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"{'#' * 100}")
         logger.info(f"⏱️ Tempo total de execução: {minutes} minutos e {seconds} segundos")
-        logger.info(f"🚦 Status geral: {'❌ Com falhas' if falhas else '✅ Sucesso'}")
+        logger.info(f"🚦 Status geral: {'❌ Com falhas' if any_erros else '✅ Sucesso'}")
 
         # Formatar como tabela
         logger.info(f"{'-' * 100}")
@@ -52,10 +52,9 @@ class ReportGenerator:
         logger.info(f"{'#' * 100}\n")
 
         # Se houver falhas, retornar False e logar erro
-        if falhas:
-            falhas_str = ", ".join(falhas)
-            logger.error(f"Falhas nos endpoints: {falhas_str}")
-            return False
+        if any_erros:
+            logger.error(f"Falhas nos endpoints: {any_erros}")
+            return any_erros
 
         logger.info("✅ Processamento concluído com sucesso")
         return True

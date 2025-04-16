@@ -184,6 +184,7 @@ class HttpClient:
                     self.logger.error(f"❌ Falha na requisição {request_id}: {str(e)}")
                     self._execute_hooks(self.error_hooks, e, {"request_id": request_id})
                     raise
+        return None
 
     def get(self, url: str, params: Dict[str, Any] = None, **kwargs) -> Any:
         return self.request("GET", url, params=params, **kwargs)

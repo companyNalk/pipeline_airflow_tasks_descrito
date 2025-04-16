@@ -156,10 +156,7 @@ def main():
 
         # Se houver falhas, lançar exceção
         if not success:
-            error_str = ", ".join([ep for ep, stats in endpoint_stats.items() if "Falha" in stats["status"]])
-            raise Exception(f"Falhas nos endpoints: {error_str}")
-
-        return True
+            raise Exception(f"Falhas nos endpoints: {success}")
 
     except Exception as e:
         logger.exception(f"❌ ERRO CRÍTICO NA EXECUÇÃO: {e}")

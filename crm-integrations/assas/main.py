@@ -382,7 +382,6 @@ def main():
         http_client = HttpClient(base_url=api_base_url, rate_limiter=rate_limiter, logger=logger)
 
         # 3. Preparar headers de autenticação
-        logger.info(f"TOKEN: {api_access_token}")
         auth_headers = get_auth_headers(api_access_token)
         logger.info("✅ Headers de autenticação preparados com sucesso")
 
@@ -411,10 +410,7 @@ def main():
 
         # Se houver falhas, lançar exceção para o Airflow
         if not success:
-            error_str = ", ".join(success)
-            raise Exception(f"Falhas nos endpoints: {error_str}")
-
-        return True
+            raise Exception(f"Falhas nos endpoints: {success}")
 
     except Exception as e:
         logger.exception(f"❌ ERRO CRÍTICO NA EXECUÇÃO: {e}")

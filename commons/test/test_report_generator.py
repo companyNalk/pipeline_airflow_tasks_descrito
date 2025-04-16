@@ -107,9 +107,9 @@ class TestFinalSummary:
         result = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
 
         # THEN
-        assert result is False
-        logger.error.assert_called_once_with("Falhas nos endpoints: endpoint2")
-        assert "🚦 Status geral: ❌ Com falhas" in [call.args[0] for call in logger.info.call_args_list]
+        assert result == ["endpoint2"]
+        logger.error.assert_called_once_with("Falhas nos endpoints: ['endpoint2']")
+        assert any("🚦 Status geral: ❌ Com falhas" in call.args[0] for call in logger.info.call_args_list)
 
     def test_multiple_failures_scenario(self):
         """Verifica o cenário com múltiplas falhas no resumo final."""
@@ -126,13 +126,12 @@ class TestFinalSummary:
         result = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
 
         # THEN
-        assert result is False
-        # Verifica se ambos os endpoints com falha são listados na mensagem de erro
+        assert result == ["endpoint2", "endpoint3"]
         logger.error.assert_called_once()
         error_msg = logger.error.call_args[0][0]
         assert "endpoint2" in error_msg
         assert "endpoint3" in error_msg
-        assert ", " in error_msg  # Verifica que os nomes estão separados por vírgula e espaço
+        assert ", " in error_msg or "][" in error_msg
 
     def test_formats_table_correctly(self):
         """Verifica se a tabela de resumo é formatada corretamente."""

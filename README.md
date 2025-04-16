@@ -1,13 +1,13 @@
-# Airflow Tasks
+# Tarefas Airflow
 
-Integrações de tarefas com Airflow. 
+Integrações de tarefas com Airflow.
 
 ## Estrutura do Projeto
 
 ```
 .
 ├── commons/
-│   ├── test
+│   ├── test/
 │   │   └── test_*.py
 │   ├── create_sheets.py
 │   └── *.py
@@ -28,32 +28,43 @@ Integrações de tarefas com Airflow.
 │   └── ...
 │
 ├── generic/
-│   ├── test
+│   ├── test/
 │   │   └── test_*.py
 │   ├── argument_manager.py
 │   └── *.py
 │
+├── crm-integrations/
+│   └── *.py
+│
 ├── .flake8
 ├── .gitignore
-├──  Makefile
-├──  pytest.ini
-└──  README.md
+├── Makefile
+├── pytest.ini
+└── README.md
 ```
 
-## Como executar
+## Como Executar
 
-Cada ferramenta vai ser construída e executada independentemente, em Docker. 
+### Verificações Pré-Execução
 
-## Antes de subir o código
 Antes de construir e executar qualquer integração, é altamente recomendado verificar a qualidade do código e executar os testes unitários disponíveis. Para isso, execute o comando abaixo na raiz do projeto:
+
 ```bash
 make
 ```
-Este comando executa verificações de linting (usando flake8) e roda os testes unitários localizados nas pastas commons/test/ e generic/test/. As pastas commons e generic contêm testes unitários implementados para garantir confiabilidade dos módulos compartilhados.
+
+Este comando:
+- Executa verificações de linting (usando flake8)
+- Roda os testes unitários localizados nas pastas commons/test/ e generic/test/
+- Garante a confiabilidade dos módulos compartilhados
 
 Certifique-se de que todos os testes passaram antes de prosseguir com a construção da imagem Docker.
 
-### Exemplo de execução o projeto LEARN WORDS (Necessario estar na raiz do projeto):
+### Executando uma Integração
+
+Cada ferramenta vai ser construída e executada independentemente, em Docker.
+
+Exemplo de execução do projeto LEARN WORDS (necessário estar na raiz do projeto):
 
 ```bash
 # Construção da imagem
@@ -66,4 +77,30 @@ docker run --rm --name learn-words-mev \
   -e API_CLIENT_SECRET="client_secret" \
   -e LW_CLIENT="client_name" \
   learn-words-mev
+```
+
+### Geração de SQL
+
+Para gerar o SQL da planilha, basta estar na raiz do projeto e executar:
+
+```bash
+python commons/create_sheets.py ./crm-integrations/assas/
+```
+
+A saída será um arquivo `sheet.sql` em `crm-integrations/assas/sheet.sql`
+
+#### Requisitos de Ambiente
+
+O arquivo `.env` precisa estar na raiz do projeto com a seguinte estrutura:
+
+```bash
+PROJECT_ID=XX
+CLIENT_NAME=XX
+TOOL=XX
+BUCKET_NAME=XX
+DELIMITER=;
+LOCATION=US
+DATA_TYPES=payments,customers,subscriptions,subscriptions_id_payments
+API_BASE_URL=XX
+API_ACCESS_TOKEN=XX
 ```

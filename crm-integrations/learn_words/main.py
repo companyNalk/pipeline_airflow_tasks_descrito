@@ -434,10 +434,7 @@ def main():
 
         # Se houver falhas, lançar exceção para o Airflow
         if not success:
-            error_str = ", ".join(success)
-            raise Exception(f"Falhas nos endpoints: {error_str}")
-
-        return True
+            raise Exception(f"Falhas nos endpoints: {success}")
 
     except Exception as e:
         logger.exception(f"❌ ERRO CRÍTICO NA EXECUÇÃO: {e}")
