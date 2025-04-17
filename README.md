@@ -36,6 +36,13 @@ Integrações de tarefas com Airflow.
 ├── crm-integrations/
 │   └── *.py
 │
+├── sql/
+│   ├── integration_one
+│   │    ├── .env OU .txt
+│   │    └── sheet.sql
+│   │
+│   └── ...
+│
 ├── .flake8
 ├── .gitignore
 ├── Makefile
@@ -94,13 +101,6 @@ A saída será um arquivo `sheet.sql` em `crm-integrations/assas/sheet.sql`
 O arquivo `.env` precisa estar na raiz do projeto com a seguinte estrutura:
 
 ```bash
-PROJECT_ID=XX
-CLIENT_NAME=XX
 TOOL=XX
-BUCKET_NAME=XX
-DELIMITER=;
-LOCATION=US
-DATA_TYPES=payments,customers,subscriptions,subscriptions_id_payments
-API_BASE_URL=XX
-API_ACCESS_TOKEN=XX
+ENDPOINTS=payments,customers,subscriptions,subscriptions_id_payments
 ```
