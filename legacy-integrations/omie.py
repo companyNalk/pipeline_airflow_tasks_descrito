@@ -85,6 +85,7 @@ def run(customer):
         except Exception as e:
             logger.error(f"Erro ao fazer upload: {e}")
             return False
+            raise e
 
     # === COLETA: CATEGORIAS ===
     def extrair_dados_aninhados_categorias(categoria):
