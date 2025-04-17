@@ -553,6 +553,7 @@ def run(customer):
     except Exception as e:
         logger.critical(f"Erro fatal: {e}")
         print(f"\nERRO FATAL: {e}")
+        raise e
 
 
 def get_extraction_tasks():
