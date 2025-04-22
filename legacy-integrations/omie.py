@@ -65,7 +65,7 @@ def run(customer):
             return False
         try:
             csv_data = df.to_csv(sep=sep, index=False, quoting=1)
-            storage_client = storage.Client()
+            storage_client = storage.Client(project=customer['project_id'])
             bucket = storage_client.bucket(BUCKET_NAME)
 
             # Upload do arquivo principal
