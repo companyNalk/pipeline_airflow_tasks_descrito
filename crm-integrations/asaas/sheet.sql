@@ -1,5 +1,5 @@
 # PAYMENTS
-CREATE OR REPLACE EXTERNAL TABLE {project_id}.assas.payments
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.asaas.payments
 OPTIONS (
   format = 'CSV',
   field_delimiter=';',
@@ -8,7 +8,7 @@ OPTIONS (
   uris = ['gs://{bucket_name}/payments/payments.csv']);
 
 # CUSTOMERS
-CREATE OR REPLACE EXTERNAL TABLE {project_id}.assas.customers
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.asaas.customers
 OPTIONS (
   format = 'CSV',
   field_delimiter=';',
@@ -17,7 +17,7 @@ OPTIONS (
   uris = ['gs://{bucket_name}/customers/customers.csv']);
 
 # SUBSCRIPTIONS
-CREATE OR REPLACE EXTERNAL TABLE {project_id}.assas.subscriptions
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.asaas.subscriptions
 OPTIONS (
   format = 'CSV',
   field_delimiter=';',
@@ -26,7 +26,7 @@ OPTIONS (
   uris = ['gs://{bucket_name}/subscriptions/subscriptions.csv']);
 
 # SUBSCRIPTIONS_ID_PAYMENTS
-CREATE OR REPLACE EXTERNAL TABLE {project_id}.assas.subscriptions_id_payments
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.asaas.subscriptions_id_payments
 OPTIONS (
   format = 'CSV',
   field_delimiter=';',
@@ -36,25 +36,25 @@ OPTIONS (
 
 -- GOLD
 # PAYMENTS
-CREATE OR REPLACE TABLE `{project_id}.vendas.assas_payments_gold`
+CREATE OR REPLACE TABLE `{project_id}.vendas.asaas_payments_gold`
 AS
 SELECT *
-FROM `{project_id}.assas.payments`;
+FROM `{project_id}.asaas.payments`;
 
 # CUSTOMERS
-CREATE OR REPLACE TABLE `{project_id}.vendas.assas_customers_gold`
+CREATE OR REPLACE TABLE `{project_id}.vendas.asaas_customers_gold`
 AS
 SELECT *
-FROM `{project_id}.assas.customers`;
+FROM `{project_id}.asaas.customers`;
 
 # SUBSCRIPTIONS
-CREATE OR REPLACE TABLE `{project_id}.vendas.assas_subscriptions_gold`
+CREATE OR REPLACE TABLE `{project_id}.vendas.asaas_subscriptions_gold`
 AS
 SELECT *
-FROM `{project_id}.assas.subscriptions`;
+FROM `{project_id}.asaas.subscriptions`;
 
 # SUBSCRIPTIONS_ID_PAYMENTS
-CREATE OR REPLACE TABLE `{project_id}.vendas.assas_subscriptions_id_payments_gold`
+CREATE OR REPLACE TABLE `{project_id}.vendas.asaas_subscriptions_id_payments_gold`
 AS
 SELECT *
-FROM `{project_id}.assas.subscriptions_id_payments`;
+FROM `{project_id}.asaas.subscriptions_id_payments`;

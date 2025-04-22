@@ -91,10 +91,10 @@ docker run --rm --name learn-words-mev \
 Para gerar o SQL da planilha, basta estar na raiz do projeto e executar:
 
 ```bash
-python commons/create_sheets.py ./crm-integrations/assas/
+python commons/create_sheets.py ./crm-integrations/asaas/
 ```
 
-A saída será um arquivo `sheet.sql` em `crm-integrations/assas/sheet.sql`
+A saída será um arquivo `sheet.sql` em `crm-integrations/asaas/sheet.sql`
 
 #### Requisitos de Ambiente
 
