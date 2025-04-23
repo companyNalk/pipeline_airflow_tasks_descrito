@@ -20,6 +20,7 @@ def run(customer):
     from datetime import datetime, timedelta
     from io import StringIO
     import pathlib
+    import os
 
     import requests
     from google.cloud import storage
@@ -29,6 +30,7 @@ def run(customer):
 
     # Configuração da chave de serviço
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
 
     # Configurações da API RD Station CRM
     TOKEN = customer['token']
@@ -356,7 +358,8 @@ def run(customer):
             start_time = time.time()
 
             # Configurar cliente do GCS com credenciais explícitas
-            storage_client = storage.Client.from_service_account_json(SERVICE_ACCOUNT_PATH)
+            # storage_client = storage.Client.from_service_account_json(SERVICE_ACCOUNT_PATH)
+            storage_client = storage.Client(project=customer['project_id'])
 
             # Processar pipelines e etapas (independente)
             process_pipelines_and_stages(storage_client)
@@ -424,7 +427,7 @@ def run(customer):
 
 def get_extraction_tasks():
     """
-    Get the list of data extraction tasks for Contact2Sale.
+    Get the list of data extraction tasks for RDCRM.
 
     Returns:
         list: List of task configurations
