@@ -265,7 +265,7 @@ def run(customer):
             except Exception as e:
                 print(f"Erro ao processar requisição: {e}")
                 time.sleep(5)
-                raise f"Erro ao processar requisição: {e}"
+                raise RuntimeError(f"Error envolvido no FETCH ALL DEALS FOR PERIOD: {e}")
 
         return all_deals
 
@@ -416,7 +416,7 @@ def run(customer):
             print(f"Execução completada em {end_time - start_time:.2f} segundos.")
             print(f"Pico de uso de memória: {peak / 1024 ** 2:.2f} MB")
         except Exception as e:
-            raise f"Error envolvido no MAIN: {e}"
+            raise RuntimeError(f"Error envolvido no MAIN: {e}")
 
     # INICIAR
     main()
