@@ -3,125 +3,54 @@ RDCRM module for data extraction functions.
 This module contains functions specific to the RDCRM integration.
 """
 
-import requests
-import csv
-import logging
-import time
-import pandas as pd
-import tracemalloc
-from datetime import datetime, timedelta
-from google.cloud import storage, bigquery
-from io import StringIO
 from core import gcs
 
-def run_stages(customer):
+
+def run(customer):
     """
     Extract stages data from RDCRM API and load it to GCS.
-    
-    Args:
-        customer (dict): Customer information dictionary
     """
-    # Defina o token de autenticação e outras variáveis
+
+    import csv
+    import logging
+    import re
+    import time
+    import tracemalloc
+    import unicodedata
+    from datetime import datetime, timedelta
+    from io import StringIO
+    import pathlib
+
+    import requests
+    from google.cloud import storage
+
+    # Configuração de logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # Configuração da chave de serviço
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+
+    # Configurações da API RD Station CRM
     TOKEN = customer['token']
     BASE_URL = 'https://crm.rdstation.com/api/v1/'
+    API_URL = BASE_URL + 'deals'
     DEAL_PIPELINES_URL = BASE_URL + 'deal_pipelines'
     DEAL_STAGES_URL = BASE_URL + 'deal_stages'
-    LIMIT = '200'
-    BUCKET_NAME = customer['bucket_name']
-    FOLDER_NAME = 'deal_stage'
-    LOCAL_CSV_FILE_NAME = customer['project_id'] +'_rd_crm_deal_stage.csv'
-    GCS_CSV_FILE_NAME = 'rd_crm_deal_stage.csv'
-
-    def fetch_deal_pipelines():
-        """Busca todos os pipelines disponíveis."""
-        params = {'token': TOKEN}
-        response = requests.get(DEAL_PIPELINES_URL, params=params)
-        if response.status_code == 200:
-            pipelines = response.json()
-            print(f"Total de pipelines coletados: {len(pipelines)}")
-            for pipeline in pipelines:
-                print(f"Pipeline ID: {pipeline['id']}, Nome: {pipeline['name']}")
-            return pipelines
-        else:
-            logging.error(f"Erro ao buscar pipelines: {response.text}")
-            return []
-
-    def fetch_deal_stages(deal_pipeline_id):
-        """Busca as etapas do funil de vendas para um dado ID de funil."""
-        params = {
-            'token': TOKEN,
-            'deal_pipeline_id': deal_pipeline_id,
-            'limit': LIMIT
-        }
-        response = requests.get(DEAL_STAGES_URL, params=params)
-        print('deals stage', response)
-        if response.status_code == 200:
-            print(f"Etapas coletadas para o pipeline ID: {deal_pipeline_id}")
-            return response.json()['deal_stages']
-        else:
-            logging.error(f"Erro ao buscar dados para o pipeline {deal_pipeline_id}: {response.text}")
-            return []
-
-    def collect_all_stages():
-        """Coleta todas as etapas de todos os pipelines."""
-        pipelines = fetch_deal_pipelines()
-        all_stages = []
-
-        for pipeline in pipelines:
-            pipeline_id = pipeline['id']
-            pipeline_name = pipeline['name']
-            
-            stages = fetch_deal_stages(pipeline_id)
-            for stage in stages:
-                stage_info = {
-                    'deal_stage_id': stage['id'],
-                    'deal_stage_name': stage['name'],
-                    'stage_order': stage['order'],
-                    'pipeline_id': pipeline_id,
-                    'pipeline_name': pipeline_name
-                }
-                all_stages.append(stage_info)
-
-        return all_stages
-
-    def save_to_csv(data):
-        """Salva os dados coletados em um arquivo CSV."""
-        keys = data[0].keys() if data else []
-        if keys:
-            with open(LOCAL_CSV_FILE_NAME, 'w', newline='', encoding='utf-8') as output_file:
-                dict_writer = csv.DictWriter(output_file, fieldnames=keys, delimiter=';', quoting=csv.QUOTE_ALL)
-                dict_writer.writeheader()
-                dict_writer.writerows(data)
-            logging.info(f'Dados salvos com sucesso em "{LOCAL_CSV_FILE_NAME}". Total de registros: {len(data)}')
-        else:
-            logging.warning("Nenhum dado para salvar.")
-
-    def upload_to_gcs():
-        credentials = gcs.load_credentials_from_env()
-        gcs.write_file_to_gcs(
-            bucket_name=BUCKET_NAME,
-            local_file_path=LOCAL_CSV_FILE_NAME,
-            destination_name=f"{FOLDER_NAME}/{GCS_CSV_FILE_NAME}",
-            credentials=credentials
-        )
-
-    all_stages = collect_all_stages()
-    save_to_csv(all_stages)
-    upload_to_gcs()
-
-
-def run_deals(customer):
-    """
-    Extract deals data from RDCRM API and load it to GCS.
-    
-    Args:
-        customer (dict): Customer information dictionary
-    """
-    TOKEN = customer['token']
-    API_URL = 'https://crm.rdstation.com/api/v1/deals'
-    START_DATE = datetime.strptime('2024-03-01T15:00:00', '%Y-%m-%dT%H:%M:%S')
     LIMIT = 200
     BUCKET_NAME = customer['bucket_name']
+
+    def normalize_text(text: str) -> str:
+        """Normaliza texto"""
+        if not isinstance(text, str): text = str(text)
+        text = text.lower()
+        text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII')
+        return text
+
+    def normalize_column_name(col_name: str) -> str:
+        """Normaliza nomes de colunas"""
+        col_name = normalize_text(col_name)
+        col_name = re.sub(r'[^a-z0-9_]', '_', col_name)
+        return re.sub(r'_+', '_', col_name).strip('_')
 
     def clean_name(name):
         if name is None:
@@ -151,13 +80,16 @@ def run_deals(customer):
         deal_custom_fields = deal.pop('deal_custom_fields', [])
         for field in deal_custom_fields:
             label = clean_name(field['custom_field'].get('label', ''))
-            value = ', '.join(field['value']) if 'value' in field and isinstance(field['value'], list) else str(field.get('value', ''))
-            if label:  # Somente adiciona se o label não estiver vazio
-                custom_field_labels[label] = value
+            # Normaliza o nome do campo personalizado
+            normalized_label = normalize_column_name(label)
+            value = ', '.join(field['value']) if 'value' in field and isinstance(field['value'], list) else str(
+                field.get('value', ''))
+            if normalized_label:  # Somente adiciona se o label normalizado não estiver vazio
+                custom_field_labels[normalized_label] = value
 
-        # Adiciona campos customizados com nomes renomeados
-        for i, (label, value) in enumerate(custom_field_labels.items(), 1):
-            new_fields[f'{label}'] = value  # Renomeia a coluna para o label do campo personalizado
+        # Adiciona campos customizados com nomes normalizados
+        for normalized_label, value in custom_field_labels.items():
+            new_fields[normalized_label] = value
 
         # Motivo da perda do negócio
         deal_lost_reason = deal.pop('deal_lost_reason', None)
@@ -212,39 +144,54 @@ def run_deals(customer):
             'name': 'deal_name',
             'updated_at': 'deal_updated_at',
         }
-        
+
         for deal in deals:
             deal_cleaned = {}
             # Remove as colunas especificadas e renomeia conforme necessário
             for k, v in deal.items():
-                if k not in ["campaign", "contacts", "deal_custom_fields", "deal_lost_reason", "deal_products", "deal_source", "deal_stage", "organization", "user", "next_task", "_id", "markup", "markup_created", "markup_last_activities", "prediction_date", "rating", "stop_time_limit", "user_changed", "amount_monthly"]:
+                if k not in ["campaign", "contacts", "deal_custom_fields", "deal_lost_reason", "deal_products",
+                             "deal_source", "deal_stage", "organization", "user", "next_task", "_id", "markup",
+                             "markup_created", "markup_last_activities", "prediction_date", "rating", "stop_time_limit",
+                             "user_changed", "amount_monthly"]:
                     new_key = rename_map.get(k, k)  # Renomeia a coluna se necessário
-                    
+
                     # Limpa e ajusta o texto, caso seja uma string
                     v = clean_name(v) if isinstance(v, str) else v
-                    deal_cleaned[new_key] = v
-            
+                    # Normaliza o nome da chave
+                    normalized_key = normalize_column_name(new_key)
+                    deal_cleaned[normalized_key] = v
+
             # Processa campos aninhados e atualiza o dicionário do negócio
             nested_fields = extract_nested_values(deal)
             deal_cleaned.update(nested_fields)
             cleaned_deals.append(deal_cleaned)
-        
+
         return cleaned_deals
 
     def compile_fieldnames(data):
+        # Lista de campos base já normalizada
         base_fields = [
-            'deal_source_name', 'campaign_name', 'deal_id', 'deal_name', 'deal_created_at', 
-            'deal_updated_at', 'deal_closed_at', 'last_activity_at', 'last_activity_content', 
-            'deal_amount_unique', 'deal_amount_total', 'deal_stage_id', 'deal_stage_name', 
-            'deal_lost_reason_name', 'win', 'organization_name', 'contact_email', 
+            'deal_source_name', 'campaign_name', 'deal_id', 'deal_name', 'deal_created_at',
+            'deal_updated_at', 'deal_closed_at', 'last_activity_at', 'last_activity_content',
+            'deal_amount_unique', 'deal_amount_total', 'deal_stage_id', 'deal_stage_name',
+            'deal_lost_reason_name', 'win', 'organization_name', 'contact_email',
             'contact_name', 'hold', 'interactions', 'user_id', 'user_name'
         ]
+
+        # Certifique-se de que todos os campos base estejam normalizados
+        normalized_base_fields = [normalize_column_name(field) for field in base_fields]
+
         custom_field_names = set()
         max_product_index = 0
+
         for deal in data:
+            # Extrair campos personalizados (que já estão normalizados no processo de limpeza)
             custom_field_names.update(
-                key for key in deal.keys() if key not in base_fields and not key.startswith('product_')
+                key for key in deal.keys()
+                if key not in normalized_base_fields and not key.startswith('product_')
             )
+
+            # Extrair índices de produtos
             product_indices = [
                 int(key.split('_')[-1]) for key in deal.keys() if key.startswith('product_')
             ]
@@ -268,89 +215,223 @@ def run_deals(customer):
             for field in product_fields_template:
                 product_fields_ordered.append(field.format(index=index))
 
-        return base_fields + sorted_custom_field_names + product_fields_ordered
+        return normalized_base_fields + sorted_custom_field_names + product_fields_ordered
+
+    def upload_to_gcs(bucket_name, destination_blob_name, content, storage_client):
+        """Faz o upload do conteúdo para o Google Cloud Storage."""
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(destination_blob_name)
+
+        blob.upload_from_string(content, 'text/csv')
+        print(f"Arquivo {destination_blob_name} enviado para o bucket {bucket_name}.")
+
+    def get_earliest_date():
+        """Define uma data de início fixa de 5 anos atrás"""
+        print("Usando data fixa de 5 anos atrás como ponto de partida para a coleta")
+        # Retorna uma data definida como 5 anos atrás
+        return datetime.now() - timedelta(days=365 * 5)
 
     def fetch_all_deals_for_period(start_date, end_date):
+        """Busca as negociações para um período específico"""
         all_deals = []
         page = 1
         has_more = True
+
         while has_more:
             url = f"{API_URL}?token={TOKEN}&created_at_period=true&start_date={start_date}&end_date={end_date}&limit={LIMIT}&page={page}"
-            response = requests.get(url)
-            if response.status_code == 200:
-                data = response.json()
-                deals = data.get('deals', [])
-                all_deals.extend(clean_deal_data(deals))
-                print(f"{start_date} até {end_date}: Página {page} - Coletados {len(deals)} registros.")
-                page += 1
-                has_more = len(deals) == LIMIT
-            elif response.status_code == 429:
-                print("Atingido o limite de taxa. Aguardando antes de tentar novamente...")
-                time.sleep(60)
-            else:
-                print(f"Erro na solicitação: {response.status_code}")
-                break
+            print(f"{start_date} até {end_date}: Página {page}...")
+
+            try:
+                response = requests.get(url)
+                if response.status_code == 200:
+                    data = response.json()
+                    deals = data.get('deals', [])
+                    if deals:
+                        all_deals.extend(clean_deal_data(deals))
+                        print(f"{start_date} até {end_date}: Página {page} - Coletados {len(deals)} registros.")
+                        page += 1
+                        has_more = len(deals) == LIMIT
+                    else:
+                        print(f"Nenhum registro encontrado para o período {start_date} até {end_date}.")
+                        has_more = False
+                elif response.status_code == 429:
+                    print("Atingido o limite de taxa. Aguardando antes de tentar novamente...")
+                    time.sleep(60)
+                else:
+                    print(f"Erro na solicitação: {response.status_code}")
+                    if response.text:
+                        print(f"Detalhes: {response.text}")
+                    has_more = False
+            except Exception as e:
+                print(f"Erro ao processar requisição: {e}")
+                time.sleep(5)
+                raise f"Erro ao processar requisição: {e}"
+
         return all_deals
 
+    # --- Funções para pipelines e etapas ---
+
+    def fetch_deal_pipelines():
+        """Busca todos os pipelines disponíveis."""
+        params = {'token': TOKEN}
+        response = requests.get(DEAL_PIPELINES_URL, params=params)
+        if response.status_code == 200:
+            pipelines = response.json()
+            print(f"Total de pipelines coletados: {len(pipelines)}")
+            for pipeline in pipelines:
+                print(f"Pipeline ID: {pipeline['id']}, Nome: {pipeline['name']}")
+            return pipelines
+        else:
+            logging.error(f"Erro ao buscar pipelines: {response.text}")
+            return []
+
+    def fetch_deal_stages(deal_pipeline_id):
+        """Busca as etapas do funil de vendas para um dado ID de funil."""
+        params = {
+            'token': TOKEN,
+            'deal_pipeline_id': deal_pipeline_id,
+            'limit': LIMIT
+        }
+        response = requests.get(DEAL_STAGES_URL, params=params)
+        if response.status_code == 200:
+            print(f"Etapas coletadas para o pipeline ID: {deal_pipeline_id}")
+            return response.json()['deal_stages']
+        else:
+            logging.error(f"Erro ao buscar dados para o pipeline {deal_pipeline_id}: {response.text}")
+            return []
+
+    def collect_all_stages():
+        """Coleta todas as etapas de todos os pipelines."""
+        pipelines = fetch_deal_pipelines()
+        all_stages = []
+
+        for pipeline in pipelines:
+            pipeline_id = pipeline['id']
+            pipeline_name = pipeline['name']
+
+            stages = fetch_deal_stages(pipeline_id)
+            for stage in stages:
+                stage_info = {
+                    'deal_stage_id': stage['id'],
+                    'deal_stage_name': normalize_column_name(stage['name']),
+                    'stage_order': stage['order'],
+                    'pipeline_id': pipeline_id,
+                    'pipeline_name': normalize_column_name(pipeline_name)
+                }
+                all_stages.append(stage_info)
+
+        return all_stages
+
+    def process_pipelines_and_stages(storage_client):
+        """Processa pipelines e etapas e salva diretamente no GCS."""
+        print("Iniciando coleta de pipelines e etapas...")
+        all_stages = collect_all_stages()
+
+        if all_stages:
+            # Normalizar nomes de campos
+            normalized_stages = []
+            for stage in all_stages:
+                normalized_stage = {normalize_column_name(k): v for k, v in stage.items()}
+                normalized_stages.append(normalized_stage)
+
+            # Preparar conteúdo CSV
+            csv_file = StringIO()
+            writer = csv.DictWriter(csv_file, fieldnames=normalized_stages[0].keys())
+            writer.writeheader()
+            for stage in normalized_stages:
+                writer.writerow(stage)
+
+            csv_content = csv_file.getvalue()
+            destination_blob_name = 'Stages/deal_stages.csv'
+
+            # Fazer upload para GCS
+            upload_to_gcs(BUCKET_NAME, destination_blob_name, csv_content, storage_client)
+            print(f"Total de {len(normalized_stages)} etapas de funil processadas e salvas.")
+        else:
+            print("Nenhuma informação de pipelines e etapas foi coletada.")
+
     def main():
-        tracemalloc.start()
-        start_time = time.time()
-        all_data = []
+        try:
+            tracemalloc.start()
+            start_time = time.time()
 
-        current_date = START_DATE
-        while current_date < datetime.now():
-            start_date_str = current_date.strftime('%Y-%m-%dT%H:%M:%S')
-            end_date = current_date + timedelta(days=30)
-            end_date_str = end_date.strftime('%Y-%m-%dT%H:%M:%S')
-            deals = fetch_all_deals_for_period(start_date_str, end_date_str)
-            all_data.extend(deals)
-            current_date = end_date
+            # Configurar cliente do GCS com credenciais explícitas
+            storage_client = storage.Client.from_service_account_json(SERVICE_ACCOUNT_PATH)
 
-        fieldnames = compile_fieldnames(all_data)
-        csv_file = open(customer['project_id'] + '_csv.csv', 'w+')
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        writer.writeheader()
-        for deal in all_data:
-            writer.writerow(deal)
-        destination_blob_name = 'Deals/rd_crm_deals.csv'
-        csv_file.close()
-        
-        def upload_to_gcs():
-            credentials = gcs.load_credentials_from_env()
-            gcs.write_file_to_gcs(
-                bucket_name=BUCKET_NAME,
-                local_file_path=csv_file.name,
-                destination_name=destination_blob_name,
-                credentials=credentials
-            )
+            # Processar pipelines e etapas (independente)
+            process_pipelines_and_stages(storage_client)
 
-        upload_to_gcs()
+            # Coleta de negociações
+            all_data = []
 
-        end_time = time.time()
-        current, peak = tracemalloc.get_traced_memory() 
-        tracemalloc.stop()
+            # Define data de início como 5 anos atrás
+            current_date = get_earliest_date()
+            now = datetime.now()
 
-        print(f"Dados coletados com sucesso. {len(all_data)} registros processados.")
-        print(f"Execução completada em {end_time - start_time:.2f} segundos.")
-        print(f"Pico de uso de memória: {peak / 1024**2:.2f} MB")
+            print(f"Iniciando coleta de negociações a partir de: {current_date}")
 
+            # Coleta dados em janelas de tempo de 30 dias
+            while current_date < now:
+                start_date_str = current_date.strftime('%Y-%m-%dT%H:%M:%S')
+                end_date = current_date + timedelta(days=30)
+                if end_date > now:
+                    end_date = now
+                end_date_str = end_date.strftime('%Y-%m-%dT%H:%M:%S')
+
+                deals = fetch_all_deals_for_period(start_date_str, end_date_str)
+                all_data.extend(deals)
+
+                print(f"Período {start_date_str} até {end_date_str}: Coletados {len(deals)} registros.")
+                current_date = end_date
+
+            if not all_data:
+                print("Nenhum dado de negócios foi coletado. Verifique as credenciais e os parâmetros da API.")
+                return
+
+            # Compilar nomes de campo normalizados
+            fieldnames = compile_fieldnames(all_data)
+
+            csv_file = StringIO()
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
+            for deal in all_data:
+                # Garantir que todos os nomes de campos estejam normalizados
+                normalized_deal = {}
+                for k, v in deal.items():
+                    normalized_key = normalize_column_name(k)
+                    normalized_deal[normalized_key] = v
+                writer.writerow(normalized_deal)
+
+            csv_content = csv_file.getvalue()
+            destination_blob_name = 'Deals/rd_crm_deals.csv'
+
+            # Upload usando o cliente configurado com credenciais explícitas
+            upload_to_gcs(BUCKET_NAME, destination_blob_name, csv_content, storage_client)
+
+            end_time = time.time()
+            current, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+
+            print(f"Dados coletados com sucesso. {len(all_data)} negociações processadas.")
+            print(f"Execução completada em {end_time - start_time:.2f} segundos.")
+            print(f"Pico de uso de memória: {peak / 1024 ** 2:.2f} MB")
+        except Exception as e:
+            raise f"Error envolvido no MAIN: {e}"
+
+    # INICIAR
     main()
 
 
 def get_extraction_tasks():
     """
-    Get the list of data extraction tasks for RDCRM.
-    
+    Get the list of data extraction tasks for Contact2Sale.
+
     Returns:
         list: List of task configurations
     """
     return [
         {
-            'task_id': 'run_stages',
-            'python_callable': run_stages
-        },
-        {
-            'task_id': 'run_deals',
-            'python_callable': run_deals
+            'task_id': 'run',
+            'python_callable': run
         }
     ]
