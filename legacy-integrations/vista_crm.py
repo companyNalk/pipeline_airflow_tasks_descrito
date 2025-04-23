@@ -2,6 +2,7 @@
 VistaCRM module for data extraction functions.
 This module contains functions specific to the VistaCRM integration.
 """
+import os
 
 from core import gcs
 
@@ -21,7 +22,6 @@ def run(customer):
     import pandas as pd
     import requests
     from google.cloud import storage
-    from google.oauth2 import service_account
 
     # Variáveis globais
     TOKEN = customer["token"]
@@ -46,6 +46,7 @@ def run(customer):
         "imoveis": "imoveis.csv"
     }
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
     MAX_RETRIES, MAX_WORKERS, RECORDS_PER_PAGE = 5, 5, 50
 
     # Configuração de logging
@@ -81,9 +82,8 @@ def run(customer):
         def init_gcs_client(self):
             """Inicializa cliente do Google Cloud Storage"""
             try:
-                self.credentials = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_PATH)
-                self.storage_client = storage.Client(credentials=self.credentials)
-                self.bucket = self.storage_client.bucket(BUCKET_NAME)
+                storage_client = storage.Client(project=customer['project_id'])
+                self.bucket = storage_client.bucket(BUCKET_NAME)
                 logger.info(f"Cliente GCS inicializado com sucesso para o bucket: {BUCKET_NAME}")
             except Exception as e:
                 logger.error(f"Erro ao inicializar cliente GCS: {str(e)}")
