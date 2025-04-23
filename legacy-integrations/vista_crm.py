@@ -87,7 +87,7 @@ def run(customer):
                 logger.info(f"Cliente GCS inicializado com sucesso para o bucket: {BUCKET_NAME}")
             except Exception as e:
                 logger.error(f"Erro ao inicializar cliente GCS: {str(e)}")
-                raise
+                raise RuntimeError(f"Erro ao inicializar cliente GCS: {str(e)}")
 
         def normalize_column_name(self, name: str) -> str:
             """Normaliza nomes de colunas: remove acentos, converte para lowercase e substitui espaços por underlines"""
@@ -486,7 +486,7 @@ def run(customer):
             except Exception as e:
                 logger.error(f"Erro durante a execução: {str(e)}")
                 print(f"ERRO | Execução geral | {str(e)}")
-                raise f"ERRO | Execução geral | {str(e)}"
+                raise RuntimeError(f"ERRO | Execução geral | {str(e)}")
             finally:
                 # Exibe resumo
                 self.print_summary()
