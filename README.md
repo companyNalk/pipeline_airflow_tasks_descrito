@@ -38,7 +38,7 @@ Integrações de tarefas com Airflow.
 │
 ├── sql/
 │   ├── integration_one
-│   │    ├── .env OU .txt
+│   │    ├── .env
 │   │    └── sheet.sql
 │   │
 │   └── ...

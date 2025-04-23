@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def read_config_file(file_path):
-    """Lê o arquivo .env ou .txt e retorna um dicionário com as variáveis"""
+    """Lê o arquivo .env e retorna um dicionário com as variáveis"""
     env_vars = {}
     try:
         with open(file_path, 'r') as file:
@@ -64,24 +64,24 @@ def main():
     parser.add_argument('-o', '--output', default='sheet.sql', help='Nome do arquivo de saída SQL')
     args = parser.parse_args()
 
-    # Procura por arquivos .env ou .txt no diretório
+    # Procura por arquivos .env
     env_file_path = None
-    for ext in ['.env', '.txt']:
+    for ext in ['.env']:
         temp_path = os.path.join(args.dir_path, f"config{ext}")
         if os.path.isfile(temp_path):
             env_file_path = temp_path
             break
 
-    # Se não encontrou arquivo com nome padrão, procura qualquer arquivo .env ou .txt
+    # Se não encontrou arquivo com nome padrão, procura qualquer arquivo .env
     if not env_file_path:
         for file in os.listdir(args.dir_path):
-            if file.endswith('.env') or file.endswith('.txt'):
+            if file.endswith('.env'):
                 env_file_path = os.path.join(args.dir_path, file)
                 break
 
     # Verifica se encontrou algum arquivo
     if not env_file_path:
-        logger.error(f"Nenhum arquivo .env ou .txt encontrado em '{args.dir_path}'")
+        logger.error(f"Nenhum arquivo .env encontrado em '{args.dir_path}'")
         return
 
     # Lê as variáveis do arquivo
