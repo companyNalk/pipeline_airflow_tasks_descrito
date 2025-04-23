@@ -1,2 +1,0 @@
-TOOL=omie
-ENDPOINTS=listar_categorias,listar_produtos_pedidos,vendedores,listar_produtos,listar_motivo_devolucao,listar_pedidos_etapas,etapafat,pedidos_vendas

@@ -313,6 +313,24 @@ class TestNormalizeKey:
         # THEN
         assert result == "usuario_endereco_email"
 
+    def test_column_names_with_quotes(self):
+        """Testa normalização de nomes de colunas com aspas."""
+        # GIVEN
+        df = pd.DataFrame({
+            '"Texto"': ["jonas", "ana"],
+            "'novoTexto'": ["jonas", "paula"]
+        })
+
+        # WHEN
+        result = Utils._normalize_column_names(df)
+
+        # THEN
+        expected = pd.DataFrame({
+            "texto": ["jonas", "ana"],
+            "novo_texto": ["jonas", "paula"]
+        })
+        assert_frame_equal(result, expected)
+
 
 class TestNormalizeKeys:
     """Testes para o método _normalize_keys."""
@@ -604,3 +622,283 @@ class TestProcessAndSaveData:
                     Utils.process_and_save_data(raw_data, endpoint_name)
 
         mock_logging.error.assert_called_once()
+
+
+class TestConvertColumnsToNullableInt:
+    """Testes para o método _convert_columns_to_nullable_int."""
+
+    def test_convert_integer_columns(self):
+        """Testa conversão de coluna com inteiros puros."""
+        # GIVEN
+        df = pd.DataFrame({"col": [1, 2, 3, None]})
+
+        # WHEN
+        with patch('commons.utils.logging') as mock_logging:
+            result = Utils._convert_columns_to_nullable_int(df.copy())
+
+        # THEN
+        assert result["col"].dtype == "Int64"
+        mock_logging.info.assert_called_once_with("Colunas convertidas para Int64: col")
+
+    def test_keep_float_columns(self):
+        """Testa que colunas com floats reais (ex: 7.1) não são convertidas."""
+        # GIVEN
+        df = pd.DataFrame({"col": [1.0, 2.5, 3.0, None]})
+
+        # WHEN
+        with patch('commons.utils.logging') as mock_logging:
+            result = Utils._convert_columns_to_nullable_int(df.copy())
+
+        # THEN
+        assert result["col"].dtype == float
+        mock_logging.info.assert_not_called()
+
+    def test_non_numeric_column(self):
+        """Testa que colunas não numéricas são ignoradas."""
+        # GIVEN
+        df = pd.DataFrame({"col": ["a", "b", "c"]})
+
+        # WHEN
+        with patch('commons.utils.logging') as mock_logging:
+            result = Utils._convert_columns_to_nullable_int(df.copy())
+
+        # THEN
+        assert result.equals(df)
+        mock_logging.info.assert_not_called()
+
+    def test_conversion_exception(self):
+        """Testa tratamento de exceções no método."""
+        # GIVEN
+        df = pd.DataFrame({"col": [1, 2, 3]})
+
+        # WHEN/THEN
+        with patch('commons.utils.logging') as mock_logging:
+            with patch('pandas.DataFrame.__getitem__', side_effect=Exception("Erro forçado")):
+                with pytest.raises(Exception):
+                    Utils._convert_columns_to_nullable_int(df)
+
+        mock_logging.error.assert_called_once()
+
+
+class TestProcessAndSaveDataInChunks:
+    """Testes para o método process_and_save_data_in_chunks."""
+
+    def test_empty_raw_data(self):
+        """Testa processamento com dados vazios."""
+        # GIVEN
+        raw_data = []
+        endpoint_name = "empty_test"
+
+        # WHEN
+        with patch('commons.utils.logging') as mock_logging:
+            result = Utils.process_and_save_data_in_chunks(raw_data, endpoint_name)
+
+        # THEN
+        assert result == []
+        mock_logging.warning.assert_called_once_with(f"Nenhum dado recebido para o endpoint {endpoint_name}")
+
+    def test_success_no_disk_save(self):
+        """Testa processamento sem salvar em disco (save_to_disk=False)."""
+        # GIVEN
+        raw_data = [{"User Name": "Alice", "Email": "alice@example.com"}]
+        endpoint_name = "memory_test"
+
+        df = pd.DataFrame([{"user_name": "Alice", "email": "alice@example.com"}])
+
+        # WHEN
+        with patch.object(Utils, '_normalize_keys', return_value=raw_data):
+            with patch.object(Utils, '_flatten_json', return_value=raw_data[0]):
+                with patch('pandas.DataFrame', return_value=df):
+                    with patch.object(Utils, '_normalize_column_names', return_value=df):
+                        with patch.object(Utils, '_remove_empty_columns', return_value=df):
+                            with patch.object(Utils, '_convert_columns_to_nullable_int', return_value=df):
+                                with patch('commons.utils.logging') as mock_logging:
+                                    result = Utils.process_and_save_data_in_chunks(
+                                        raw_data, endpoint_name, save_to_disk=False
+                                    )
+
+        # THEN
+        assert result == df.to_dict(orient='records')
+        mock_logging.info.assert_any_call(
+            f"Processamento concluído: {len(df)} registros para {endpoint_name} (mantidos apenas em memória)"
+        )
+
+    def test_empty_dataframe_after_processing(self):
+        """Testa quando o DataFrame fica vazio após processar os dados."""
+        # GIVEN
+        raw_data = [{"User": "Alice"}]
+        endpoint_name = "empty_df_test"
+        empty_df = pd.DataFrame()
+
+        # WHEN
+        with patch.object(Utils, '_normalize_keys', return_value=raw_data):
+            with patch.object(Utils, '_flatten_json', return_value=raw_data[0]):
+                with patch('pandas.DataFrame', return_value=empty_df):
+                    with patch('commons.utils.logging') as mock_logging:
+                        result = Utils.process_and_save_data_in_chunks(raw_data, endpoint_name)
+
+        # THEN
+        assert result == []
+        mock_logging.warning.assert_called_once_with(
+            f"DataFrame vazio após processamento para {endpoint_name}"
+        )
+
+    def test_success_with_disk_save_single_chunk(self, tmp_path):
+        """Testa processamento com salvamento em disco e chunk único."""
+        # GIVEN
+        raw_data = [{"User Name": "Alice", "Email": "alice@example.com"}]
+        endpoint_name = "chunk_test"
+
+        df = pd.DataFrame([{"user_name": "Alice", "email": "alice@example.com"}])
+
+        output_dir = tmp_path / "output" / endpoint_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # WHEN
+        with patch('commons.utils.os.makedirs'), \
+                patch('commons.utils.os.path.isfile', return_value=False), \
+                patch('pandas.DataFrame.to_csv') as mock_to_csv, \
+                patch.object(Utils, '_normalize_keys', return_value=raw_data), \
+                patch.object(Utils, '_flatten_json', return_value=raw_data[0]), \
+                patch('pandas.DataFrame', return_value=df), \
+                patch.object(Utils, '_normalize_column_names', return_value=df), \
+                patch.object(Utils, '_remove_empty_columns', return_value=df), \
+                patch.object(Utils, '_convert_columns_to_nullable_int', return_value=df), \
+                patch('commons.utils.logging') as mock_logging:
+            result = Utils.process_and_save_data_in_chunks(
+                raw_data, endpoint_name, chunk_size=1000, save_to_disk=True
+            )
+
+        # THEN
+        assert result == df.to_dict(orient='records')
+        mock_to_csv.assert_called_once()
+        mock_logging.info.assert_any_call(
+            f"Processamento concluído: {len(df)} registros salvos em output/{endpoint_name}/{endpoint_name}.csv"
+        )
+
+        # THEN
+        assert result == df.to_dict(orient='records')
+        mock_to_csv.assert_called_once()
+        mock_logging.info.assert_any_call(
+            f"Processamento concluído: {len(df)} registros salvos em output/{endpoint_name}/{endpoint_name}.csv")
+
+    def test_processing_exception(self):
+        """Testa tratamento de exceções durante o processamento."""
+        # GIVEN
+        raw_data = [{"User": "Alice"}]
+        endpoint_name = "error_test"
+
+        # WHEN / THEN
+        with patch.object(Utils, '_normalize_keys', side_effect=Exception("Erro forçado")), \
+                patch('commons.utils.logging') as mock_logging:
+            with pytest.raises(Exception, match="Erro forçado"):
+                Utils.process_and_save_data_in_chunks(raw_data, endpoint_name)
+
+        mock_logging.error.assert_called_once()
+
+
+class TestProcessDataInBatches:
+    """Testes para o método process_data_in_batches."""
+
+    def test_success_single_page(self):
+        """Testa processamento bem-sucedido com apenas uma página."""
+        # GIVEN
+        endpoint_name = "test_endpoint"
+        endpoint_path = "/api/test"
+        headers = {}
+        mock_items = [{"user": "Alice"}]
+
+        def fetch_page(path, headers, page):
+            return {"total_pages": 1, "items": mock_items}
+
+        # WHEN
+        with patch.object(Utils, 'process_and_save_data_in_chunks', return_value=mock_items) as mock_process, \
+                patch('commons.utils.logging'), \
+                patch('os.makedirs'), \
+                patch('os.path.exists', return_value=False):
+            result = Utils.process_data_in_batches(endpoint_name, endpoint_path, headers, fetch_page)
+
+        # THEN
+        assert result["registros"] == 1
+        assert result["status"] == "Sucesso"
+        mock_process.assert_called_once_with(mock_items, endpoint_name, chunk_size=100, save_to_disk=True)
+
+    def test_success_multiple_pages_with_batching(self):
+        """Testa processamento de múltiplas páginas com batch_size 2."""
+        # GIVEN
+        endpoint_name = "batch_endpoint"
+        endpoint_path = "/api/batch"
+        headers = {}
+        page_1 = {"total_pages": 3, "items": [{"user": "A"}]}
+        page_2 = {"items": [{"user": "B"}]}
+        page_3 = {"items": [{"user": "C"}]}
+
+        def fetch_page(path, headers, page):
+            return {1: page_1, 2: page_2, 3: page_3}[page]
+
+        side_effect_result = [[{"user": "A"}], [{"user": "B"}, {"user": "C"}]]
+
+        # WHEN
+        with patch.object(Utils, 'process_and_save_data_in_chunks', side_effect=side_effect_result) as mock_process, \
+                patch('commons.utils.logging'), \
+                patch('os.makedirs'), \
+                patch('os.path.exists', return_value=False):
+            result = Utils.process_data_in_batches(
+                endpoint_name, endpoint_path, headers, fetch_page, batch_size=2, chunk_size=1
+            )
+
+        # THEN
+        assert result["registros"] == 3
+        assert result["status"] == "Sucesso"
+        assert mock_process.call_count == 2
+
+    def test_page_fetch_error_handled(self):
+        """Testa se erro ao buscar página é tratado e o buffer é processado."""
+        # GIVEN
+        endpoint_name = "error_endpoint"
+        endpoint_path = "/api/error"
+        headers = {}
+        items_1 = [{"user": "A"}]
+        items_2 = [{"user": "B"}]
+
+        def fetch_page(path, headers, page):
+            if page == 1:
+                return {"total_pages": 3, "items": items_1}
+            if page == 2:
+                raise ValueError("Erro na página 2")
+            return {"items": items_2}
+
+        side_effect_result = [[{"user": "A"}], [{"user": "B"}]]
+
+        # WHEN
+        with patch.object(Utils, 'process_and_save_data_in_chunks', side_effect=side_effect_result) as mock_process, \
+                patch('commons.utils.logging'), \
+                patch('os.makedirs'), \
+                patch('os.path.exists', return_value=False):
+            result = Utils.process_data_in_batches(endpoint_name, endpoint_path, headers, fetch_page)
+
+        # THEN
+        assert result["registros"] == 2
+        assert result["status"] == "Sucesso"
+        assert mock_process.call_count == 2
+
+    def test_returns_error_on_total_failure(self):
+        """Testa quando o processo falha completamente no início."""
+        # GIVEN
+        endpoint_name = "fail_endpoint"
+        endpoint_path = "/api/fail"
+        headers = {}
+
+        def fetch_page(path, headers, page):
+            raise RuntimeError("Falha de rede")
+
+        # WHEN
+        with patch('commons.utils.logging'), \
+                patch('os.makedirs'), \
+                patch('os.path.exists', return_value=False):
+            result = Utils.process_data_in_batches(endpoint_name, endpoint_path, headers, fetch_page)
+
+        # THEN
+        assert result["status"].startswith("Falha")
+        assert result["registros"] == 0
+        assert result["tempo"] == 0
