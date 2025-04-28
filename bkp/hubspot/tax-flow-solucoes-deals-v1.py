@@ -93,7 +93,7 @@ def save_deal_properties_to_gcs(client, bucket_name, filename='deals/deals.csv',
                 if created_date:
                     try:
                         # Tenta converter a data usando os dois formatos possíveis
-                        deal_date = parse_date(created_date)
+                        parse_date(created_date)
 
                         deal_id = deal.id
                         row = [deal_id]
