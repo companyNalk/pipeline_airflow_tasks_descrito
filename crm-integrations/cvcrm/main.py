@@ -16,6 +16,11 @@ ENDPOINTS = {
     "leads_visitas": "{api_plano}/leads/visitas",
     "leads": "{api_plano}/leads",
     "leads_historico_situacoes": "{api_plano}/leads/historico/situacoes",
+
+    # PARA CLIENTE WIKIHAUS
+    "leads_corretores": "{api_plano}/leads/corretores",
+    "precadastros": "{api_plano}/precadastros",
+
 }
 
 
