@@ -74,12 +74,12 @@ def run(customer):
             logger.info(f"Arquivo enviado: gs://{BUCKET_NAME}/{gcs_path}")
 
             # Backup histórico
-            path_parts = gcs_path.split('/')
-            dir_path, filename = '/'.join(path_parts[:-1]), path_parts[-1].split('.')[0]
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            hist_path = f"{dir_path}/historico/{filename}_{timestamp}.csv"
-            hist_blob = bucket.blob(hist_path)
-            hist_blob.upload_from_string(csv_data, content_type='text/csv')
+            # path_parts = gcs_path.split('/')
+            # dir_path, filename = '/'.join(path_parts[:-1]), path_parts[-1].split('.')[0]
+            # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # hist_path = f"{dir_path}/historico/{filename}_{timestamp}.csv"
+            # hist_blob = bucket.blob(hist_path)
+            # hist_blob.upload_from_string(csv_data, content_type='text/csv')
 
             return True
         except Exception as e:
@@ -526,7 +526,7 @@ def run(customer):
             {"nome": "Vendedores", "func": coletar_vendedores},
             {"nome": "Produtos", "func": coletar_produtos},
             {"nome": "Motivos de Devolução", "func": coletar_motivos_devolucao},
-            {"nome": "Etapas de Pedido", "func": coletar_etapas_pedido},
+            # {"nome": "Etapas de Pedido", "func": coletar_etapas_pedido},
             {"nome": "Etapas de Faturamento", "func": coletar_etapas_faturamento},
             {"nome": "Pedidos de Venda (etapa 50)", "func": lambda: coletar_pedidos_venda("50")}
         ]
