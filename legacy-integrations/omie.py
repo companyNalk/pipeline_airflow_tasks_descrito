@@ -58,7 +58,7 @@ def run(customer):
         logger.error("Falha após todas tentativas.")
         return None
 
-    def upload_to_gcs(df, gcs_path, sep=';'):
+    def upload_to_gcs(df, gcs_path, sep='|'):
         """Upload de DataFrame para o Google Cloud Storage"""
         if df.empty:
             logger.warning("DataFrame vazio, upload cancelado.")
