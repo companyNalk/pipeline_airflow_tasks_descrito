@@ -297,6 +297,7 @@ def run_contacts(customer):
     from datetime import datetime, timedelta
     from io import StringIO
 
+    # Importe suas funções do módulo gcs
     from core import gcs
     import pandas as pd
     import requests
@@ -565,7 +566,7 @@ def run_contacts(customer):
             # Configurações de acesso
             access_token = customer['access_token']
             bucket_name = customer['bucket_name']
-            file_path = f"{customer.get('save_dir_contacts', 'contacts')}/contacts_with_deals.csv"
+            file_path = f"{customer.get('save_dir_contacts', 'contacts')}/contacts.csv"
 
             # Inicializar cliente HubSpot e configurar headers
             headers = {
@@ -628,7 +629,7 @@ def run_contacts(customer):
             credentials = gcs.load_credentials_from_env()
 
             # Salvar no arquivo local temporário
-            local_file_path = f"/tmp/{customer['project_id']}.hubspot.contacts_with_deals.csv"
+            local_file_path = f"/tmp/{customer['project_id']}.hubspot.contacts.csv"
             with open(local_file_path, 'w') as f:
                 f.write(output.getvalue())
 
@@ -650,7 +651,6 @@ def run_contacts(customer):
             print(f"Ocorreu um erro inesperado: {e}")
             return False
 
-    # START
     main()
 
 
