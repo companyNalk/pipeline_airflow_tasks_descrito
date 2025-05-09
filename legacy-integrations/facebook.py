@@ -27,7 +27,7 @@ def run(customer):
     API_ACCESS_TOKEN = customer['api_access_token']
     API_ACCOUNT_IDS = ['api_account_ids']
 
-    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'credentials.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
 
     FIELDS = [
