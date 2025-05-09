@@ -149,6 +149,7 @@ def run_deals(customer):
         print(f"Erro na API do HubSpot (Deals): {e}")
     except Exception as e:
         print(f"Erro: {e}")
+        raise
 
 
 def run_owners(customer):
@@ -214,6 +215,7 @@ def run_owners(customer):
         print(f"API Exception ocorreu ao buscar owners: {e}")
     except Exception as e:
         print(f"Ocorreu um erro inesperado: {e}")
+        raise
 
 
 def run_pipelines(customer):
@@ -649,7 +651,7 @@ def run_contacts(customer):
             return False
         except Exception as e:
             print(f"Ocorreu um erro inesperado: {e}")
-            return False
+            raise
 
     main()
 
