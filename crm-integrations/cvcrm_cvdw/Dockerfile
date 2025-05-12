@@ -3,8 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copia somente o necessário - ajustado para o contexto raiz
-COPY crm-integrations/cvcrm/main.py .
-COPY crm-integrations/cvcrm/requirements.txt .
+COPY crm-integrations/cvcrm_cvdw/main.py .
+COPY crm-integrations/cvcrm_cvdw/requirements.txt .
 
 # Copia commons e generic como módulo
 COPY commons/ /app/commons/
