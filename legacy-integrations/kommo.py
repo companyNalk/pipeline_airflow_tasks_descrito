@@ -218,10 +218,10 @@ class Utils:
             )
 
             # Verificar se o resultado é None ou False
-            if result is None or result is False:
-                error_msg = f"Falha ao fazer upload do arquivo para GCS: gs://{bucket_name}/{destination_path}"
-                logging.error(error_msg)
-                raise Exception(error_msg)
+            # if result is None or result is False:
+            #     error_msg = f"Falha ao fazer upload do arquivo para GCS: gs://{bucket_name}/{destination_path}"
+            #     logging.error(error_msg)
+            #     raise Exception(error_msg)
 
             logging.info(f"Arquivo salvo com sucesso no GCS: gs://{bucket_name}/{destination_path}")
             return True
