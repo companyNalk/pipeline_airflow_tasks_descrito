@@ -11,15 +11,15 @@ logger = AppInitializer.initialize()
 RATE_LIMIT = 100
 
 ENDPOINTS = {
-    "vendas": "{api_plano}/vendas",
+    # "vendas": "{api_plano}/vendas",
     "reservas": "{api_plano}/reservas",
-    "leads_visitas": "{api_plano}/leads/visitas",
-    "leads": "{api_plano}/leads",
-    "leads_historico_situacoes": "{api_plano}/leads/historico/situacoes",
-
-    # PARA CLIENTE WIKIHAUS
-    "leads_corretores": "{api_plano}/leads/corretores",
-    "precadastros": "{api_plano}/precadastros",
+    # "leads_visitas": "{api_plano}/leads/visitas",
+    # "leads": "{api_plano}/leads",
+    # "leads_historico_situacoes": "{api_plano}/leads/historico/situacoes",
+    #
+    # # PARA CLIENTE WIKIHAUS
+    # "leads_corretores": "{api_plano}/leads/corretores",
+    # "precadastros": "{api_plano}/precadastros",
 
 }
 
@@ -30,7 +30,6 @@ def get_arguments():
             .add("API_DOMINIO", "Domínio CVCRM", required=True)
             .add("API_EMAIL", "Email de acesso", required=True)
             .add("API_ACCESS_TOKEN", "Token de acesso", required=True)
-            .add("API_PLANO", "Plano contratado (ex: cvdw)", default="cvdw")
             .parse())
 
 
@@ -110,7 +109,7 @@ def main():
     api_dominio = args.API_DOMINIO
     api_email = args.API_EMAIL
     api_access_token = args.API_ACCESS_TOKEN
-    api_plano = args.API_PLANO
+    api_plano = 'cvdw'
 
     # Configurar endpoints formatados com o plano
     formatted_endpoints = {}
@@ -150,7 +149,7 @@ def main():
 
         # Se houver falhas, lançar exceção
         if not success:
-            raise Exception(f"Falhas nos endpoints: {success}")
+            raise RuntimeError(f"Falhas nos endpoints: {success}")
 
     except Exception as e:
         logger.exception(f"❌ ERRO CRÍTICO NA EXECUÇÃO: {e}")
