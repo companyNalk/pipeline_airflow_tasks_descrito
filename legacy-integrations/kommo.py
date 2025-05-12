@@ -422,7 +422,7 @@ def run_unsorted_leads(customer):
         subdomain = customer['subdomain']
         base_url = f'https://{subdomain}.kommo.com'
         bucket_name = customer['bucket_name']
-        gcs_file_path = 'leads/unsorted_leads.csv'
+        gcs_file_path = 'unsorted_leads/unsorted_leads.csv'
         local_file_path = f"/tmp/{customer['project_id']}_unsorted_leads.csv"
 
         # Função para converter timestamps
