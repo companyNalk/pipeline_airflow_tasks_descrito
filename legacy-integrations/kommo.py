@@ -190,37 +190,82 @@ class Utils:
             logging.error(f"Erro ao converter colunas numericas para Int64: {str(e)}")
             raise
 
+    @staticmethod
+    def upload_to_gcs(bucket_name, local_file_path, destination_path):
+        """
+        Função unificada para upload de arquivos para o GCS.
+
+        Args:
+            bucket_name (str): Nome do bucket no GCS
+            local_file_path (str): Caminho local do arquivo
+            destination_path (str): Caminho de destino no GCS
+
+        Returns:
+            bool: True se o upload foi bem-sucedido
+
+        Raises:
+            Exception: Se ocorrer um erro durante o upload
+        """
+        try:
+            logging.info(f"Tentando fazer upload de {local_file_path} para gs://{bucket_name}/{destination_path}")
+
+            credentials = gcs.load_credentials_from_env()
+            result = gcs.write_file_to_gcs(
+                bucket_name=bucket_name,
+                local_file_path=local_file_path,
+                destination_name=destination_path,
+                credentials=credentials
+            )
+
+            # Verificar se o resultado é None ou False
+            if result is None or result is False:
+                error_msg = f"Falha ao fazer upload do arquivo para GCS: gs://{bucket_name}/{destination_path}"
+                logging.error(error_msg)
+                raise Exception(error_msg)
+
+            logging.info(f"Arquivo salvo com sucesso no GCS: gs://{bucket_name}/{destination_path}")
+            return True
+
+        except Exception as e:
+            error_msg = f"Erro durante upload para GCS: {str(e)}"
+            logging.error(error_msg)
+            raise Exception(error_msg)
+
 
 def run_leads(customer):
+    """
+    Coleta leads do Kommo e salva no GCS.
+
+    Args:
+        customer (dict): Informações do cliente
+
+    Raises:
+        Exception: Se ocorrer um erro durante o processo
+    """
     try:
         import requests
         import csv
         from datetime import datetime, timezone
 
-        # Token de longa duração
+        # Configurações
         access_token = customer['token']
-
-        # Subdomínio do Kommo
         subdomain = customer['subdomain']
-
-        # URL base da API
         base_url = f'https://{subdomain}.kommo.com'
-
-        # Nome do bucket e caminho do arquivo no GCS
         bucket_name = customer['bucket_name']
         gcs_file_path = 'leads/leads.csv'
+        local_file_path = f"/tmp/{customer['project_id']}_leads.csv"
 
         # Função para desaninhamento dos campos personalizados
         def flatten_custom_fields(custom_fields):
             flattened_fields = {}
             if custom_fields:
                 for field in custom_fields:
-                    field_name = field['field_name'].rstrip(':')  # Remove os dois pontos do final do nome do campo
+                    field_name = field['field_name'].rstrip(':')
                     values = field['values']
                     flattened_fields[field_name] = '; '.join([str(value['value']) for value in values])
             return flattened_fields
 
-        # Função para converter timestamps Unix para datas legíveis com reconhecimento de fuso horário
+        # Função para converter timestamps Unix para datas legíveis
         def convert_timestamp_to_date(timestamp):
             if isinstance(timestamp, int) or (isinstance(timestamp, str) and timestamp.isdigit()):
                 return datetime.fromtimestamp(int(timestamp), timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
@@ -230,25 +275,18 @@ def run_leads(customer):
         def flatten_embedded_data(lead):
             embedded_data = {}
 
-            # Desaninhamento de contatos
-            if '_embedded' in lead and 'contacts' in lead['_embedded']:
-                contacts = lead['_embedded']['contacts']
-                embedded_data['contacts'] = '; '.join([str(contact['id']) for contact in contacts])
-
-            # Desaninhamento de empresas
-            if '_embedded' in lead and 'companies' in lead['_embedded']:
-                companies = lead['_embedded']['companies']
-                embedded_data['companies'] = '; '.join([str(company['id']) for company in companies])
-
-            # Desaninhamento de tags
-            if '_embedded' in lead and 'tags' in lead['_embedded']:
-                tags = lead['_embedded']['tags']
-                embedded_data['tags'] = '; '.join([str(tag['name']) for tag in tags])
-
-            # Desaninhamento de loss_reason
-            if '_embedded' in lead and 'loss_reason' in lead['_embedded']:
-                loss_reasons = lead['_embedded']['loss_reason']
-                embedded_data['loss_reason'] = '; '.join([str(loss_reason['name']) for loss_reason in loss_reasons])
+            # Desaninhamento de contatos, empresas, tags e loss_reason
+            if '_embedded' in lead:
+                for key, field_name in [
+                    ('contacts', 'contacts'),
+                    ('companies', 'companies'),
+                    ('tags', 'tags'),
+                    ('loss_reason', 'loss_reason')
+                ]:
+                    if key in lead['_embedded']:
+                        items = lead['_embedded'][key]
+                        id_or_name = 'name' if key in ['tags', 'loss_reason'] else 'id'
+                        embedded_data[field_name] = '; '.join([str(item[id_or_name]) for item in items])
 
             return embedded_data
 
@@ -258,33 +296,38 @@ def run_leads(customer):
                 'Authorization': f'Bearer {access_token}'
             }
             leads = []
-            offset = 0
+            page = 1
+
+            logging.info("Iniciando a coleta de leads...")
+
             while True:
                 params = {
                     'limit': 250,
-                    'page': offset // 250 + 1,
+                    'page': page,
                     'with': 'contacts,companies,tags,loss_reason,catalog_elements'
                 }
+
+                logging.info(f"Solicitando leads, página: {page}")
                 response = requests.get(f'{base_url}/api/v4/leads', headers=headers, params=params)
-                print(f"Solicitando leads, página: {offset // 250 + 1}")
-                if response.status_code == 204:  # Nenhum conteúdo
-                    print("Nenhum lead adicional foi encontrado.")
+
+                if response.status_code == 204:
+                    logging.info("Nenhum lead adicional foi encontrado.")
                     break
-                elif response.status_code == 401:  # Erro de autenticação
-                    error_msg = "Erro de autenticação. Verifique se o token de longa duração é válido."
-                    print(error_msg)
+                elif response.status_code == 401:
+                    error_msg = "Erro de autenticação. Verifique o token de longa duração."
+                    logging.error(error_msg)
                     raise Exception(error_msg)
                 elif response.status_code != 200:
                     error_msg = f"Erro ao coletar leads: {response.status_code}"
-                    print(error_msg)
-                    print(response.json() if response.text else "Sem mensagem de erro")
+                    logging.error(error_msg)
+                    logging.error(response.json() if response.text else "Sem mensagem de erro")
                     raise Exception(error_msg)
 
                 try:
                     data = response.json()['_embedded']['leads']
                 except (KeyError, ValueError) as e:
                     error_msg = f"Erro na estrutura de resposta da API: {str(e)}"
-                    print(error_msg)
+                    logging.error(error_msg)
                     raise Exception(error_msg)
 
                 for lead in data:
@@ -293,184 +336,177 @@ def run_leads(customer):
                         if date_field in lead:
                             lead[date_field] = convert_timestamp_to_date(lead[date_field])
 
-                    # Converter campos de data nos campos personalizados, se existirem
+                    # Processar campos personalizados
                     if 'custom_fields_values' in lead:
                         custom_fields_flat = flatten_custom_fields(lead['custom_fields_values'])
                         lead.update(custom_fields_flat)
-                        del lead['custom_fields_values']  # Remove o campo aninhado original
+                        del lead['custom_fields_values']
 
-                    # Desaninhamento dos campos embeddeds
+                    # Processar campos embedded
                     embedded_data = flatten_embedded_data(lead)
                     lead.update(embedded_data)
 
-                leads.extend(data)
-                print(f"Coletados {len(leads)} leads até agora...")
+                    # Remover o campo _embedded original
+                    if '_embedded' in lead:
+                        del lead['_embedded']
 
-                if len(data) < 250:  # Se o número de leads retornados for menor que o limite, não há mais dados
+                leads.extend(data)
+                logging.info(f"Coletados {len(leads)} leads até agora...")
+
+                if len(data) < 250:
                     break
 
-                offset += 250
+                page += 1
 
             if not leads:
-                print("Aviso: Nenhum lead foi coletado.")
-                # Se quiser tratar como erro:
-                # raise Exception("Nenhum lead foi coletado.")
+                logging.warning("Aviso: Nenhum lead foi coletado.")
 
             return leads
 
-        # Função para salvar os leads em um arquivo CSV e fazer upload para o GCS
+        # Função para salvar os leads em CSV e fazer upload para o GCS
         def save_leads_to_gcs(leads):
             if not leads:
                 error_msg = "Nenhum lead para processar."
-                print(error_msg)
+                logging.error(error_msg)
                 raise Exception(error_msg)
 
-            # Obtenha todos os cabeçalhos únicos
-            all_keys = set()
-            for lead in leads:
-                all_keys.update(lead.keys())
+            try:
+                # Obter todos os cabeçalhos únicos
+                all_keys = set()
+                for lead in leads:
+                    all_keys.update(lead.keys())
 
-            # Salva o arquivo CSV localmente
-            local_file_path = f"/tmp/{customer['project_id']}_leads.csv"
-            with open(local_file_path, 'w', newline='', encoding='utf-8') as output_file:
-                dict_writer = csv.DictWriter(output_file, fieldnames=list(all_keys), delimiter=';')
-                dict_writer.writeheader()
-                dict_writer.writerows(leads)
+                # Salvar arquivo CSV localmente
+                with open(local_file_path, 'w', newline='', encoding='utf-8') as output_file:
+                    dict_writer = csv.DictWriter(output_file, fieldnames=list(all_keys), delimiter=';')
+                    dict_writer.writeheader()
+                    dict_writer.writerows(leads)
 
-            credentials = gcs.load_credentials_from_env()
-            result = gcs.write_file_to_gcs(
-                bucket_name=bucket_name,
-                local_file_path=local_file_path,
-                destination_name=gcs_file_path,
-                credentials=credentials
-            )
+                # Upload para o GCS usando a função unificada
+                Utils.upload_to_gcs(bucket_name, local_file_path, gcs_file_path)
 
-            # Verificar se o upload foi bem-sucedido
-            if not result:
-                error_msg = f"Falha ao fazer upload do arquivo para GCS: gs://{bucket_name}/{gcs_file_path}"
-                print(error_msg)
+                logging.info(f"Total de {len(leads)} leads salvos com sucesso.")
+
+            except Exception as e:
+                error_msg = f"Erro ao salvar leads no GCS: {str(e)}"
+                logging.error(error_msg)
                 raise Exception(error_msg)
-
-            print(f"Arquivo CSV salvo no GCS: gs://{bucket_name}/{gcs_file_path}")
 
         # Execução principal
-        print("Iniciando a coleta de leads...")
         leads = get_leads()
         save_leads_to_gcs(leads)
-        print(f"Coleta concluída. Um total de {len(leads)} leads foi salvo em leads.csv no GCS.")
+        logging.info(f"Coleta concluída. Total de {len(leads)} leads salvos em {gcs_file_path}.")
 
     except Exception as e:
-        print(f"FALHA CRÍTICA em run_leads: {str(e)}")
-        # Re-lança a exceção para o Airflow
+        logging.error(f"FALHA CRÍTICA em run_leads: {str(e)}")
         raise
 
 
 def run_unsorted_leads(customer):
+    """
+    Coleta leads não classificados do Kommo e salva no GCS.
+
+    Args:
+        customer (dict): Informações do cliente
+
+    Raises:
+        Exception: Se ocorrer um erro durante o processo
+    """
     try:
         import requests
         import csv
         from datetime import datetime, timezone
 
-        # Token de longa duração
+        # Configurações
         access_token = customer['token']
-
-        # Subdomínio do Kommo
         subdomain = customer['subdomain']
-
-        # URL base da API
         base_url = f'https://{subdomain}.kommo.com'
-
-        # Nome do bucket e caminho do arquivo no GCS
         bucket_name = customer['bucket_name']
         gcs_file_path = 'leads/unsorted_leads.csv'
-
-        # Caminho do arquivo local
         local_file_path = f"/tmp/{customer['project_id']}_unsorted_leads.csv"
 
-        # Função para converter timestamps Unix para datas legíveis
+        # Função para converter timestamps
         def convert_timestamp_to_date(timestamp):
             if isinstance(timestamp, int) or (isinstance(timestamp, str) and timestamp.isdigit()):
                 return datetime.fromtimestamp(int(timestamp), timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             return timestamp
 
-        # Função para fazer a coleta de leads não classificados
+        # Função para coletar leads não classificados
         def get_unsorted_leads():
             headers = {
                 'Authorization': f'Bearer {access_token}'
             }
             unsorted_leads = []
-            offset = 0
+            page = 1
+
+            logging.info("Iniciando a coleta de leads não classificados...")
+
             while True:
                 params = {
                     'limit': 250,
-                    'page': offset // 250 + 1,
+                    'page': page,
                     'with': 'contacts,companies,tags,metadata'
                 }
 
                 try:
+                    logging.info(f"Solicitando leads não classificados, página: {page}")
                     response = requests.get(f'{base_url}/api/v4/leads/unsorted', headers=headers, params=params)
-                    print(f"Solicitando leads não classificados, página: {offset // 250 + 1}")
 
-                    if response.status_code == 204:  # Nenhum conteúdo
-                        print("Nenhum lead não classificado adicional foi encontrado.")
+                    if response.status_code == 204:
+                        logging.info("Nenhum lead não classificado adicional foi encontrado.")
                         break
-                    elif response.status_code == 401:  # Erro de autenticação
-                        error_msg = "Erro de autenticação. Verifique se o token de longa duração é válido."
-                        print(error_msg)
+                    elif response.status_code == 401:
+                        error_msg = "Erro de autenticação. Verifique o token de longa duração."
+                        logging.error(error_msg)
                         raise Exception(error_msg)
                     elif response.status_code != 200:
                         error_msg = f"Erro ao coletar leads não classificados: {response.status_code}"
-                        print(error_msg)
-                        print(response.json() if response.text else "Sem mensagem de erro")
+                        logging.error(error_msg)
+                        logging.error(response.json() if response.text else "Sem mensagem de erro")
                         raise Exception(error_msg)
 
                     data = response.json()
                     if '_embedded' not in data or 'unsorted' not in data['_embedded']:
                         error_msg = "Estrutura de resposta inesperada - não contém leads não classificados."
-                        print(error_msg)
+                        logging.error(error_msg)
                         raise Exception(error_msg)
 
-                    # Obtém a lista de leads não classificados
+                    # Processar leads não classificados
                     leads_data = data['_embedded']['unsorted']
-
-                    # Normaliza as chaves dos dados JSON recebidos
                     normalized_leads = [Utils._normalize_keys(lead) for lead in leads_data]
 
-                    # Para cada lead normalizado, converte os campos de data
+                    # Converter campos de data
                     for lead in normalized_leads:
-                        # Converter campos de data
                         for date_field in ['created_at', 'updated_at']:
                             if date_field in lead:
                                 lead[date_field] = convert_timestamp_to_date(lead[date_field])
 
-                    # Achata cada lead normalizado
+                    # Achatar leads
                     flattened_leads = [Utils._flatten_json(lead) for lead in normalized_leads]
-
                     unsorted_leads.extend(flattened_leads)
-                    print(f"Coletados {len(unsorted_leads)} leads não classificados até agora...")
 
-                    if len(leads_data) < 250:  # Se o número de leads retornados for menor que o limite, não há mais dados
+                    logging.info(f"Coletados {len(unsorted_leads)} leads não classificados até agora...")
+
+                    if len(leads_data) < 250:
                         break
 
-                    offset += 250
+                    page += 1
 
                 except Exception as e:
                     error_msg = f"Erro ao processar a requisição: {str(e)}"
-                    print(error_msg)
+                    logging.error(error_msg)
                     raise Exception(error_msg)
 
             if not unsorted_leads:
-                print("Aviso: Nenhum lead não classificado foi coletado.")
-                # Se quiser tratar como erro:
-                # raise Exception("Nenhum lead não classificado foi coletado.")
+                logging.warning("Aviso: Nenhum lead não classificado foi coletado.")
 
             return unsorted_leads
 
-        # Função para processar e salvar os leads não classificados
+        # Função para processar e salvar leads não classificados
         def save_unsorted_leads_to_gcs(unsorted_leads):
             if not unsorted_leads:
                 error_msg = "Nenhum lead não classificado para processar."
-                print(error_msg)
+                logging.error(error_msg)
                 raise Exception(error_msg)
 
             try:
@@ -479,85 +515,69 @@ def run_unsorted_leads(customer):
 
                 if df.empty:
                     error_msg = "DataFrame vazio após conversão dos leads."
-                    print(error_msg)
+                    logging.error(error_msg)
                     raise Exception(error_msg)
 
-                # Aplicar normalização de nomes de colunas
+                # Processar DataFrame
                 df = Utils._normalize_column_names(df)
-
-                # Remover colunas vazias
                 df = Utils._remove_empty_columns(df)
-
-                # Converter colunas para Int64 quando apropriado
                 df = Utils._convert_columns_to_nullable_int(df)
 
-                # Obtenha todos os cabeçalhos únicos
-                all_columns = list(df.columns)
-
-                # Salva o arquivo CSV localmente
+                # Salvar CSV localmente
                 with open(local_file_path, 'w', newline='', encoding='utf-8') as output_file:
-                    dict_writer = csv.DictWriter(output_file, fieldnames=all_columns, delimiter=';')
+                    dict_writer = csv.DictWriter(output_file, fieldnames=list(df.columns), delimiter=';')
                     dict_writer.writeheader()
                     dict_writer.writerows(df.to_dict('records'))
 
-                # Upload para o GCS
-                credentials = gcs.load_credentials_from_env()
-                result = gcs.write_file_to_gcs(
-                    bucket_name=bucket_name,
-                    local_file_path=local_file_path,
-                    destination_name=gcs_file_path,
-                    credentials=credentials
-                )
+                # Upload para o GCS usando a função unificada
+                Utils.upload_to_gcs(bucket_name, local_file_path, gcs_file_path)
 
-                # Verificar se o upload foi bem-sucedido
-                if not result:
-                    error_msg = f"Falha ao fazer upload do arquivo para GCS: gs://{bucket_name}/{gcs_file_path}"
-                    print(error_msg)
-                    raise Exception(error_msg)
-
-                print(f"Arquivo CSV salvo no GCS: gs://{bucket_name}/{gcs_file_path}")
-                print(f"DataFrame processado com {len(df)} linhas e {len(df.columns)} colunas")
+                logging.info(f"DataFrame processado com {len(df)} linhas e {len(df.columns)} colunas")
 
             except Exception as e:
-                error_msg = f"Erro ao processar e salvar os leads não classificados: {str(e)}"
-                print(error_msg)
+                error_msg = f"Erro ao processar e salvar leads não classificados: {str(e)}"
+                logging.error(error_msg)
                 raise Exception(error_msg)
 
         # Execução principal
-        print("Iniciando a coleta de leads não classificados com nova normalização...")
         unsorted_leads = get_unsorted_leads()
         save_unsorted_leads_to_gcs(unsorted_leads)
-        print(
-            f"Coleta concluída. Um total de {len(unsorted_leads)} leads não classificados foi processado e salvo em unsorted_leads.csv no GCS.")
+        logging.info(f"Coleta concluída. Total de {len(unsorted_leads)} leads não classificados processados.")
 
     except Exception as e:
-        print(f"FALHA CRÍTICA em run_unsorted_leads: {str(e)}")
-        # Re-lança a exceção para o Airflow
+        logging.error(f"FALHA CRÍTICA em run_unsorted_leads: {str(e)}")
         raise
 
 
 def run_pipelines(customer):
+    """
+    Coleta pipelines do Kommo e salva no GCS.
+
+    Args:
+        customer (dict): Informações do cliente
+
+    Raises:
+        Exception: Se ocorrer um erro durante o processo
+    """
     try:
         import requests
         import csv
 
-        # Token de acesso de longa duração
+        # Configurações
         access_token = customer['token']
-
-        # Subdomínio do Kommo
         subdomain = customer['subdomain']
-
-        # Bucket
         bucket_name = customer['bucket_name']
-
-        # URL base da API
         base_url = f'https://{subdomain}.kommo.com'
+        local_file_path = f"/tmp/{customer['project_id']}_pipelines.csv"
+        gcs_file_path = "pipelines/pipelines.csv"
 
-        # Função para fazer a requisição dos pipelines
+        # Função para obter pipelines
         def get_pipelines():
             headers = {
                 'Authorization': f'Bearer {access_token}'
             }
+
+            logging.info("Obtendo pipelines do Kommo...")
             response = requests.get(f'{base_url}/api/v4/leads/pipelines', headers=headers)
 
             if response.status_code == 200:
@@ -565,108 +585,90 @@ def run_pipelines(customer):
                     return response.json()["_embedded"]["pipelines"]
                 except (KeyError, ValueError) as e:
                     error_msg = f"Erro na estrutura de resposta da API: {str(e)}"
-                    print(error_msg)
+                    logging.error(error_msg)
                     raise Exception(error_msg)
             elif response.status_code == 401:
-                error_msg = "Erro de autenticação. Verifique se o token de longa duração é válido."
-                print(error_msg)
+                error_msg = "Erro de autenticação. Verifique o token de longa duração."
+                logging.error(error_msg)
                 raise Exception(error_msg)
             else:
                 error_msg = f"Erro ao obter os pipelines: {response.status_code}"
-                print(error_msg)
-                print(response.json() if response.text else "Sem mensagem de erro")
+                logging.error(error_msg)
+                logging.error(response.json() if response.text else "Sem mensagem de erro")
                 raise Exception(error_msg)
 
-        # Função para salvar os pipelines em um arquivo CSV
+        # Função para salvar pipelines em CSV
         def save_pipelines_to_csv(pipelines_data):
             if not pipelines_data:
                 error_msg = "Nenhum pipeline encontrado ou erro na requisição."
-                print(error_msg)
+                logging.error(error_msg)
                 raise Exception(error_msg)
 
-            local_file_path = f"/tmp/{customer['project_id']}_pipelines.csv"
-            with open(local_file_path, mode="w", newline='', encoding='utf-8') as file:
-                writer = csv.writer(file, delimiter=';')
+            try:
+                with open(local_file_path, mode="w", newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file, delimiter=';')
+                    writer.writerow(["Pipeline ID", "Pipeline Name", "Status ID", "Status Name"])
 
-                # Cabeçalho do CSV
-                writer.writerow(["Pipeline ID", "Pipeline Name", "Status ID", "Status Name"])
-
-                # Escrevendo os dados dos pipelines
-                try:
                     for pipeline in pipelines_data:
                         pipeline_id = pipeline["id"]
                         pipeline_name = pipeline["name"]
+
                         if "_embedded" not in pipeline or "statuses" not in pipeline["_embedded"]:
                             error_msg = f"Estrutura de pipeline inesperada para pipeline ID {pipeline_id}"
-                            print(error_msg)
+                            logging.error(error_msg)
                             raise Exception(error_msg)
 
                         for status in pipeline["_embedded"]["statuses"]:
                             status_id = status["id"]
                             status_name = status["name"]
                             writer.writerow([pipeline_id, pipeline_name, status_id, status_name])
-                except Exception as e:
-                    error_msg = f"Erro ao processar dados dos pipelines: {str(e)}"
-                    print(error_msg)
-                    raise Exception(error_msg)
 
-            print("Arquivo pipelines.csv gerado com sucesso.")
-            return local_file_path
+                logging.info("Arquivo pipelines.csv gerado com sucesso.")
+                return local_file_path
 
-        # Função para fazer upload do arquivo CSV para o Google Cloud Storage
-        def upload_to_gcs(local_file_path):
-            try:
-                credentials = gcs.load_credentials_from_env()
-                result = gcs.write_file_to_gcs(
-                    bucket_name=bucket_name,
-                    local_file_path=local_file_path,
-                    destination_name="pipelines/pipelines.csv",
-                    credentials=credentials
-                )
-
-                # Verificar se o upload foi bem-sucedido
-                if not result:
-                    error_msg = f"Falha ao fazer upload do arquivo para GCS: gs://{bucket_name}/pipelines/pipelines.csv"
-                    print(error_msg)
-                    raise Exception(error_msg)
-
-                print(f"Arquivo pipelines.csv enviado para o bucket {bucket_name} com sucesso.")
             except Exception as e:
-                error_msg = f"Erro ao fazer upload para GCS: {str(e)}"
-                print(error_msg)
+                error_msg = f"Erro ao processar dados dos pipelines: {str(e)}"
+                logging.error(error_msg)
                 raise Exception(error_msg)
 
         # Execução principal
-        print("Iniciando a execução do script...")
+        logging.info("Iniciando processamento de pipelines...")
         pipelines_data = get_pipelines()
-        local_file_path = save_pipelines_to_csv(pipelines_data)
-        upload_to_gcs(local_file_path)
-        print("Processamento de pipelines concluído com sucesso.")
+        save_pipelines_to_csv(pipelines_data)
+
+        # Upload para o GCS usando a função unificada
+        Utils.upload_to_gcs(bucket_name, local_file_path, gcs_file_path)
+
+        logging.info("Processamento de pipelines concluído com sucesso.")
 
     except Exception as e:
-        print(f"FALHA CRÍTICA em run_pipelines: {str(e)}")
-        # Re-lança a exceção para o Airflow
+        logging.error(f"FALHA CRÍTICA em run_pipelines: {str(e)}")
         raise
 
 
 def run_users(customer):
+    """
+    Coleta usuários do Kommo e salva no GCS.
+
+    Args:
+        customer (dict): Informações do cliente
+
+    Raises:
+        Exception: Se ocorrer um erro durante o processo
+    """
     try:
         import requests
         import csv
 
-        # Token de acesso de longa duração
+        # Configurações
         access_token = customer['token']
-
-        # Subdomínio do Kommo
         subdomain = customer['subdomain']
-
-        # Bucket
         bucket_name = customer['bucket_name']
-
-        # URL base da API
         base_url = f'https://{subdomain}.kommo.com'
+        local_file_path = f"/tmp/{customer['project_id']}_users_list.csv"
+        gcs_file_path = "users/users_list.csv"
 
-        # Função para coletar dados da lista de usuários
+        # Função para coletar lista de usuários
         def get_users_list():
             url = f"{base_url}/api/v4/users"
             headers = {
@@ -674,6 +676,7 @@ def run_users(customer):
                 "Content-Type": "application/hal+json",
             }
 
+            logging.info("Obtendo lista de usuários do Kommo...")
             response = requests.get(url, headers=headers)
 
             if response.status_code == 200:
@@ -681,31 +684,30 @@ def run_users(customer):
                     data = response.json()
                     if "_embedded" not in data or "users" not in data["_embedded"]:
                         error_msg = "Estrutura de resposta inesperada - não contém usuários."
-                        print(error_msg)
+                        logging.error(error_msg)
                         raise Exception(error_msg)
                     return data["_embedded"]["users"]
                 except (KeyError, ValueError) as e:
                     error_msg = f"Erro na estrutura de resposta da API: {str(e)}"
-                    print(error_msg)
+                    logging.error(error_msg)
                     raise Exception(error_msg)
             elif response.status_code == 401:
-                error_msg = "Erro de autenticação. Verifique se o token de longa duração é válido."
-                print(error_msg)
+                error_msg = "Erro de autenticação. Verifique o token de longa duração."
+                logging.error(error_msg)
                 raise Exception(error_msg)
             else:
                 error_msg = f"Erro ao coletar a lista de usuários: {response.status_code}"
-                print(error_msg)
-                print(response.json() if response.text else "Sem mensagem de erro")
+                logging.error(error_msg)
+                logging.error(response.json() if response.text else "Sem mensagem de erro")
                 raise Exception(error_msg)
 
-        # Função para salvar dados no CSV
+        # Função para salvar usuários em CSV
         def save_to_csv(users):
             if not users:
                 error_msg = "Nenhum dado de usuário para salvar."
-                print(error_msg)
+                logging.error(error_msg)
                 raise Exception(error_msg)
 
-            local_file_path = f"/tmp/{customer['project_id']}_users_list.csv"
             try:
                 with open(local_file_path, mode="w", newline='', encoding="utf-8") as file:
                     writer = csv.writer(file, delimiter=';')
@@ -717,7 +719,7 @@ def run_users(customer):
                     for user in users:
                         if "id" not in user or "name" not in user or "email" not in user or "lang" not in user or "rights" not in user:
                             error_msg = f"Estrutura de usuário inesperada para usuário: {user.get('id', 'ID desconhecido')}"
-                            print(error_msg)
+                            logging.error(error_msg)
                             raise Exception(error_msg)
 
                         writer.writerow([
@@ -732,46 +734,26 @@ def run_users(customer):
                             user["rights"].get("role_id", "N/A")
                         ])
 
-                print("Arquivo users_list.csv gerado com sucesso.")
+                logging.info("Arquivo users_list.csv gerado com sucesso.")
                 return local_file_path
+
             except Exception as e:
                 error_msg = f"Erro ao salvar dados no CSV: {str(e)}"
-                print(error_msg)
-                raise Exception(error_msg)
-
-        # Função para fazer upload do arquivo CSV para o Google Cloud Storage
-        def upload_to_gcs(local_file_path):
-            try:
-                credentials = gcs.load_credentials_from_env()
-                result = gcs.write_file_to_gcs(
-                    bucket_name=bucket_name,
-                    local_file_path=local_file_path,
-                    destination_name="users/users_list.csv",
-                    credentials=credentials
-                )
-
-                # Verificar se o upload foi bem-sucedido
-                if not result:
-                    error_msg = f"Falha ao fazer upload do arquivo para GCS: gs://{bucket_name}/users/users_list.csv"
-                    print(error_msg)
-                    raise Exception(error_msg)
-
-                print(f"Arquivo users_list.csv enviado para o bucket {bucket_name} com sucesso.")
-            except Exception as e:
-                error_msg = f"Erro ao fazer upload para GCS: {str(e)}"
-                print(error_msg)
+                logging.error(error_msg)
                 raise Exception(error_msg)
 
         # Execução principal
-        print("Coletando lista de usuários...")
+        logging.info("Coletando lista de usuários...")
         users = get_users_list()
-        local_file_path = save_to_csv(users)
-        upload_to_gcs(local_file_path)
-        print("Dados de usuários salvos com sucesso e enviados para o Google Cloud Storage.")
+        save_to_csv(users)
+
+        # Upload para o GCS usando a função unificada
+        Utils.upload_to_gcs(bucket_name, local_file_path, gcs_file_path)
+
+        logging.info("Dados de usuários salvos com sucesso e enviados para o Google Cloud Storage.")
 
     except Exception as e:
-        print(f"FALHA CRÍTICA em run_users: {str(e)}")
-        # Re-lança a exceção para o Airflow
+        logging.error(f"FALHA CRÍTICA em run_users: {str(e)}")
         raise
 
 
