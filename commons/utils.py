@@ -94,11 +94,20 @@ class Utils:
         """
         key = key.strip('\'"')
 
+        # Detecta se é um camelCase com a primeira letra maiúscula (PascalCase)
+        is_pascal_case = bool(re.match(r'^[A-Z]', key) and re.search(r'[a-z]', key))
+
         # Detecta se é um verdadeiro camelCase (inicia com minúscula, depois tem maiúscula)
         is_true_camel_case = bool(re.match(r'^[a-z].*[A-Z]', key))
 
+        # Converte PascalCase para snake_case (ex: ExibeContato -> exibe_contato)
+        if is_pascal_case:
+            # Insere underscore antes de cada letra maiúscula, exceto a primeira
+            key = re.sub(r'(?<!^)([A-Z][a-z])', r'_\1', key)
+            # Trata seguências de maiúsculas como siglas (ex: ID em IdStatusGestao)
+            key = re.sub(r'([A-Z])([A-Z][a-z])', r'\1_\2', key)
         # Se for camelCase, aplica a conversão para snake_case antes
-        if is_true_camel_case:
+        elif is_true_camel_case:
             key = re.sub(r'([a-z])([A-Z])', r'\1_\2', key)
 
         # Converte para lowercase
@@ -255,7 +264,8 @@ class Utils:
 
     @staticmethod
     def process_and_save_data_in_chunks(raw_data: List[Dict], endpoint_name: str, chunk_size: int = 1000,
-                                        save_to_disk: bool = True, append_mode: bool = False) -> List[Dict]:
+                                        save_to_disk: bool = True, append_mode: bool = False,
+                                        skip_empty_columns: bool = False) -> List[Dict]:
         """
         Processa dados brutos em chunks e opcionalmente salva em disco.
         """
@@ -282,7 +292,11 @@ class Utils:
 
             # Limpar e normalizar o DataFrame
             df = Utils._normalize_column_names(df)
-            df = Utils._remove_empty_columns(df)
+
+            # Remoção de colunas vazias agora é opcional e controlada pelo parâmetro
+            if skip_empty_columns:
+                df = Utils._remove_empty_columns(df)
+
             df = Utils._convert_columns_to_nullable_int(df)
 
             # Se não precisar salvar em disco, retornar os dados processados imediatamente
@@ -340,6 +354,56 @@ class Utils:
             raise
 
     @staticmethod
+    def post_process_csv_file(endpoint_name: str) -> bool:
+        """
+        Função para pós-processamento do arquivo CSV completo.
+        Aplica normalização de colunas após todos os lotes terem sido processados.
+        """
+        try:
+            base_output_dir = "output"
+            output_dir = os.path.join(base_output_dir, endpoint_name)
+            csv_filename = os.path.join(output_dir, f"{endpoint_name}.csv")
+
+            if not os.path.exists(csv_filename):
+                logging.warning(f"Arquivo CSV não encontrado para pós-processamento: {csv_filename}")
+                return False
+
+            # Carregar o arquivo CSV completo
+            logging.info(f"Iniciando pós-processamento para {csv_filename}")
+            df = pd.read_csv(csv_filename, sep=";")
+
+            if df.empty:
+                logging.warning(f"DataFrame vazio após leitura para {endpoint_name}")
+                return False
+
+            # Registrar estatísticas antes do processamento
+            before_cols = len(df.columns)
+            before_rows = len(df)
+            logging.info(f"Arquivo original: {before_rows} linhas, {before_cols} colunas")
+
+            # Aplicar transformações globais
+            df = Utils._remove_empty_columns(df)
+
+            # Registrar estatísticas após o processamento
+            after_cols = len(df.columns)
+            removed_cols = before_cols - after_cols
+            logging.info(f"Colunas removidas: {removed_cols} ({before_cols} -> {after_cols})")
+
+            # Criar arquivo temporário com novos dados
+            temp_csv = csv_filename + ".temp"
+            df.to_csv(temp_csv, sep=";", index=False)
+
+            # Substituir o arquivo original pelo temporário
+            os.replace(temp_csv, csv_filename)
+
+            logging.info(f"✅ Pós-processamento concluído: {csv_filename}")
+            return True
+
+        except Exception as e:
+            logging.error(f"❌ Erro no pós-processamento do arquivo CSV para {endpoint_name}: {str(e)}")
+            return False
+
+    @staticmethod
     def process_data_in_batches(endpoint_name: str, endpoint_path: str, headers: Dict, fetch_page_func: Callable,
                                 save_to_disk: bool = True, chunk_size: int = 100, batch_size: int = 1,
                                 delay_between_pages: int = 1) -> Dict:
@@ -376,7 +440,8 @@ class Utils:
                     data_buffer,
                     endpoint_name,
                     chunk_size=chunk_size,
-                    save_to_disk=save_to_disk
+                    save_to_disk=save_to_disk,
+                    skip_empty_columns=False  # Não remover colunas vazias ainda
                 )
                 processed_count += len(processed_data)
                 data_buffer = []
@@ -405,14 +470,16 @@ class Utils:
                                     endpoint_name,
                                     chunk_size=chunk_size,
                                     save_to_disk=save_to_disk,
-                                    append_mode=True
+                                    append_mode=True,
+                                    skip_empty_columns=False  # Não remover colunas vazias ainda
                                 )
                             else:
                                 processed_data = Utils.process_and_save_data_in_chunks(
                                     data_buffer,
                                     endpoint_name,
                                     chunk_size=chunk_size,
-                                    save_to_disk=save_to_disk
+                                    save_to_disk=save_to_disk,
+                                    skip_empty_columns=False  # Não remover colunas vazias ainda
                                 )
                                 file_header_written = True
 
@@ -435,7 +502,8 @@ class Utils:
                                 endpoint_name,
                                 chunk_size=chunk_size,
                                 save_to_disk=save_to_disk,
-                                append_mode=file_header_written
+                                append_mode=file_header_written,
+                                skip_empty_columns=False  # Não remover colunas vazias ainda
                             )
                             data_buffer = []
 
@@ -448,18 +516,25 @@ class Utils:
                         endpoint_name,
                         chunk_size=chunk_size,
                         save_to_disk=save_to_disk,
-                        append_mode=True
+                        append_mode=True,
+                        skip_empty_columns=False  # Não remover colunas vazias ainda
                     )
                 else:
                     processed_data = Utils.process_and_save_data_in_chunks(
                         data_buffer,
                         endpoint_name,
                         chunk_size=chunk_size,
-                        save_to_disk=save_to_disk
+                        save_to_disk=save_to_disk,
+                        skip_empty_columns=False  # Não remover colunas vazias ainda
                     )
                     file_header_written = True
 
                 processed_count += len(processed_data)
+
+            # ✅ NOVO: Pós-processamento para remover colunas vazias após processar todos os dados
+            if save_to_disk and processed_count > 0:
+                logging.info(f"🧹 Iniciando pós-processamento para remover colunas vazias: {endpoint_name}")
+                Utils.post_process_csv_file(endpoint_name)
 
             duration = time.time() - start_time
             logging.info(f"✅ Processamento concluído: {processed_count} registros em {duration:.2f}s")
