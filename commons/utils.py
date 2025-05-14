@@ -366,9 +366,11 @@ class Utils:
                 logging.warning(f"Nenhum arquivo chunk encontrado para {endpoint_name}")
                 return False
 
-            logging.info(f"Mesclando {len(chunk_files)} chunks para {endpoint_name}")
+            start_time = time.time()
+            logging.info(f"💾 Iniciando mesclagem e normalização de chunks para: {endpoint_name}")
 
             # Primeiro vamos descobrir todas as colunas possíveis
+            logging.info(f"🔍 Analisando estrutura de colunas em {len(chunk_files)} chunks...")
             all_columns = set()
             for chunk_file in chunk_files:
                 try:
@@ -384,10 +386,15 @@ class Utils:
 
             # Ordenar colunas para garantir consistência
             all_columns_sorted = sorted(all_columns)
-            logging.info(f"Total de {len(all_columns)} colunas encontradas nos chunks")
+            logging.info(f"✓ Identificadas {len(all_columns)} colunas únicas nos chunks")
 
             # Inicializar dataframe principal
             main_df = pd.DataFrame(columns=all_columns_sorted)
+            total_records = 0
+
+            # Iniciar processamento com barra de progresso no log
+            chunk_count = len(chunk_files)
+            progress_interval = max(1, min(10, chunk_count // 10))  # Mostra no máximo 10 atualizações de progresso
 
             # Processar cada chunk e adicionar ao dataframe principal
             for chunk_idx, chunk_file in enumerate(chunk_files):
@@ -409,44 +416,92 @@ class Utils:
                     # Reordenar colunas para garantir consistência
                     chunk_df = chunk_df[all_columns_sorted]
 
-                    # Converter para evitar o warning de FutureWarning
+                    # Estratégia para evitar o warning do pandas
                     if chunk_idx == 0:
                         main_df = chunk_df.copy()
                     else:
-                        # Resolver o aviso de FutureWarning usando concat com DataFrame já convertido
-                        main_df = pd.concat([main_df, chunk_df], ignore_index=True)
+                        # Evitar o warning do pandas usando dtypes explícitos
+                        for col in main_df.columns:
+                            # Garantir que as colunas tenham o mesmo dtype antes da concatenação
+                            col_dtype = main_df[col].dtype
+                            if col in chunk_df:
+                                # Só convertemos se necessário para evitar operações caras
+                                if chunk_df[col].dtype != col_dtype:
+                                    try:
+                                        chunk_df[col] = chunk_df[col].astype(col_dtype)
+                                    except Exception:
+                                        # Se a conversão falhar, não tem problema
+                                        pass
 
-                    logging.info(f"Chunk {chunk_idx + 1}/{len(chunk_files)} processado: {len(chunk_df)} registros")
+                        # Usar concat com ignore_index=True para evitar problemas com índices duplicados
+                        main_df = pd.concat([main_df, chunk_df], ignore_index=True, sort=False)
+
+                    total_records += len(chunk_df)
+
+                    # Log de progresso simplificado
+                    show_progress = (chunk_idx % progress_interval == 0) or (chunk_idx == 0) or (chunk_idx == chunk_count - 1)
+                    if show_progress:
+                        progress_pct = (chunk_idx + 1) / chunk_count * 100
+                        logging.info(
+                            f"Progresso: {progress_pct:.1f}% | Chunk: {chunk_idx + 1}/{chunk_count} | Registros: {total_records}")
 
                 except Exception as e:
-                    logging.error(f"Erro ao processar chunk {chunk_file}: {str(e)}")
-                    raise
+                    logging.error(f"Erro ao processar chunk {os.path.basename(chunk_file)}: {str(e)}")
 
-            # Aplicar transformações globais
-            if not main_df.empty:
-                # Remover colunas vazias (opcional)
-                main_df = Utils._remove_empty_columns(main_df)
-
-                # Converter colunas para inteiros quando possível
-                main_df = Utils._convert_columns_to_nullable_int(main_df)
-
-                # Salvar o resultado final
-                main_df.to_csv(final_csv, sep=";", index=False)
-                logging.info(
-                    f"✅ Arquivo final criado: {final_csv} com {len(main_df)} registros e {len(main_df.columns)} colunas")
-
-                # Opcionalmente, remover os chunks para economizar espaço
-                for chunk_file in chunk_files:
-                    os.remove(chunk_file)
-                logging.info("Arquivos temporários removidos")
-
-                return True
-            else:
-                logging.warning(f"Nenhum dado para salvar no arquivo final para {endpoint_name}")
+            # Se não temos dados após o processamento, sair com erro
+            if main_df.empty:
+                logging.warning(f"DataFrame mesclado está vazio após processamento para {endpoint_name}")
+                logging.info(f"| {endpoint_name:<15} | {'❌ Falha':<25} | {0:<10} | {0:<10.2f} |")
+                logging.info(f"{'--' * 45}")
                 return False
 
+            # Iniciar pós-processamento
+            logging.info("{'#' * 100}")
+            logging.info("📋 RESUMO DO PÓS-PROCESSAMENTO:")
+            logging.info("{'#' * 100}")
+
+            # Identificar e remover colunas vazias
+            empty_cols = [col for col in main_df.columns if main_df[col].isna().all() or (main_df[col].astype(str).str.strip().eq('').all())]  # noqa
+
+            if empty_cols:
+                main_df = main_df.drop(columns=empty_cols)
+                logging.info(f"- Total registros: {len(main_df)}")
+                logging.info(f"- Colunas originais: {len(main_df.columns) + len(empty_cols)}")
+                logging.info(f"- Colunas removidas: {len(empty_cols)}")
+                logging.info(f"- Colunas finais: {len(main_df.columns)}")
+            else:
+                logging.info(f"- Total registros: {len(main_df)}")
+                logging.info(f"- Colunas: {len(main_df.columns)}")
+
+            # Converter colunas para inteiros quando possível
+            numeric_cols = []
+            for col in main_df.columns:
+                try:
+                    # Verificar se a coluna parece ser numérica
+                    if pd.to_numeric(main_df[col], errors='coerce').notna().all():
+                        # Se todas as entradas não-NA podem ser convertidas para inteiros
+                        if pd.to_numeric(main_df[col], errors='coerce').dropna().apply(lambda x: x.is_integer()).all():
+                            main_df[col] = pd.to_numeric(main_df[col], errors='coerce').astype('Int64')
+                            numeric_cols.append(col)
+                except Exception:
+                    pass  # Ignorar erros e manter a coluna como está
+
+            # Salvar o resultado final
+            main_df.to_csv(final_csv, sep=";", index=False)
+
+            # Estatísticas finais
+            duration = time.time() - start_time
+            logging.info(f"{'-' * 100}")
+            logging.info(f"| {endpoint_name:<15} | {'✓ Sucesso':<25} | {len(main_df):<10} | {duration:<10.2f} |")
+            logging.info(f"{'-' * 100}")
+            logging.info(f"✓ {endpoint_name}: {len(main_df)} registros em {duration:.2f}s")
+            logging.info(f"{'#' * 90}")
+
+            return True
         except Exception as e:
             logging.error(f"❌ Erro ao mesclar chunks para {endpoint_name}: {str(e)}")
+            logging.info(f"| {endpoint_name:<15} | {'❌ Falha':<25} | {0:<10} | {0:<10.2f} |")
+            logging.info(f"{'--' * 45}")
             raise
 
     @staticmethod
@@ -551,8 +606,7 @@ class Utils:
 
                             processed_count += len(processed_data)
                             total_batch_count += 1
-                            logging.info(
-                                f"Processado até a página {page_num}/{total_pages} - Lote {total_batch_count} com total acumulado de {processed_count} registros")  # noqa
+                            logging.info(f"Processado até a página {page_num}/{total_pages} - Lote {total_batch_count} com total acumulado de {processed_count} registros")  # noqa
 
                             data_buffer = []
                             batch_counter = 0

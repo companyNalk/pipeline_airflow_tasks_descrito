@@ -93,3 +93,6 @@ settings.yaml
 
 # Arquivos de cache
 .cache/
+
+# Scripts para teste local
+local/

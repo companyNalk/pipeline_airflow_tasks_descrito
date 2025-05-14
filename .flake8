@@ -9,4 +9,6 @@ exclude =
     build,
     dist
     legacy-integrations
+    bkp
+    local
 ignore = E203, W503
