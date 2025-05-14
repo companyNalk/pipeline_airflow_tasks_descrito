@@ -19,6 +19,11 @@ import requests
 from core import gcs
 from google.cloud import storage
 
+MAX_WORKERS = 10
+REQUEST_COUNTER_LOCK = Lock()
+request_counter = 0
+reset_time = time.time() + 60
+
 
 def generic_function(customer, endpoint_name):
     # LOGGING
@@ -44,11 +49,6 @@ def generic_function(customer, endpoint_name):
     ROUTER = GENERIC_NAME
     API_RATE_LIMIT = 100  # Máximo de 100 requisições por minuto
 
-    # PARALELISMO
-    MAX_WORKERS = 10
-    REQUEST_COUNTER_LOCK = Lock()
-    request_counter = 0
-    reset_time = time.time() + 60
     THREAD_DELAY = 0.5  # Atraso entre requisições (em segundos)
     BACKOFF_MULTIPLIER = 1.5  # Multiplicador para recuo dinâmico
 
