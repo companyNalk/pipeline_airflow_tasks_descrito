@@ -2,6 +2,7 @@ import glob
 import logging
 import os
 import re
+import shutil
 import time
 import unicodedata
 from typing import Dict, Any, List, Callable
@@ -275,6 +276,27 @@ class Utils:
         return chunks_dir
 
     @staticmethod
+    def _cleanup_chunks_directory(endpoint_name: str) -> bool:
+        """
+        Remove o diretório de chunks temporários após o processamento bem-sucedido.
+        """
+        try:
+            chunks_dir = Utils._get_chunks_dir(endpoint_name)
+
+            # Verificar se o diretório existe
+            if os.path.exists(chunks_dir):
+                # Remover o diretório e todo seu conteúdo
+                shutil.rmtree(chunks_dir)
+                logging.info(f"🗑 Diretório de chunks removido com sucesso: {chunks_dir}")
+                return True
+            else:
+                logging.warning(f"Diretório de chunks não encontrado: {chunks_dir}")
+                return False
+        except Exception as e:
+            logging.error(f"❌ Erro ao remover diretório de chunks para {endpoint_name}: {str(e)}")
+            return False
+
+    @staticmethod
     def process_and_save_data_in_chunks(raw_data: List[Dict], endpoint_name: str, chunk_size: int = 1000,
                                         save_to_disk: bool = True, batch_id: int = 0,
                                         skip_empty_columns: bool = False) -> List[Dict]:
@@ -505,13 +527,20 @@ class Utils:
             raise
 
     @staticmethod
-    def post_process_csv_file(endpoint_name: str) -> bool:
+    def post_process_csv_file(endpoint_name: str, cleanup_chunks: bool = True) -> bool:
         """
         Função para pós-processamento do arquivo CSV completo.
         Aplica normalização de colunas após todos os lotes terem sido processados.
+        Opcionalmente remove os chunks temporários após o processamento.
         """
-        # Esta função agora simplesmente chama o método de mesclagem
-        return Utils.merge_chunks_and_normalize(endpoint_name)
+        # Mesclar os chunks
+        merge_success = Utils.merge_chunks_and_normalize(endpoint_name)
+
+        # Se solicitado e a mesclagem foi bem-sucedida, remover os chunks
+        if merge_success and cleanup_chunks:
+            Utils._cleanup_chunks_directory(endpoint_name)
+
+        return merge_success
 
     @staticmethod
     def process_data_in_batches(endpoint_name: str, endpoint_path: str, headers: Dict, fetch_page_func: Callable,
