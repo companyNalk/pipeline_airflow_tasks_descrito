@@ -3,7 +3,11 @@ Facebook Ads module for data extraction functions.
 This module contains functions specific to the Facebook Ads integration.
 """
 
-from core import gcs
+import os
+import tempfile
+import shutil
+from pathlib import Path
+from core import clickhouse
 
 
 def run(customer):
@@ -15,20 +19,24 @@ def run(customer):
     from typing import List, Dict
     import os
     import pathlib
+    import uuid
+    import secrets
+    import string
 
     import aiohttp
     import pandas as pd
-    from google.cloud import storage
 
     # Configuration
-    BUCKET_NAME = customer['bucket_name']
-    HISTORICAL_START_DATE = "2024-01-01"
-    # CHECKPOINT_DIR = "checkpoints"
-    API_ACCESS_TOKEN = customer['api_access_token']
-    API_ACCOUNT_IDS = ['api_account_ids']
+    HISTORICAL_START_DATE = customer['start_date']
+    API_ACCESS_TOKEN = customer['access_token']
+    API_ACCOUNT_IDS = customer['accounts_ids'].split(',')
 
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+    
+    # Create a temporary directory for storing files
+    TEMP_DIR = Path(tempfile.gettempdir()) / f"facebook_ads_{uuid.uuid4().hex}"
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Created temporary directory: {TEMP_DIR}")
 
     FIELDS = [
         'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
@@ -59,13 +67,17 @@ def run(customer):
     ]
 
     class FacebookAdsCollector:
-        def __init__(self, access_token: str, account_ids: List[str], bucket_name: str):
+        def __init__(self, access_token: str, account_ids: List[str], clickhouse_params: Dict):
             self.access_token = access_token
             self.account_ids = account_ids
             self.base_url = "https://graph.facebook.com/v19.0"
             self.session = None
-            self.bucket = storage.Client.from_service_account_json(SERVICE_ACCOUNT_PATH).bucket(bucket_name)
+            self.clickhouse_params = clickhouse_params
+            self.temp_dir = TEMP_DIR
             self.semaphore = asyncio.Semaphore(500)  # Paralelismo de 500
+            self.processed_files = []
+            self.all_data_frames = []  # Store all DataFrames for combined upload
+            self.clickhouse_client = clickhouse.get_client()
 
         async def get_session(self):
             if not self.session:
@@ -340,8 +352,8 @@ def run(customer):
 
             return df
 
-        async def save_to_gcs(self, df: pd.DataFrame, date_str: str):
-            """Save data to Google Cloud Storage with fixed columns"""
+        async def save_to_temp_file(self, df: pd.DataFrame, date_str: str) -> str:
+            """Save data to a temporary file with fixed columns"""
             if df.empty:
                 print(f"WARNING: No data to save for {date_str}")
                 # Still save an empty file with fixed columns
@@ -351,18 +363,81 @@ def run(customer):
             df = self._ensure_fixed_columns(df)
 
             # Use facebook_ads_{date} format for filename
-            blob_name = f"facebook_ads_{date_str}.csv"
-            blob = self.bucket.blob(blob_name)
-
-            print(f"Saving to GCS: {blob_name}")
-            csv_data = df.to_csv(index=False).encode('utf-8')
-            blob.upload_from_string(csv_data, content_type='text/csv')
-            print(f"Successfully saved {len(df)} records")
+            filename = f"facebook_ads_{date_str}.csv"
+            filepath = self.temp_dir / filename
+            
+            print(f"Saving to temporary file: {filepath}")
+            df.to_csv(filepath, index=False)
+            self.processed_files.append(filepath)
+            print(f"Successfully saved {len(df)} records to {filepath}")
+            
+            return str(filepath)
+        
+        def upload_all_data_to_clickhouse(self):
+            """Upload all collected data to ClickHouse in a single operation"""
+            if not self.all_data_frames:
+                print("WARNING: No data to upload to ClickHouse")
+                return
+            
+            # Combine all DataFrames into one
+            combined_df = pd.concat(self.all_data_frames, ignore_index=True)
+            
+            if combined_df.empty:
+                print("WARNING: Combined DataFrame is empty, nothing to upload")
+                return
+            
+            print(f"Uploading combined data to ClickHouse ({len(combined_df)} rows)")
+            
+            # Create a client with the provided connection parameters
+            try:
+                # Get database name from connection params or use default
+                database = self.clickhouse_params.get('database', 'default')
+                table_name = self.clickhouse_params.get('table_name', 'raw_facebook_ads')
+                
+                client = self.clickhouse_client
+                
+                # Generate CREATE TABLE query
+                create_table_query = clickhouse.get_create_table_query(combined_df, database, table_name)
+                
+                # Execute CREATE TABLE query
+                client.command(create_table_query)
+                print(f"Created or verified table: {database}.{table_name}")
+                
+                # Insert data
+                result = clickhouse.insert_df_to_clickhouse(combined_df, database, table_name, client)
+                if result:
+                    print(f"Successfully uploaded {len(combined_df)} records to ClickHouse table {database}.{table_name}")
+                else:
+                    print(f"Failed to upload data to ClickHouse")
+            
+            except Exception as e:
+                print(f"Error uploading to ClickHouse: {e}")
+                traceback.print_exc()
 
         def is_date_processed(self, date_str: str) -> bool:
-            """Check if date is already processed"""
-            blob_name = f"facebook_ads_{date_str}.csv"
-            return self.bucket.blob(blob_name).exists()
+            """Check if date is already processed by checking ClickHouse"""
+            try:
+                database = self.clickhouse_params.get('database', 'default')
+                table_name = self.clickhouse_params.get('table_name', 'raw_facebook_ads')
+                
+                client = self.clickhouse_client
+
+                # Check if table exists
+                check_table_query = f"EXISTS TABLE {database}.{table_name}"
+                table_exists = client.command(check_table_query)
+                
+                if not table_exists:
+                    return False
+                
+                # Check if data for this date exists
+                check_query = f"SELECT count() FROM {database}.{table_name} WHERE date = '{date_str}'"
+                result = client.query(check_query)
+                count = result.result_rows[0][0]
+                
+                return count > 0
+            except Exception as e:
+                print(f"Error checking if date is processed: {e}")
+                return False
 
         def get_dates_to_process(self) -> List[str]:
             """Get list of dates to process"""
@@ -382,6 +457,17 @@ def run(customer):
                 current += timedelta(days=1)
 
             return dates
+        
+        def cleanup_temp_files(self):
+            """Clean up temporary files and directory"""
+            print(f"Cleaning up temporary files...")
+            try:
+                # Remove the temporary directory and all its contents
+                if self.temp_dir.exists():
+                    shutil.rmtree(self.temp_dir)
+                    print(f"Removed temporary directory: {self.temp_dir}")
+            except Exception as e:
+                print(f"Error cleaning up temporary files: {e}")
 
         async def run(self):
             """Execute collection process"""
@@ -397,10 +483,20 @@ def run(customer):
 
                 total_start_time = time.time()
 
+                # Process all dates and collect data
                 for i, date_str in enumerate(dates, 1):
                     print(f"\nProcessing ({i}/{len(dates)}): {date_str}")
                     df = await self.process_date(date_str)
-                    await self.save_to_gcs(df, date_str)
+                    
+                    # Save to temp file for reference
+                    await self.save_to_temp_file(df, date_str)
+                    
+                    # Add to the list of DataFrames for combined upload
+                    if not df.empty:
+                        self.all_data_frames.append(df)
+
+                # Upload all collected data at once
+                self.upload_all_data_to_clickhouse()
 
                 total_elapsed = time.time() - total_start_time
                 print(f"\nCollection Complete!")
@@ -413,20 +509,20 @@ def run(customer):
                 traceback.print_exc()
             finally:
                 await self.close_session()
+                self.cleanup_temp_files()
 
     async def main():
         print("\n" + "=" * 60)
         print("FACEBOOK ADS COLLECTOR - WITH FIXED HEADERS")
         print("=" * 60)
         print(f"Accounts: {', '.join(API_ACCOUNT_IDS)}")
-        print(f"Bucket: {BUCKET_NAME}")
         print(f"Start Date: {HISTORICAL_START_DATE}")
         print("=" * 60)
 
         collector = FacebookAdsCollector(
             access_token=API_ACCESS_TOKEN,
             account_ids=API_ACCOUNT_IDS,
-            bucket_name=BUCKET_NAME
+            clickhouse_params=customer['clickhouse_connection_params']
         )
 
         await collector.run()
