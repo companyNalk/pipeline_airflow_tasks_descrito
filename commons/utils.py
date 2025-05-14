@@ -1,3 +1,4 @@
+import glob
 import logging
 import os
 import re
@@ -88,20 +89,20 @@ class Utils:
             raise
 
     @staticmethod
-    def _normalize_key(key: str) -> str:
+    def _normalize_key(key: str, use_pascal_case: bool = False) -> str:
         """
         Normaliza uma chave de string aplicando transformações para padronização.
         """
         key = key.strip('\'"')
 
         # Detecta se é um camelCase com a primeira letra maiúscula (PascalCase)
-        is_pascal_case = bool(re.match(r'^[A-Z]', key) and re.search(r'[a-z]', key))
+        # is_pascal_case = bool(re.match(r'^[A-Z]', key) and re.search(r'[a-z]', key))
 
         # Detecta se é um verdadeiro camelCase (inicia com minúscula, depois tem maiúscula)
         is_true_camel_case = bool(re.match(r'^[a-z].*[A-Z]', key))
 
         # Converte PascalCase para snake_case (ex: ExibeContato -> exibe_contato)
-        if is_pascal_case:
+        if use_pascal_case:
             # Insere underscore antes de cada letra maiúscula, exceto a primeira
             key = re.sub(r'(?<!^)([A-Z][a-z])', r'_\1', key)
             # Trata seguências de maiúsculas como siglas (ex: ID em IdStatusGestao)
@@ -263,11 +264,22 @@ class Utils:
             raise
 
     @staticmethod
+    def _get_chunks_dir(endpoint_name: str) -> str:
+        """
+        Retorna o diretório para armazenar chunks temporários.
+        """
+        base_output_dir = "output"
+        output_dir = os.path.join(base_output_dir, endpoint_name)
+        chunks_dir = os.path.join(output_dir, "chunks")
+        os.makedirs(chunks_dir, exist_ok=True)
+        return chunks_dir
+
+    @staticmethod
     def process_and_save_data_in_chunks(raw_data: List[Dict], endpoint_name: str, chunk_size: int = 1000,
-                                        save_to_disk: bool = True, append_mode: bool = False,
+                                        save_to_disk: bool = True, batch_id: int = 0,
                                         skip_empty_columns: bool = False) -> List[Dict]:
         """
-        Processa dados brutos em chunks e opcionalmente salva em disco.
+        Processa dados brutos em chunks e salva cada chunk como um arquivo separado.
         """
         if not raw_data:
             logging.warning(f"Nenhum dado recebido para o endpoint {endpoint_name}")
@@ -293,7 +305,7 @@ class Utils:
             # Limpar e normalizar o DataFrame
             df = Utils._normalize_column_names(df)
 
-            # Remoção de colunas vazias agora é opcional e controlada pelo parâmetro
+            # Remoção de colunas vazias é opcional
             if skip_empty_columns:
                 df = Utils._remove_empty_columns(df)
 
@@ -305,46 +317,29 @@ class Utils:
                     f"Processamento concluído: {len(df)} registros para {endpoint_name} (mantidos apenas em memória)")
                 return df.to_dict(orient='records')
 
-            # Preparar para salvar em disco
-            base_output_dir = "output"
-            os.makedirs(base_output_dir, exist_ok=True)
-
-            output_dir = os.path.join(base_output_dir, endpoint_name)
-            os.makedirs(output_dir, exist_ok=True)
-
-            csv_filename = os.path.join(output_dir, f"{endpoint_name}.csv")
+            # Preparar para salvar em disco como chunks separados
+            chunks_dir = Utils._get_chunks_dir(endpoint_name)
 
             # Determinar o número total de chunks
             total_rows = len(df)
             num_chunks = (total_rows + chunk_size - 1) // chunk_size  # Arredonda para cima
 
-            # Verificar se o arquivo existe (para modo append)
-            file_exists = os.path.isfile(csv_filename) and append_mode
-
-            # Processar cada chunk e salvar
+            # Processar cada chunk e salvar em arquivos separados
             for i in range(num_chunks):
                 start_idx = i * chunk_size
                 end_idx = min((i + 1) * chunk_size, total_rows)
                 chunk_df = df.iloc[start_idx:end_idx].copy()
 
-                # Determinar se devemos incluir cabeçalho e modo de escrita
-                include_header = (not append_mode and i == 0) or (append_mode and not file_exists and i == 0)
-                write_mode = 'w' if (i == 0 and not append_mode) or (not file_exists and append_mode) else 'a'
+                # Nome do arquivo com identificador de lote e chunk
+                chunk_filename = os.path.join(chunks_dir, f"batch_{batch_id}_chunk_{i}.csv")
 
-                # Salvar o chunk
-                chunk_df.to_csv(csv_filename, sep=";", index=False, mode=write_mode, header=include_header)
+                # Salvar o chunk com header sempre incluído
+                chunk_df.to_csv(chunk_filename, sep=";", index=False, header=True)
 
-                # Registrar que o arquivo agora existe
-                file_exists = True
+                logging.info(
+                    f"Batch {batch_id}, Chunk {i + 1}/{num_chunks}: Salvos {len(chunk_df)} registros em {chunk_filename}")
 
-                # Log do progresso
-                if include_header:
-                    logging.info(
-                        f"Chunk {i + 1}/{num_chunks}: Iniciado arquivo com cabeçalho ({len(chunk_df)} registros)")
-                else:
-                    logging.info(f"Chunk {i + 1}/{num_chunks}: Adicionados {len(chunk_df)} registros ao arquivo")
-
-            logging.info(f"Processamento concluído: {total_rows} registros salvos em {csv_filename}")
+            logging.info(f"Processamento concluído: {total_rows} registros salvos em chunks separados")
 
             # Retornar os registros processados
             return df.to_dict(orient='records')
@@ -354,54 +349,114 @@ class Utils:
             raise
 
     @staticmethod
+    def merge_chunks_and_normalize(endpoint_name: str) -> bool:
+        """
+        Mescla todos os chunks em um único arquivo CSV normalizado.
+        """
+        try:
+            base_output_dir = "output"
+            output_dir = os.path.join(base_output_dir, endpoint_name)
+            chunks_dir = Utils._get_chunks_dir(endpoint_name)
+            final_csv = os.path.join(output_dir, f"{endpoint_name}.csv")
+
+            # Obter lista de todos os chunks
+            chunk_files = glob.glob(os.path.join(chunks_dir, "*.csv"))
+
+            if not chunk_files:
+                logging.warning(f"Nenhum arquivo chunk encontrado para {endpoint_name}")
+                return False
+
+            logging.info(f"Mesclando {len(chunk_files)} chunks para {endpoint_name}")
+
+            # Primeiro vamos descobrir todas as colunas possíveis
+            all_columns = set()
+            for chunk_file in chunk_files:
+                try:
+                    # Leitura apenas dos cabeçalhos para descobrir colunas
+                    chunk_header = pd.read_csv(chunk_file, sep=";", nrows=0)
+                    all_columns.update(chunk_header.columns)
+                except Exception as e:
+                    logging.warning(f"Erro ao ler cabeçalho do chunk {chunk_file}: {str(e)}")
+
+            if not all_columns:
+                logging.warning(f"Não foi possível extrair colunas dos chunks para {endpoint_name}")
+                return False
+
+            # Ordenar colunas para garantir consistência
+            all_columns_sorted = sorted(all_columns)
+            logging.info(f"Total de {len(all_columns)} colunas encontradas nos chunks")
+
+            # Inicializar dataframe principal
+            main_df = pd.DataFrame(columns=all_columns_sorted)
+
+            # Processar cada chunk e adicionar ao dataframe principal
+            for chunk_idx, chunk_file in enumerate(chunk_files):
+                try:
+                    # Ler o chunk
+                    chunk_df = pd.read_csv(chunk_file, sep=";")
+
+                    # Resolver o aviso de Performance: Criar dicionário de colunas faltantes
+                    missing_columns = {}
+                    for col in all_columns_sorted:
+                        if col not in chunk_df.columns:
+                            missing_columns[col] = [None] * len(chunk_df)
+
+                    # Adicionar colunas ausentes de uma só vez usando concat (mais eficiente)
+                    if missing_columns:
+                        missing_df = pd.DataFrame(missing_columns)
+                        chunk_df = pd.concat([chunk_df, missing_df], axis=1)
+
+                    # Reordenar colunas para garantir consistência
+                    chunk_df = chunk_df[all_columns_sorted]
+
+                    # Converter para evitar o warning de FutureWarning
+                    if chunk_idx == 0:
+                        main_df = chunk_df.copy()
+                    else:
+                        # Resolver o aviso de FutureWarning usando concat com DataFrame já convertido
+                        main_df = pd.concat([main_df, chunk_df], ignore_index=True)
+
+                    logging.info(f"Chunk {chunk_idx + 1}/{len(chunk_files)} processado: {len(chunk_df)} registros")
+
+                except Exception as e:
+                    logging.error(f"Erro ao processar chunk {chunk_file}: {str(e)}")
+                    raise
+
+            # Aplicar transformações globais
+            if not main_df.empty:
+                # Remover colunas vazias (opcional)
+                main_df = Utils._remove_empty_columns(main_df)
+
+                # Converter colunas para inteiros quando possível
+                main_df = Utils._convert_columns_to_nullable_int(main_df)
+
+                # Salvar o resultado final
+                main_df.to_csv(final_csv, sep=";", index=False)
+                logging.info(
+                    f"✅ Arquivo final criado: {final_csv} com {len(main_df)} registros e {len(main_df.columns)} colunas")
+
+                # Opcionalmente, remover os chunks para economizar espaço
+                for chunk_file in chunk_files:
+                    os.remove(chunk_file)
+                logging.info("Arquivos temporários removidos")
+
+                return True
+            else:
+                logging.warning(f"Nenhum dado para salvar no arquivo final para {endpoint_name}")
+                return False
+
+        except Exception as e:
+            logging.error(f"❌ Erro ao mesclar chunks para {endpoint_name}: {str(e)}")
+            raise
+
+    @staticmethod
     def post_process_csv_file(endpoint_name: str) -> bool:
         """
         Função para pós-processamento do arquivo CSV completo.
         Aplica normalização de colunas após todos os lotes terem sido processados.
         """
-        try:
-            base_output_dir = "output"
-            output_dir = os.path.join(base_output_dir, endpoint_name)
-            csv_filename = os.path.join(output_dir, f"{endpoint_name}.csv")
-
-            if not os.path.exists(csv_filename):
-                logging.warning(f"Arquivo CSV não encontrado para pós-processamento: {csv_filename}")
-                return False
-
-            # Carregar o arquivo CSV completo
-            logging.info(f"Iniciando pós-processamento para {csv_filename}")
-            df = pd.read_csv(csv_filename, sep=";")
-
-            if df.empty:
-                logging.warning(f"DataFrame vazio após leitura para {endpoint_name}")
-                return False
-
-            # Registrar estatísticas antes do processamento
-            before_cols = len(df.columns)
-            before_rows = len(df)
-            logging.info(f"Arquivo original: {before_rows} linhas, {before_cols} colunas")
-
-            # Aplicar transformações globais
-            df = Utils._remove_empty_columns(df)
-
-            # Registrar estatísticas após o processamento
-            after_cols = len(df.columns)
-            removed_cols = before_cols - after_cols
-            logging.info(f"Colunas removidas: {removed_cols} ({before_cols} -> {after_cols})")
-
-            # Criar arquivo temporário com novos dados
-            temp_csv = csv_filename + ".temp"
-            df.to_csv(temp_csv, sep=";", index=False)
-
-            # Substituir o arquivo original pelo temporário
-            os.replace(temp_csv, csv_filename)
-
-            logging.info(f"✅ Pós-processamento concluído: {csv_filename}")
-            return True
-
-        except Exception as e:
-            logging.error(f"❌ Erro no pós-processamento do arquivo CSV para {endpoint_name}: {str(e)}")
-            return False
+        # Esta função agora simplesmente chama o método de mesclagem
+        return Utils.merge_chunks_and_normalize(endpoint_name)
 
     @staticmethod
     def process_data_in_batches(endpoint_name: str, endpoint_path: str, headers: Dict, fetch_page_func: Callable,
@@ -415,38 +470,59 @@ class Utils:
 
             start_time = time.time()
 
-            # Limpar arquivo existente se estiver salvando em disco
+            # Limpar diretórios existentes se estiver salvando em disco
             if save_to_disk:
-                output_dir = os.path.join("output", endpoint_name)
+                base_output_dir = "output"
+                output_dir = os.path.join(base_output_dir, endpoint_name)
+                chunks_dir = Utils._get_chunks_dir(endpoint_name)
+
+                # Verificar e criar os diretórios
                 os.makedirs(output_dir, exist_ok=True)
-                csv_filename = os.path.join(output_dir, f"{endpoint_name}.csv")
-                if os.path.exists(csv_filename):
-                    os.remove(csv_filename)
-                    logging.info(f"Arquivo anterior removido: {csv_filename}")
+
+                # Limpar chunks existentes
+                chunk_files = glob.glob(os.path.join(chunks_dir, "*.csv"))
+                for f in chunk_files:
+                    try:
+                        os.remove(f)
+                    except Exception as e:
+                        logging.warning(f"Não foi possível remover arquivo {f}: {str(e)}")
+
+                logging.info(f"Diretório de chunks limpo para: {endpoint_name}")
 
             # Buscar primeira página para obter metadados
             first_page = fetch_page_func(endpoint_path, headers, 1)
+            if not first_page or 'total_pages' not in first_page:
+                raise ValueError(f"A primeira página retornou dados inválidos: {first_page}")
+
             total_pages = first_page['total_pages']
 
             # Contadores e armazenamento temporário
             data_buffer = []
-            data_buffer.extend(first_page['items'])
+
+            # Adicionar itens da primeira página
+            if 'items' in first_page and first_page['items']:
+                data_buffer.extend(first_page['items'])
+            else:
+                logging.warning("Primeira página não contém itens")
+
             processed_count = 0
-            file_header_written = False
+            total_batch_count = 0
 
             # Processar primeira página se necessário
             if len(data_buffer) >= chunk_size or total_pages == 1 or batch_size == 1:
+                logging.info(f"Processando lote inicial com {len(data_buffer)} registros")
                 processed_data = Utils.process_and_save_data_in_chunks(
                     data_buffer,
                     endpoint_name,
                     chunk_size=chunk_size,
                     save_to_disk=save_to_disk,
+                    batch_id=total_batch_count,
                     skip_empty_columns=False  # Não remover colunas vazias ainda
                 )
                 processed_count += len(processed_data)
                 data_buffer = []
-                file_header_written = True
-                logging.info(f"Processado lote 1/{total_pages} com {len(processed_data)} registros")
+                total_batch_count += 1
+                logging.info(f"Processado lote {total_batch_count} com {len(processed_data)} registros")
 
             # Buscar páginas restantes
             if total_pages > 1:
@@ -464,28 +540,19 @@ class Utils:
 
                         # Processar quando atingir o tamanho do lote ou na última página
                         if batch_counter >= batch_size or page_num == total_pages:
-                            if file_header_written:
-                                processed_data = Utils.process_and_save_data_in_chunks(
-                                    data_buffer,
-                                    endpoint_name,
-                                    chunk_size=chunk_size,
-                                    save_to_disk=save_to_disk,
-                                    append_mode=True,
-                                    skip_empty_columns=False  # Não remover colunas vazias ainda
-                                )
-                            else:
-                                processed_data = Utils.process_and_save_data_in_chunks(
-                                    data_buffer,
-                                    endpoint_name,
-                                    chunk_size=chunk_size,
-                                    save_to_disk=save_to_disk,
-                                    skip_empty_columns=False  # Não remover colunas vazias ainda
-                                )
-                                file_header_written = True
+                            processed_data = Utils.process_and_save_data_in_chunks(
+                                data_buffer,
+                                endpoint_name,
+                                chunk_size=chunk_size,
+                                save_to_disk=save_to_disk,
+                                batch_id=total_batch_count,
+                                skip_empty_columns=False  # Não remover colunas vazias ainda
+                            )
 
                             processed_count += len(processed_data)
+                            total_batch_count += 1
                             logging.info(
-                                f"Processado até a página {page_num}/{total_pages} com {processed_count} registros total")
+                                f"Processado até a página {page_num}/{total_pages} - Lote {total_batch_count} com total acumulado de {processed_count} registros")  # noqa
 
                             data_buffer = []
                             batch_counter = 0
@@ -497,44 +564,39 @@ class Utils:
                     except Exception as e:
                         logging.error(f"❌ Erro na página {page_num}: {str(e)}")
                         if data_buffer:
-                            Utils.process_and_save_data_in_chunks(
-                                data_buffer,
-                                endpoint_name,
-                                chunk_size=chunk_size,
-                                save_to_disk=save_to_disk,
-                                append_mode=file_header_written,
-                                skip_empty_columns=False  # Não remover colunas vazias ainda
-                            )
+                            try:
+                                Utils.process_and_save_data_in_chunks(
+                                    data_buffer,
+                                    endpoint_name,
+                                    chunk_size=chunk_size,
+                                    save_to_disk=save_to_disk,
+                                    batch_id=total_batch_count,
+                                    skip_empty_columns=False  # Não remover colunas vazias ainda
+                                )
+                                total_batch_count += 1
+                            except Exception as inner_e:
+                                logging.error(
+                                    f"❌ Erro ao processar buffer após falha na página {page_num}: {str(inner_e)}")
                             data_buffer = []
 
-            # ✅ Corrigir: Processar buffer restante ao final
+            # Processar buffer restante ao final
             if data_buffer:
                 logging.info(f"📦 Processando buffer final com {len(data_buffer)} registros restantes")
-                if file_header_written:
-                    processed_data = Utils.process_and_save_data_in_chunks(
-                        data_buffer,
-                        endpoint_name,
-                        chunk_size=chunk_size,
-                        save_to_disk=save_to_disk,
-                        append_mode=True,
-                        skip_empty_columns=False  # Não remover colunas vazias ainda
-                    )
-                else:
-                    processed_data = Utils.process_and_save_data_in_chunks(
-                        data_buffer,
-                        endpoint_name,
-                        chunk_size=chunk_size,
-                        save_to_disk=save_to_disk,
-                        skip_empty_columns=False  # Não remover colunas vazias ainda
-                    )
-                    file_header_written = True
-
+                processed_data = Utils.process_and_save_data_in_chunks(
+                    data_buffer,
+                    endpoint_name,
+                    chunk_size=chunk_size,
+                    save_to_disk=save_to_disk,
+                    batch_id=total_batch_count,
+                    skip_empty_columns=False  # Não remover colunas vazias ainda
+                )
                 processed_count += len(processed_data)
+                total_batch_count += 1
 
-            # ✅ NOVO: Pós-processamento para remover colunas vazias após processar todos os dados
+            # Pós-processamento para mesclar todos os chunks e normalizar
             if save_to_disk and processed_count > 0:
-                logging.info(f"🧹 Iniciando pós-processamento para remover colunas vazias: {endpoint_name}")
-                Utils.post_process_csv_file(endpoint_name)
+                logging.info(f"🧹 Iniciando mesclagem e normalização de chunks para: {endpoint_name}")
+                Utils.merge_chunks_and_normalize(endpoint_name)
 
             duration = time.time() - start_time
             logging.info(f"✅ Processamento concluído: {processed_count} registros em {duration:.2f}s")
