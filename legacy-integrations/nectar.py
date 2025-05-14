@@ -1,20 +1,19 @@
+import io
+import json
+import os
+import pathlib
+import re
+import time
+import unicodedata
+from datetime import datetime
+
+import pandas as pd
+import requests
 from core import gcs
+from google.cloud import storage
 
 
 def run_qualification(customer):
-    import io
-    import json
-    import re
-    import time
-    import unicodedata
-    from datetime import datetime
-
-    import pandas as pd
-    import requests
-    from google.cloud import storage
-    import pathlib
-    import os
-
     # Configurações Globais
     ENDPOINT = 'qualificacoes'
     API_TOKEN = customer['API_TOKEN']
@@ -269,18 +268,6 @@ def run_qualification(customer):
 
 
 def run_opportunity(customer):
-    import io
-    import re
-    import time
-    import unicodedata
-    from datetime import datetime
-
-    import pandas as pd
-    import requests
-    from google.cloud import storage
-    import os
-    import pathlib
-
     ENDPOINT = 'oportunidades'
     API_TOKEN = customer['API_TOKEN']
     BASE_URL = f"{customer['BASE_URL']}/{ENDPOINT}"
