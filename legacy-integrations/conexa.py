@@ -23,6 +23,7 @@ MAX_WORKERS = 10
 REQUEST_COUNTER_LOCK = Lock()
 request_counter = 0
 reset_time = time.time() + 60
+BACKOFF_MULTIPLIER = 1.5  # Multiplicador para recuo dinâmico
 
 
 def generic_function(customer, endpoint_name):
@@ -50,7 +51,6 @@ def generic_function(customer, endpoint_name):
     API_RATE_LIMIT = 100  # Máximo de 100 requisições por minuto
 
     THREAD_DELAY = 0.5  # Atraso entre requisições (em segundos)
-    BACKOFF_MULTIPLIER = 1.5  # Multiplicador para recuo dinâmico
 
     def check_rate_limit():
         """
