@@ -730,7 +730,7 @@ def main():
         # 5. Gerar resumo final
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
 
-        # Se houver falhas, lançar exceção
+        # Se houver falhas, lançar exceção UP
         if not success:
             raise Exception(f"Falhas nos endpoints: {success}")
 
