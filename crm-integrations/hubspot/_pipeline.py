@@ -1,16 +1,13 @@
-import csv
 import os
 import time
+
+import hubspot
+from hubspot.crm.properties import ApiException
 
 from commons.app_inicializer import AppInitializer
 from commons.report_generator import ReportGenerator
 from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
-from generic.http_client import HttpClient
-from generic.rate_limiter import RateLimiter
-
-import hubspot
-from hubspot.crm.properties import ApiException
 
 logger = AppInitializer.initialize()
 

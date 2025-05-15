@@ -1,0 +1,3 @@
+aiohttp==3.11.16
+hubspot==0.1.14.dev0
+hubspot-api-client==11.1.0
