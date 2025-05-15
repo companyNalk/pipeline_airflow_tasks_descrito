@@ -26,7 +26,7 @@ reset_time = time.time() + 60
 BACKOFF_MULTIPLIER = 1.5  # Multiplicador para recuo dinâmico
 
 
-def generic_function(customer, endpoint_name):
+def generic_function(customer, endpoint_name, folder_name):
     # LOGGING
     logging.basicConfig(
         level=logging.INFO,
@@ -38,7 +38,7 @@ def generic_function(customer, endpoint_name):
 
     # GCP
     BUCKET_NAME = customer['bucket_name']
-    FOLDER_PATH = GENERIC_NAME
+    FOLDER_PATH = 'folder_name'
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
     CSV_FILENAME = f"{GENERIC_NAME}.csv"
@@ -772,15 +772,15 @@ def generic_function(customer, endpoint_name):
 
 
 def run_contracts(customer):
-    generic_function(customer, 'contracts')
+    generic_function(customer, 'contracts', 'contracts')
 
 
 def run_recurring_sales(customer):
-    generic_function(customer, 'recurringSales')
+    generic_function(customer, 'recurringSales', 'recurring_sales')
 
 
 def run_sales(customer):
-    generic_function(customer, 'sales')
+    generic_function(customer, 'sales', 'sales')
 
 
 def get_extraction_tasks():
