@@ -41,7 +41,7 @@ def generic_function(customer, endpoint_name, folder_name):
     FOLDER_PATH = folder_name
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
-    CSV_FILENAME = f"{GENERIC_NAME}.csv"
+    CSV_FILENAME = f"{folder_name}.csv"
 
     # API
     API_BASE_URL = customer['api_base_url']
