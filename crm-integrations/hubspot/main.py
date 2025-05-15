@@ -16,7 +16,7 @@ logger = AppInitializer.initialize()
 
 MAX_IDS = 100
 RATE_LIMIT = 100
-MAX_WORKERS = min(10, os.cpu_count() or 5)
+MAX_WORKERS = min(6, os.cpu_count() or 4)
 MAX_PROPERTIES_PER_REQUEST = 250
 LIMIT_PER_PAGE = 100
 
