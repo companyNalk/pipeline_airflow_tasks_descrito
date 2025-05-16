@@ -16,7 +16,9 @@ def run_vendas(customer):
     import os
     import time
     import pathlib
+    import random
     from google.cloud import bigquery
+    from requests.exceptions import HTTPError
 
     DOMINIO = customer['api_dominio']
     EMAIL = customer['api_email']
@@ -45,34 +47,76 @@ def run_vendas(customer):
     # Inicialização de variáveis
     todas_dados = []  # Para armazenar os dados coletados
     pagina_atual = 1
+    max_retries = 5  # Número máximo de tentativas
 
     while True:
         # Atualizar o número da página na requisição
         data["pagina"] = pagina_atual
 
-        # Fazer a requisição
-        response = requests.get(url_base, headers=headers, json=data)
-        response.raise_for_status()
-        response_data = response.json()
+        retry_count = 0
+        success = False
 
-        # Adicionar os dados da página atual na lista total
-        if "dados" in response_data and response_data["dados"]:
-            todas_dados.extend(response_data["dados"])
+        # Loop de retry com backoff exponencial
+        while not success and retry_count < max_retries:
+            try:
+                # Fazer a requisição
+                response = requests.get(url_base, headers=headers, json=data)
+                response.raise_for_status()  # Levanta exceção para status codes de erro
+                response_data = response.json()
+                success = True  # Se chegar aqui, a requisição foi bem-sucedida
 
-        # Verificar se todas as páginas foram lidas
-        if pagina_atual >= response_data["total_de_paginas"]:
-            break  # Finalizar o loop quando atingir a última página
+                # Adicionar os dados da página atual na lista total
+                if "dados" in response_data and response_data["dados"]:
+                    todas_dados.extend(response_data["dados"])
 
-        # Avançar para a próxima página
-        # pagina_atual += 1
-        time.sleep(5)
+                print(f"Página {pagina_atual} processada com sucesso.")
 
-        print(f"Página {pagina_atual} processada.")
+                # Verificar se todas as páginas foram lidas
+                if pagina_atual >= response_data["total_de_paginas"]:
+                    break  # Finalizar o loop quando atingir a última página
 
-    # Converter os dados coletados para um DataFrame, se necessário
+                # Avançar para a próxima página
+                pagina_atual += 1
+
+                # Pausa entre requisições para evitar alcançar limites de taxa
+                time.sleep(5)
+
+            except HTTPError as e:
+                if e.response.status_code == 429:
+                    retry_count += 1
+                    # Backoff exponencial com jitter (variação aleatória)
+                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                    print(
+                        f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                    time.sleep(wait_time)
+                else:
+                    # Para outros erros HTTP, registre e levante a exceção
+                    print(f"Erro HTTP: {e}")
+                    raise
+            except Exception as e:
+                # Para outros tipos de exceções
+                print(f"Erro inesperado: {e}")
+                raise
+
+        # Se saiu do loop de retry sem sucesso, interrompe o processamento
+        if not success:
+            print(
+                f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+
+        # Se finalizou o processamento de todas as páginas, sai do loop principal
+        if pagina_atual >= response_data.get("total_de_paginas", 0) or not success:
+            break
+
+    # Verificar se foram coletados dados
+    if not todas_dados:
+        print("Nenhum dado foi coletado. Encerrando sem atualizar o BigQuery.")
+        return
+
+    # Converter os dados coletados para um DataFrame
     df_vendas = pd.DataFrame(todas_dados)
-    # print(f"Total de registros coletados: {len(df_historico)}")
+    print(f"Total de registros coletados: {len(df_vendas)}")
 
+    # Carregar para o BigQuery
     client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
     table_ref = client.dataset(dataset_id).table(table_id)
     # Define the table schema
@@ -82,6 +126,8 @@ def run_vendas(customer):
     # Load the DataFrame to BigQuery
     load_job = client.load_table_from_dataframe(df_vendas, table_ref, job_config=job_config)
     load_job.result()  # Wait for the job to complete
+
+    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}")
 
 
 def run_reservas(customer):
