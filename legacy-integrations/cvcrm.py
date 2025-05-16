@@ -73,7 +73,7 @@ def run_vendas(customer):
     df_vendas = pd.DataFrame(todas_dados)
     # print(f"Total de registros coletados: {len(df_historico)}")
 
-    client = bigquery.Client(project=PROJECT_ID)
+    client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
     table_ref = client.dataset(dataset_id).table(table_id)
     # Define the table schema
     job_config = bigquery.LoadJobConfig()
