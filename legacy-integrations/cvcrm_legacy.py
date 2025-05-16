@@ -48,6 +48,7 @@ def run_vendas(customer):
     todas_dados = []  # Para armazenar os dados coletados
     pagina_atual = 1
     max_retries = 5  # Número máximo de tentativas
+    ultima_pagina = None
 
     while True:
         # Atualizar o número da página na requisição
@@ -65,21 +66,19 @@ def run_vendas(customer):
                 response_data = response.json()
                 success = True  # Se chegar aqui, a requisição foi bem-sucedida
 
+                # Captura o total de páginas
+                if ultima_pagina is None:
+                    ultima_pagina = response_data["total_de_paginas"]
+                    print(f"Total de páginas a processar: {ultima_pagina}")
+
                 # Adicionar os dados da página atual na lista total
                 if "dados" in response_data and response_data["dados"]:
                     todas_dados.extend(response_data["dados"])
-
-                print(f"Página {pagina_atual} processada com sucesso.")
-
-                # Verificar se todas as páginas foram lidas
-                if pagina_atual >= response_data["total_de_paginas"]:
-                    break  # Finalizar o loop quando atingir a última página
-
-                # Avançar para a próxima página
-                pagina_atual += 1
-
-                # Pausa entre requisições para evitar alcançar limites de taxa
-                time.sleep(5)
+                    registros_na_pagina = len(response_data["dados"])
+                    print(
+                        f"Página {pagina_atual}/{ultima_pagina} processada com sucesso. Registros: {registros_na_pagina}")
+                else:
+                    print(f"Página {pagina_atual}/{ultima_pagina} não contém dados.")
 
             except HTTPError as e:
                 if e.response.status_code == 429:
@@ -103,9 +102,16 @@ def run_vendas(customer):
             print(
                 f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
 
-        # Se finalizou o processamento de todas as páginas, sai do loop principal
-        if pagina_atual >= response_data.get("total_de_paginas", 0) or not success:
+        # Avançar para a próxima página
+        pagina_atual += 1
+
+        # Verificar se todas as páginas foram processadas
+        if pagina_atual > ultima_pagina and ultima_pagina is not None:
+            print(f"Todas as {ultima_pagina} páginas foram processadas.")
             break
+
+        # Pausa entre requisições para evitar alcançar limites de taxa
+        time.sleep(5)
 
     # Verificar se foram coletados dados
     if not todas_dados:
@@ -114,7 +120,15 @@ def run_vendas(customer):
 
     # Converter os dados coletados para um DataFrame
     df_vendas = pd.DataFrame(todas_dados)
-    print(f"Total de registros coletados: {len(df_vendas)}")
+    total_registros = len(df_vendas)
+    print(f"Total de registros coletados: {total_registros}")
+
+    # Verificar se coletamos o número esperado de registros
+    if ultima_pagina is not None:
+        registros_esperados = 500 * (ultima_pagina - 1) + registros_na_pagina  # Estimativa
+        if total_registros < registros_esperados:
+            print(
+                f"AVISO: Número de registros coletados ({total_registros}) é menor que o esperado ({registros_esperados}).")
 
     # Carregar para o BigQuery
     client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
@@ -127,7 +141,7 @@ def run_vendas(customer):
     load_job = client.load_table_from_dataframe(df_vendas, table_ref, job_config=job_config)
     load_job.result()  # Wait for the job to complete
 
-    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}")
+    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
 
 
 def run_reservas(customer):
@@ -168,6 +182,8 @@ def run_reservas(customer):
     todas_dados = []  # Para armazenar os dados coletados
     pagina_atual = 1
     max_retries = 5  # Número máximo de tentativas
+    ultima_pagina = None
+    registros_na_pagina = 0
 
     while True:
         # Atualizar o número da página na requisição
@@ -185,21 +201,19 @@ def run_reservas(customer):
                 response_data = response.json()
                 success = True  # Se chegar aqui, a requisição foi bem-sucedida
 
+                # Captura o total de páginas
+                if ultima_pagina is None:
+                    ultima_pagina = response_data["total_de_paginas"]
+                    print(f"Total de páginas a processar: {ultima_pagina}")
+
                 # Adicionar os dados da página atual na lista total
                 if "dados" in response_data and response_data["dados"]:
                     todas_dados.extend(response_data["dados"])
-
-                print(f"Página {pagina_atual} processada com sucesso.")
-
-                # Verificar se todas as páginas foram lidas
-                if pagina_atual >= response_data["total_de_paginas"]:
-                    break  # Finalizar o loop quando atingir a última página
-
-                # Avançar para a próxima página
-                pagina_atual += 1
-
-                # Pausa entre requisições para evitar alcançar limites de taxa
-                time.sleep(5)
+                    registros_na_pagina = len(response_data["dados"])
+                    print(
+                        f"Página {pagina_atual}/{ultima_pagina} processada com sucesso. Registros: {registros_na_pagina}")
+                else:
+                    print(f"Página {pagina_atual}/{ultima_pagina} não contém dados.")
 
             except HTTPError as e:
                 if e.response.status_code == 429:
@@ -223,9 +237,16 @@ def run_reservas(customer):
             print(
                 f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
 
-        # Se finalizou o processamento de todas as páginas, sai do loop principal
-        if pagina_atual >= response_data.get("total_de_paginas", 0) or not success:
+        # Avançar para a próxima página
+        pagina_atual += 1
+
+        # Verificar se todas as páginas foram processadas
+        if pagina_atual > ultima_pagina and ultima_pagina is not None:
+            print(f"Todas as {ultima_pagina} páginas foram processadas.")
             break
+
+        # Pausa entre requisições para evitar alcançar limites de taxa
+        time.sleep(5)
 
     # Verificar se foram coletados dados
     if not todas_dados:
@@ -234,7 +255,15 @@ def run_reservas(customer):
 
     # Converter os dados coletados para um DataFrame
     df_reservas = pd.DataFrame(todas_dados)
-    print(f"Total de registros coletados: {len(df_reservas)}")
+    total_registros = len(df_reservas)
+    print(f"Total de registros coletados: {total_registros}")
+
+    # Verificar se coletamos o número esperado de registros
+    if ultima_pagina is not None:
+        registros_esperados = 500 * (ultima_pagina - 1) + registros_na_pagina  # Estimativa
+        if total_registros < registros_esperados:
+            print(
+                f"AVISO: Número de registros coletados ({total_registros}) é menor que o esperado ({registros_esperados}).")
 
     # Carregar para o BigQuery
     client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
@@ -247,7 +276,7 @@ def run_reservas(customer):
     load_job = client.load_table_from_dataframe(df_reservas, table_ref, job_config=job_config)
     load_job.result()  # Wait for the job to complete
 
-    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}")
+    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
 
 
 def run_precadastros(customer):
@@ -288,6 +317,8 @@ def run_precadastros(customer):
     todas_dados = []  # Para armazenar os dados coletados
     pagina_atual = 1
     max_retries = 5  # Número máximo de tentativas
+    ultima_pagina = None
+    registros_na_pagina = 0
 
     while True:
         # Atualizar o número da página na requisição
@@ -305,21 +336,19 @@ def run_precadastros(customer):
                 response_data = response.json()
                 success = True  # Se chegar aqui, a requisição foi bem-sucedida
 
+                # Captura o total de páginas
+                if ultima_pagina is None:
+                    ultima_pagina = response_data["total_de_paginas"]
+                    print(f"Total de páginas a processar: {ultima_pagina}")
+
                 # Adicionar os dados da página atual na lista total
                 if "dados" in response_data and response_data["dados"]:
                     todas_dados.extend(response_data["dados"])
-
-                print(f"Página {pagina_atual} processada com sucesso.")
-
-                # Verificar se todas as páginas foram lidas
-                if pagina_atual >= response_data["total_de_paginas"]:
-                    break  # Finalizar o loop quando atingir a última página
-
-                # Avançar para a próxima página
-                pagina_atual += 1
-
-                # Pausa entre requisições para evitar alcançar limites de taxa
-                time.sleep(5)
+                    registros_na_pagina = len(response_data["dados"])
+                    print(
+                        f"Página {pagina_atual}/{ultima_pagina} processada com sucesso. Registros: {registros_na_pagina}")
+                else:
+                    print(f"Página {pagina_atual}/{ultima_pagina} não contém dados.")
 
             except HTTPError as e:
                 if e.response.status_code == 429:
@@ -343,9 +372,16 @@ def run_precadastros(customer):
             print(
                 f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
 
-        # Se finalizou o processamento de todas as páginas, sai do loop principal
-        if pagina_atual >= response_data.get("total_de_paginas", 0) or not success:
+        # Avançar para a próxima página
+        pagina_atual += 1
+
+        # Verificar se todas as páginas foram processadas
+        if pagina_atual > ultima_pagina and ultima_pagina is not None:
+            print(f"Todas as {ultima_pagina} páginas foram processadas.")
             break
+
+        # Pausa entre requisições para evitar alcançar limites de taxa
+        time.sleep(5)
 
     # Verificar se foram coletados dados
     if not todas_dados:
@@ -354,7 +390,15 @@ def run_precadastros(customer):
 
     # Converter os dados coletados para um DataFrame
     df_precadastros = pd.DataFrame(todas_dados)
-    print(f"Total de registros coletados: {len(df_precadastros)}")
+    total_registros = len(df_precadastros)
+    print(f"Total de registros coletados: {total_registros}")
+
+    # Verificar se coletamos o número esperado de registros
+    if ultima_pagina is not None:
+        registros_esperados = 500 * (ultima_pagina - 1) + registros_na_pagina  # Estimativa
+        if total_registros < registros_esperados:
+            print(
+                f"AVISO: Número de registros coletados ({total_registros}) é menor que o esperado ({registros_esperados}).")
 
     # Carregar para o BigQuery
     client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
@@ -367,7 +411,7 @@ def run_precadastros(customer):
     load_job = client.load_table_from_dataframe(df_precadastros, table_ref, job_config=job_config)
     load_job.result()  # Wait for the job to complete
 
-    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}")
+    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
 
 
 def run_historico_situacoes(customer):
@@ -408,6 +452,8 @@ def run_historico_situacoes(customer):
     todas_dados = []  # Para armazenar os dados coletados
     pagina_atual = 1
     max_retries = 5  # Número máximo de tentativas
+    ultima_pagina = None
+    registros_na_pagina = 0
 
     while True:
         # Atualizar o número da página na requisição
@@ -425,21 +471,19 @@ def run_historico_situacoes(customer):
                 response_data = response.json()
                 success = True  # Se chegar aqui, a requisição foi bem-sucedida
 
+                # Captura o total de páginas
+                if ultima_pagina is None:
+                    ultima_pagina = response_data["total_de_paginas"]
+                    print(f"Total de páginas a processar: {ultima_pagina}")
+
                 # Adicionar os dados da página atual na lista total
                 if "dados" in response_data and response_data["dados"]:
                     todas_dados.extend(response_data["dados"])
-
-                print(f"Página {pagina_atual} processada com sucesso.")
-
-                # Verificar se todas as páginas foram lidas
-                if pagina_atual >= response_data["total_de_paginas"]:
-                    break  # Finalizar o loop quando atingir a última página
-
-                # Avançar para a próxima página
-                pagina_atual += 1
-
-                # Pausa entre requisições para evitar alcançar limites de taxa
-                time.sleep(5)
+                    registros_na_pagina = len(response_data["dados"])
+                    print(
+                        f"Página {pagina_atual}/{ultima_pagina} processada com sucesso. Registros: {registros_na_pagina}")
+                else:
+                    print(f"Página {pagina_atual}/{ultima_pagina} não contém dados.")
 
             except HTTPError as e:
                 if e.response.status_code == 429:
@@ -463,9 +507,16 @@ def run_historico_situacoes(customer):
             print(
                 f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
 
-        # Se finalizou o processamento de todas as páginas, sai do loop principal
-        if pagina_atual >= response_data.get("total_de_paginas", 0) or not success:
+        # Avançar para a próxima página
+        pagina_atual += 1
+
+        # Verificar se todas as páginas foram processadas
+        if pagina_atual > ultima_pagina and ultima_pagina is not None:
+            print(f"Todas as {ultima_pagina} páginas foram processadas.")
             break
+
+        # Pausa entre requisições para evitar alcançar limites de taxa
+        time.sleep(5)
 
     # Verificar se foram coletados dados
     if not todas_dados:
@@ -474,7 +525,15 @@ def run_historico_situacoes(customer):
 
     # Converter os dados coletados para um DataFrame
     df_historico = pd.DataFrame(todas_dados)
-    print(f"Total de registros coletados: {len(df_historico)}")
+    total_registros = len(df_historico)
+    print(f"Total de registros coletados: {total_registros}")
+
+    # Verificar se coletamos o número esperado de registros
+    if ultima_pagina is not None:
+        registros_esperados = 500 * (ultima_pagina - 1) + registros_na_pagina  # Estimativa
+        if total_registros < registros_esperados:
+            print(
+                f"AVISO: Número de registros coletados ({total_registros}) é menor que o esperado ({registros_esperados}).")
 
     # Carregar para o BigQuery
     client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
@@ -487,7 +546,7 @@ def run_historico_situacoes(customer):
     load_job = client.load_table_from_dataframe(df_historico, table_ref, job_config=job_config)
     load_job.result()  # Wait for the job to complete
 
-    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}")
+    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
 
 
 def run_lead(customer):
@@ -528,6 +587,8 @@ def run_lead(customer):
     todas_dados = []  # Para armazenar os dados coletados
     pagina_atual = 1
     max_retries = 5  # Número máximo de tentativas
+    ultima_pagina = None
+    registros_na_pagina = 0
 
     while True:
         # Atualizar o número da página na requisição
@@ -545,21 +606,19 @@ def run_lead(customer):
                 response_data = response.json()
                 success = True  # Se chegar aqui, a requisição foi bem-sucedida
 
+                # Captura o total de páginas
+                if ultima_pagina is None:
+                    ultima_pagina = response_data["total_de_paginas"]
+                    print(f"Total de páginas a processar: {ultima_pagina}")
+
                 # Adicionar os dados da página atual na lista total
                 if "dados" in response_data and response_data["dados"]:
                     todas_dados.extend(response_data["dados"])
-
-                print(f"Página {pagina_atual} processada com sucesso.")
-
-                # Verificar se todas as páginas foram lidas
-                if pagina_atual >= response_data["total_de_paginas"]:
-                    break  # Finalizar o loop quando atingir a última página
-
-                # Avançar para a próxima página
-                pagina_atual += 1
-
-                # Pausa entre requisições para evitar alcançar limites de taxa
-                time.sleep(5)
+                    registros_na_pagina = len(response_data["dados"])
+                    print(
+                        f"Página {pagina_atual}/{ultima_pagina} processada com sucesso. Registros: {registros_na_pagina}")
+                else:
+                    print(f"Página {pagina_atual}/{ultima_pagina} não contém dados.")
 
             except HTTPError as e:
                 if e.response.status_code == 429:
@@ -583,9 +642,16 @@ def run_lead(customer):
             print(
                 f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
 
-        # Se finalizou o processamento de todas as páginas, sai do loop principal
-        if pagina_atual >= response_data.get("total_de_paginas", 0) or not success:
+        # Avançar para a próxima página
+        pagina_atual += 1
+
+        # Verificar se todas as páginas foram processadas
+        if pagina_atual > ultima_pagina and ultima_pagina is not None:
+            print(f"Todas as {ultima_pagina} páginas foram processadas.")
             break
+
+        # Pausa entre requisições para evitar alcançar limites de taxa
+        time.sleep(5)
 
     # Verificar se foram coletados dados
     if not todas_dados:
@@ -594,7 +660,15 @@ def run_lead(customer):
 
     # Converter os dados coletados para um DataFrame
     df_corretores = pd.DataFrame(todas_dados)
-    print(f"Total de registros coletados: {len(df_corretores)}")
+    total_registros = len(df_corretores)
+    print(f"Total de registros coletados: {total_registros}")
+
+    # Verificar se coletamos o número esperado de registros
+    if ultima_pagina is not None:
+        registros_esperados = 500 * (ultima_pagina - 1) + registros_na_pagina  # Estimativa
+        if total_registros < registros_esperados:
+            print(
+                f"AVISO: Número de registros coletados ({total_registros}) é menor que o esperado ({registros_esperados}).")
 
     # Carregar para o BigQuery
     client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
@@ -607,7 +681,7 @@ def run_lead(customer):
     load_job = client.load_table_from_dataframe(df_corretores, table_ref, job_config=job_config)
     load_job.result()  # Wait for the job to complete
 
-    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}")
+    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
 
 
 def get_extraction_tasks():
