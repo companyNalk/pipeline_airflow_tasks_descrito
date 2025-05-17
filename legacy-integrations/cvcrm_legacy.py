@@ -15,7 +15,7 @@ def run_leads(customer):
     import pathlib
     import random
     from google.cloud import bigquery
-    from requests.exceptions import HTTPError
+    from requests.exceptions import HTTPError, RequestException
 
     # Configuration
     DOMINIO = customer['api_dominio']
@@ -44,10 +44,11 @@ def run_leads(customer):
     todas_dados = []
     pagina_atual = 1
     max_retries = 5
-    ultima_pagina = None
-    registros_na_pagina = 0
+    continuar_paginacao = True
 
-    while True:
+    print(f"Iniciando coleta de dados de leads...")
+
+    while continuar_paginacao:
         data["pagina"] = pagina_atual
         retry_count = 0
         success = False
@@ -56,29 +57,44 @@ def run_leads(customer):
         while not success and retry_count < max_retries:
             try:
                 response = requests.get(URL_BASE, headers=headers, json=data, timeout=30)
+
+                # If we get a 204 No Content, it means we've reached the end of the data
+                if response.status_code == 204:
+                    print(f"Recebido código 204 (No Content) na página {pagina_atual}. Fim da paginação.")
+                    continuar_paginacao = False
+                    success = True
+                    break
+
+                # Raise exception for other error status codes
                 response.raise_for_status()
-                response_data = response.json()
 
-                # Validate response structure
-                if not isinstance(response_data, dict) or "total_de_paginas" not in response_data:
-                    raise ValueError(f"Resposta da API inválida na página {pagina_atual}: {response_data}")
-
-                success = True
-
-                # Capture total pages on first successful request
-                if ultima_pagina is None:
-                    ultima_pagina = response_data["total_de_paginas"]
-                    print(f"Total de páginas a processar: {ultima_pagina}")
+                # Parse JSON response
+                try:
+                    response_data = response.json()
+                except ValueError:
+                    # If response is not JSON but status is 200, we might have empty response
+                    if response.status_code == 200 and not response.text.strip():
+                        print(f"Resposta vazia na página {pagina_atual}. Fim da paginação.")
+                        continuar_paginacao = False
+                        success = True
+                        break
+                    else:
+                        raise ValueError(f"Resposta não é um JSON válido na página {pagina_atual}")
 
                 # Process page data
                 page_data = response_data.get("dados", [])
-                registros_na_pagina = len(page_data)
-                if page_data:
-                    todas_dados.extend(page_data)
-                    print(
-                        f"Página {pagina_atual}/{ultima_pagina} processada com sucesso. Registros: {registros_na_pagina}")
-                else:
-                    print(f"Página {pagina_atual}/{ultima_pagina} não contém dados.")
+
+                # If no data is returned but response is successful, we've reached the end
+                if not page_data:
+                    print(f"Página {pagina_atual} retornou array de dados vazio. Fim da paginação.")
+                    continuar_paginacao = False
+                    success = True
+                    break
+
+                # Process valid data
+                todas_dados.extend(page_data)
+                print(f"Página {pagina_atual} processada com sucesso. Registros: {len(page_data)}")
+                success = True
 
             except HTTPError as e:
                 if e.response.status_code == 429:
@@ -90,7 +106,7 @@ def run_leads(customer):
                 else:
                     print(f"Erro HTTP na página {pagina_atual}: {e}")
                     raise
-            except RequestException:
+            except RequestException as e:
                 retry_count += 1
                 wait_time = (2 ** retry_count) + random.uniform(0, 1)
                 print(
@@ -109,16 +125,11 @@ def run_leads(customer):
                 f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados coletados.")
             break
 
-        # Check if all pages are processed
-        if ultima_pagina is not None and pagina_atual >= ultima_pagina:
-            print(f"Todas as {ultima_pagina} páginas foram processadas.")
-            break
-
-        # Increment page
-        pagina_atual += 1
-
-        # Adaptive pause to respect API rate limits
-        time.sleep(5 + random.uniform(0, 2))
+        # Increment page if we need to continue
+        if continuar_paginacao:
+            pagina_atual += 1
+            # Adaptive pause to respect API rate limits
+            time.sleep(5 + random.uniform(0, 2))
 
     # Check if any data was collected
     if not todas_dados:
@@ -129,12 +140,6 @@ def run_leads(customer):
     df_leads = pd.DataFrame(todas_dados)
     total_registros = len(df_leads)
     print(f"Total de registros coletados: {total_registros}")
-
-    # Validate total records
-    if ultima_pagina is not None:
-        registros_esperados = 500 * (ultima_pagina - 1) + registros_na_pagina
-        if total_registros < registros_esperados:
-            print(f"AVISO: Registros coletados ({total_registros}) menor que esperado ({registros_esperados}).")
 
     # Load to BigQuery
     try:
