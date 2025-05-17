@@ -569,7 +569,7 @@ def run_historico_situacoes(customer):
     import pathlib
     import random
     from google.cloud import bigquery
-    from requests.exceptions import HTTPError
+    from requests.exceptions import HTTPError, JSONDecodeError
 
     DOMINIO = customer['api_dominio']
     EMAIL = customer['api_email']
@@ -600,7 +600,6 @@ def run_historico_situacoes(customer):
     pagina_atual = 1
     max_retries = 5  # Número máximo de tentativas
     ultima_pagina = None
-    registros_na_pagina = 0
 
     while True:
         # Atualizar o número da página na requisição
@@ -614,12 +613,43 @@ def run_historico_situacoes(customer):
             try:
                 # Fazer a requisição
                 response = requests.get(url_base, headers=headers, json=data)
-                response.raise_for_status()  # Levanta exceção para status codes de erro
-                response_data = response.json()
+
+                # Verificar se temos um conteúdo vazio antes de processar
+                if not response.text.strip():
+                    print(f"Resposta vazia na página {pagina_atual}. Provavelmente chegamos ao fim dos dados.")
+                    # Se estamos tentando acessar uma página além da última, vamos considerar que terminamos
+                    if ultima_pagina is not None and pagina_atual > ultima_pagina:
+                        print(f"Página {pagina_atual} está além da última página ({ultima_pagina}). Finalizando.")
+                    else:
+                        print(f"Resposta vazia na página {pagina_atual}. Finalizando coleta de dados.")
+                    success = True
+                    break
+
+                # Tenta fazer o parse do JSON com tratamento explícito de erros
+                try:
+                    response.raise_for_status()  # Levanta exceção para status codes de erro
+                    response_data = response.json()
+                except JSONDecodeError as e:
+                    # Se não conseguimos decodificar o JSON e estamos além da última página conhecida,
+                    # significa que provavelmente chegamos ao fim dos dados
+                    if ultima_pagina is not None and pagina_atual > ultima_pagina:
+                        print(
+                            f"Erro ao decodificar JSON na página {pagina_atual}, que está além da última página conhecida ({ultima_pagina}). Finalizando.")
+                        success = True
+                        break
+                    elif pagina_atual > 1:  # Se não é a primeira página, pode ser o fim dos dados
+                        print(f"Erro ao decodificar JSON na página {pagina_atual}. Finalizando coleta de dados.")
+                        success = True
+                        break
+                    else:
+                        # Se é a primeira página, é um erro real
+                        print(f"Erro ao decodificar JSON na página {pagina_atual}: {e}")
+                        raise
+
                 success = True  # Se chegar aqui, a requisição foi bem-sucedida
 
                 # Captura o total de páginas
-                if ultima_pagina is None:
+                if ultima_pagina is None and "total_de_paginas" in response_data:
                     ultima_pagina = response_data["total_de_paginas"]
                     print(f"Total de páginas a processar: {ultima_pagina}")
 
@@ -628,9 +658,14 @@ def run_historico_situacoes(customer):
                     todas_dados.extend(response_data["dados"])
                     registros_na_pagina = len(response_data["dados"])
                     print(
-                        f"Página {pagina_atual}/{ultima_pagina} processada com sucesso. Registros: {registros_na_pagina}")
+                        f"Página {pagina_atual}/{ultima_pagina if ultima_pagina is not None else '?'} processada com sucesso. Registros: {registros_na_pagina}")
                 else:
-                    print(f"Página {pagina_atual}/{ultima_pagina} não contém dados.")
+                    print(
+                        f"Página {pagina_atual}/{ultima_pagina if ultima_pagina is not None else '?'} não contém dados.")
+                    # Se chegamos aqui e não há dados, é um indicativo que terminamos
+                    if ultima_pagina is None or pagina_atual >= ultima_pagina:
+                        print("Não há mais dados para coletar. Finalizando.")
+                        break
 
             except HTTPError as e:
                 if e.response.status_code == 429:
@@ -640,10 +675,28 @@ def run_historico_situacoes(customer):
                     print(
                         f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                     time.sleep(wait_time)
+                elif e.response.status_code == 204:
+                    # Código 204 significa "No Content" - não há mais dados para buscar
+                    print(f"Recebido código 204 (No Content) na página {pagina_atual}. Finalizando coleta de dados.")
+                    success = True
+                    break
                 else:
                     # Para outros erros HTTP, registre e levante a exceção
                     print(f"Erro HTTP: {e}")
                     raise
+            except JSONDecodeError as e:
+                # Se estamos na última página ou além, podemos considerar que terminamos
+                if ultima_pagina is not None and pagina_atual >= ultima_pagina:
+                    print(
+                        f"Erro ao decodificar JSON na página {pagina_atual}, que é a última página ou além. Finalizando.")
+                    success = True
+                    break
+                else:
+                    print(f"Erro ao decodificar JSON na página {pagina_atual}: {e}")
+                    retry_count += 1
+                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                    print(f"Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                    time.sleep(wait_time)
             except Exception as e:
                 # Para outros tipos de exceções
                 print(f"Erro inesperado: {e}")
@@ -653,17 +706,18 @@ def run_historico_situacoes(customer):
         if not success:
             print(
                 f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            break
+
+        # Verificar se todas as páginas foram processadas ou se não há mais dados
+        if ultima_pagina is not None and pagina_atual >= ultima_pagina:
+            print(f"Todas as {ultima_pagina} páginas foram processadas.")
+            break
 
         # Avançar para a próxima página
         pagina_atual += 1
 
-        # Verificar se todas as páginas foram processadas
-        if pagina_atual > ultima_pagina and ultima_pagina is not None:
-            print(f"Todas as {ultima_pagina} páginas foram processadas.")
-            break
-
         # Pausa entre requisições para evitar alcançar limites de taxa
-        time.sleep(5)
+        time.sleep(5 + random.uniform(0, 2))
 
     # Verificar se foram coletados dados
     if not todas_dados:
@@ -675,25 +729,22 @@ def run_historico_situacoes(customer):
     total_registros = len(df_historico)
     print(f"Total de registros coletados: {total_registros}")
 
-    # Verificar se coletamos o número esperado de registros
-    if ultima_pagina is not None:
-        registros_esperados = 500 * (ultima_pagina - 1) + registros_na_pagina  # Estimativa
-        if total_registros < registros_esperados:
-            print(
-                f"AVISO: Número de registros coletados ({total_registros}) é menor que o esperado ({registros_esperados}).")
-
     # Carregar para o BigQuery
-    client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
-    table_ref = client.dataset(dataset_id).table(table_id)
-    # Define the table schema
-    job_config = bigquery.LoadJobConfig()
-    job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
-    job_config.autodetect = True
-    # Load the DataFrame to BigQuery
-    load_job = client.load_table_from_dataframe(df_historico, table_ref, job_config=job_config)
-    load_job.result()  # Wait for the job to complete
+    try:
+        client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
+        table_ref = client.dataset(dataset_id).table(table_id)
+        # Define the table schema
+        job_config = bigquery.LoadJobConfig()
+        job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
+        job_config.autodetect = True
+        # Load the DataFrame to BigQuery
+        load_job = client.load_table_from_dataframe(df_historico, table_ref, job_config=job_config)
+        load_job.result()  # Wait for the job to complete
 
-    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
+        print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
+    except Exception as e:
+        print(f"Erro ao carregar dados no BigQuery: {e}")
+        raise
 
 
 def run_lead(customer):
