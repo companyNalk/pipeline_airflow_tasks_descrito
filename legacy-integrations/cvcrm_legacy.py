@@ -129,7 +129,8 @@ def run_leads(customer):
         if continuar_paginacao:
             pagina_atual += 1
             # Adaptive pause to respect API rate limits
-            time.sleep(5 + random.uniform(0, 2))
+            # time.sleep(5 + random.uniform(0, 2))
+            time.sleep(5)
 
     # Check if any data was collected
     if not todas_dados:
