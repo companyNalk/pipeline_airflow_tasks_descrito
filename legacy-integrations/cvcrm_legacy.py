@@ -569,6 +569,7 @@ def run_historico_situacoes(customer):
     import time
     import pathlib
     import random
+    import datetime
     from google.cloud import bigquery
     from requests.exceptions import HTTPError, JSONDecodeError
 
@@ -591,9 +592,14 @@ def run_historico_situacoes(customer):
         "email": EMAIL,
         "token": ACCESS_TOKEN
     }
+
+    one_year_ago = datetime.datetime.now() - datetime.timedelta(days=365)
+    one_year_ago_formatted = one_year_ago.strftime('%Y-%m-%d %H:%M:%S')
+
     data = {
         "pagina": 1,
-        "registros_por_pagina": 500
+        "registros_por_pagina": 500,
+        "a_partir_data_referencia": one_year_ago_formatted
     }
 
     # Inicialização de variáveis
