@@ -483,35 +483,33 @@ def get_all_pipelines(client, object_type="deals"):
         duration = time.time() - start_time
         logger.info(f"✅ {len(pipelines)} pipelines obtidos em {duration:.2f}s")
 
-        # Processar pipelines para o formato esperado
+        # Processar pipelines para o formato esperado conforme a nova lógica
         processed_pipelines = []
+        current_date = time.strftime('%Y-%m-%d %H:%M:%S')
+
         for pipeline in pipelines:
-            pipeline_dict = {
-                "id": pipeline.id,
-                "label": pipeline.label,
-                "display_order": pipeline.display_order,
-                "created_at": pipeline.created_at,
-                "updated_at": pipeline.updated_at,
-                "archived": pipeline.archived
-            }
+            pipeline_id = pipeline.id if hasattr(pipeline, 'id') else 'N/A'
+            pipeline_name = pipeline.label if hasattr(pipeline, 'label') else 'N/A'
 
-            # Adicionar estágios do pipeline, se disponíveis
             if hasattr(pipeline, 'stages') and pipeline.stages:
-                # Criar uma representação dos estágios como propriedades adicionais
-                for i, stage in enumerate(pipeline.stages):
-                    prefix = f"stage_{i + 1}_"
-                    pipeline_dict[f"{prefix}id"] = stage.id
-                    pipeline_dict[f"{prefix}label"] = stage.label
-                    pipeline_dict[f"{prefix}display_order"] = stage.display_order
-                    pipeline_dict[f"{prefix}created_at"] = stage.created_at
-                    pipeline_dict[f"{prefix}updated_at"] = stage.updated_at
-                    pipeline_dict[f"{prefix}archived"] = stage.archived
-
-                pipeline_dict["total_stages"] = len(pipeline.stages)
+                for stage in pipeline.stages:
+                    # Criar uma entrada para cada estágio do pipeline, conforme a nova estrutura
+                    pipeline_stage = {
+                        "pipeline_id": pipeline_id,
+                        "pipeline_name": pipeline_name,
+                        "pipeline_stage_created_at": stage.created_at if hasattr(stage, 'created_at') else 'N/A',
+                        "pipeline_stage_display_order": stage.display_order if hasattr(stage, 'display_order') else 'N/A',  # noqa
+                        "pipeline_stage_id": stage.id if hasattr(stage, 'id') else 'N/A',
+                        "pipeline_stage_is_archived": stage.archived if hasattr(stage, 'archived') else 'N/A',
+                        "pipeline_stage_is_closed": stage.metadata.get("closed", "N/A") if hasattr(stage, 'metadata') else 'N/A',  # noqa
+                        "pipeline_stage_name": stage.label if hasattr(stage, 'label') else 'N/A',
+                        "pipeline_stage_probability": stage.metadata.get("probability", "N/A") if hasattr(stage, 'metadata') else 'N/A',  # noqa
+                        "pipeline_stage_updated_at": stage.updated_at if hasattr(stage, 'updated_at') else 'N/A',
+                        "date": current_date
+                    }
+                    processed_pipelines.append(pipeline_stage)
             else:
-                pipeline_dict["total_stages"] = 0
-
-            processed_pipelines.append(pipeline_dict)
+                logger.warning(f"Pipeline {pipeline_id} não possui estágios.")
 
         return processed_pipelines
     except ApiException as e:
