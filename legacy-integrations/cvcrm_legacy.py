@@ -2,7 +2,6 @@
 CVCRM module for data extraction functions.
 This module contains functions specific to the CVCRM integration.
 """
-
 from core import gcs
 
 
@@ -894,208 +893,171 @@ def run_lead(customer):
     import os
     import time
     import pathlib
-    import random
-    import re
-    import logging
+    import json
     from google.cloud import bigquery
-    from requests.exceptions import HTTPError
-
-    # Configurar logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger(__name__)
+    import psutil
+    import numpy as np
 
     # Configuração
+    PROJECT_ID = customer['project_id']
     DOMINIO = customer['api_dominio']
     EMAIL = customer['api_email']
     ACCESS_TOKEN = customer['api_access_token']
-    PROJECT_ID = customer['project_id']
+
+    # Configurações da API
+    URL_BASE = f"https://{DOMINIO}.cvcrm.com.br/api/cvio/lead"
+
+
+    # Configurações do BigQuery
     SERVICE_ACCOUNT_FILE = pathlib.Path('config', 'setup_automatico.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_FILE
-
-    URL_BASE = f"https://{DOMINIO}.cvcrm.com.br/api/cvio/lead"
 
     dataset_id = 'cvcrm'
     table_id = 'cvcrm_leads'
 
-    # Classe Utils para aplanar JSON
-    class Utils:
-        @staticmethod
-        def _flatten_json(json_obj, parent_key='', sep='_'):
-            """Aplana um objeto JSON aninhado."""
-            items = []
-            for k, v in json_obj.items():
-                new_key = f"{parent_key}{sep}{k}" if parent_key else k
-
-                if isinstance(v, dict):
-                    items.extend(Utils._flatten_json(v, new_key, sep).items())
-                elif isinstance(v, list):
-                    # Tratando listas
-                    for i, item in enumerate(v):
-                        if isinstance(item, dict):
-                            # Para cada item da lista que é um dicionário
-                            items.extend(Utils._flatten_json(item, f"{new_key}_{i + 1}", sep).items())
-                        else:
-                            # Para itens da lista que não são dicionários
-                            items.append((f"{new_key}_{i + 1}", item))
-                else:
-                    items.append((new_key, v))
-            return dict(items)
-
-        @staticmethod
-        def flatten_records(records):
-            """Aplana uma lista de registros JSON."""
-            return [Utils._flatten_json(record) for record in records]
-
-        @staticmethod
-        def filter_fields(flattened_records):
-            """Remove campos específicos dos registros já aplanados."""
-            # Padrões para campos que devem ser removidos
-            interacao_pattern = re.compile(r'^interacao_')
-            tarefa_descricao_pattern = re.compile(r'^tarefa_[1-9]_descricao$')
-
-            filtered_records = []
-            for record in flattened_records:
-                filtered_record = {}
-                for k, v in record.items():
-                    # Verificar se a chave começa com 'interacao_'
-                    if interacao_pattern.match(k):
-                        continue
-                    # Verificar se a chave segue o padrão 'tarefa_X_descricao' onde X é um dígito de 1 a 9
-                    if tarefa_descricao_pattern.match(k):
-                        continue
-                    # Se não corresponder a nenhum padrão a ser filtrado, manter o campo
-                    filtered_record[k] = v
-                filtered_records.append(filtered_record)
-            return filtered_records
-
-    # Configuração da requisição
-    headers = {
-        "accept": "application/json",
-        "content-type": "application/json",
-        "email": EMAIL,
-        "token": ACCESS_TOKEN
-    }
-
-    # Inicialização de variáveis
-    todas_dados = []  # Para armazenar os dados coletados
-    offset = 0
-    limit = 1000  # Conforme visto na resposta da API
-    max_retries = 5  # Número máximo de tentativas
-    total_registros = None
-
-    logger.info(f"Iniciando extração de leads de {URL_BASE}")
-
-    while True:
-        retry_count = 0
-        success = False
-
-        # Parâmetros da requisição
+    def get_leads_data(url_base, headers, limit, offset, max_retries=3):
         params = {
-            "offset": offset,
-            "limit": limit
+            "limit": str(limit),
+            "offset": str(offset)
         }
 
-        # Loop de retry com backoff exponencial
-        while not success and retry_count < max_retries:
+        for attempt in range(max_retries):
             try:
-                # Fazer a requisição
-                logger.info(f"Requisitando dados com offset={offset}, limit={limit}")
-                response = requests.get(URL_BASE, headers=headers, params=params)
-                response.raise_for_status()  # Levanta exceção para status codes de erro
-                response_data = response.json()
-                success = True  # Se chegar aqui, a requisição foi bem-sucedida
-
-                # Captura o total de registros na primeira requisição
-                if total_registros is None and "total" in response_data:
-                    total_registros = response_data["total"]
-                    logger.info(f"Total de registros a serem coletados: {total_registros}")
-
-                # Verifica se a resposta contém leads
-                if "leads" in response_data and response_data["leads"]:
-                    batch_size = len(response_data["leads"])
-                    todas_dados.extend(response_data["leads"])
-                    logger.info(
-                        f"Batch com offset {offset} processado com sucesso. Registros: {batch_size}. Total até agora: {len(todas_dados)}/{total_registros}")
+                response = requests.get(url_base, headers=headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+                return data.get('leads', [])
+            except requests.exceptions.HTTPError as e:
+                print(f"HTTP error occurred: {e}")
+                if response.status_code in [520, 525]:
+                    print(f"Erro na requisição: {response.status_code}. Tentando novamente em 5 segundos...")
+                    time.sleep(5)
                 else:
-                    logger.warning(f"Batch com offset {offset} não contém dados.")
+                    break
+            except requests.exceptions.RequestException as e:
+                print(f"Error occurred: {e}")
+                break
+            except json.JSONDecodeError:
+                print(f"Erro na decodificação JSON. Resposta: {response.text}")
+                break
 
-            except HTTPError as e:
-                if e.response.status_code == 429:
-                    retry_count += 1
-                    # Backoff exponencial com jitter (variação aleatória)
-                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
-                    logger.warning(
-                        f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
-                    time.sleep(wait_time)
-                else:
-                    # Para outros erros HTTP, registre e levante a exceção
-                    logger.error(f"Erro HTTP: {e}")
-                    raise
-            except Exception as e:
-                # Para outros tipos de exceções
-                logger.error(f"Erro inesperado: {e}")
-                raise
+        return None
 
-        # Se saiu do loop de retry sem sucesso, interrompe o processamento
-        if not success:
-            logger.error(
-                f"Falha ao processar o batch com offset {offset} após {max_retries} tentativas. Continuando com os dados já coletados.")
+    def normalize_nested_columns(df):
+        # Extraindo valores de colunas aninhadas
+        df['gestor'] = df['gestor'].apply(lambda x: x.get('nome') if isinstance(x, dict) else None)
+        df['imobiliaria'] = df['imobiliaria'].apply(lambda x: x.get('nome') if isinstance(x, dict) else None)
+        df['corretor'] = df['corretor'].apply(lambda x: x.get('nome') if isinstance(x, dict) else None)
+        df['situacao'] = df['situacao'].apply(lambda x: x.get('nome') if isinstance(x, dict) else None)
+        df['empreendimento'] = df['empreendimento'].apply(
+            lambda x: ', '.join([emp.get('nome') for emp in x]) if isinstance(x, list) else None)
+        df['motivo_cancelamento'] = df['motivo_cancelamento'].apply(
+            lambda x: x.get('nome') if isinstance(x, dict) else None)
+        df['submotivo_cancelamento'] = df['submotivo_cancelamento'].apply(
+            lambda x: x.get('nome') if isinstance(x, dict) else None)
+        return df
 
-        # Avançar para o próximo batch
-        offset += limit
+    def clean_value(value):
+        if isinstance(value, str):
+            value = value.replace("[", "").replace("]", "").replace("'", "").strip()
+            if value.endswith('.0'):
+                value = value[:-2]
+            if 'nan' in value or value == '':
+                value = '0'
+        elif isinstance(value, list):
+            cleaned_list = [str(item).replace('.0', '').replace('nan', '0').strip() for item in value if
+                            pd.notnull(item)]
+            value = ', '.join(cleaned_list) if cleaned_list else '0'
+        elif isinstance(value, float) and np.isnan(value):
+            value = '0'
+        elif isinstance(value, (int, float)):
+            value = str(value)
+        else:
+            value = '0'
+        return value
 
-        # Verificar se todos os registros foram processados
-        if total_registros is not None and len(todas_dados) >= total_registros:
-            logger.info(f"Todos os {total_registros} registros foram coletados.")
-            break
+    def upload_to_bigquery(dataset_id, table_id, dataframe):
+        client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
+        table_ref = client.dataset(dataset_id).table(table_id)
 
-        # Se a última resposta continha menos registros que o limite, provavelmente chegamos ao fim
-        if success and "leads" in response_data and len(response_data["leads"]) < limit:
-            logger.info("Chegamos ao final dos dados disponíveis.")
-            break
+        # Define the table schema
+        job_config = bigquery.LoadJobConfig()
+        job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
+        job_config.autodetect = True
 
-        # Pausa entre requisições para evitar alcançar limites de taxa
-        time.sleep(1)
+        # Load the DataFrame to BigQuery
+        load_job = client.load_table_from_dataframe(dataframe, table_ref, job_config=job_config)
+        load_job.result()  # Wait for the job to complete
 
-    # Verificar se foram coletados dados
-    if not todas_dados:
-        logger.warning("Nenhum dado foi coletado. Encerrando sem atualizar o BigQuery.")
-        return
+        print(f"Table {table_id} loaded to dataset {dataset_id} in BigQuery.")
 
-    # Aplanar os registros JSON antes de converter para DataFrame
-    logger.info("Aplanando registros JSON...")
-    flattened_data = Utils.flatten_records(todas_dados)
+    def print_memory_usage():
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        print(f"Consumo de memória: {mem_info.rss / (1024 ** 2):.2f} MB")
 
-    # Aplicar filtro para remover campos indesejados
-    logger.info("Removendo campos indesejados (interacao_ e tarefa_X_descricao)...")
-    filtered_data = Utils.filter_fields(flattened_data)
+    def main():
+        url_base = URL_BASE
+        headers = {
+            "token": ACCESS_TOKEN,
+            "email": EMAIL
+        }
 
-    # Converter os dados filtrados para um DataFrame
-    df_leads = pd.DataFrame(filtered_data)
-    total_registros_coletados = len(df_leads)
-    logger.info(f"Total de registros coletados (após filtragem): {total_registros_coletados}")
+        limit = 1000
+        offset = 0
 
-    # Verificar se coletamos o número esperado de registros
-    if total_registros is not None and total_registros_coletados < total_registros:
-        logger.warning(
-            f"AVISO: Número de registros coletados ({total_registros_coletados}) é menor que o esperado ({total_registros}).")
+        all_leads = []
 
-    # Carregar para o BigQuery
-    logger.info(f"Carregando dados para BigQuery: {dataset_id}.{table_id}")
-    client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
-    table_ref = client.dataset(dataset_id).table(table_id)
+        start_time = time.time()
 
-    # Define the table schema
-    job_config = bigquery.LoadJobConfig()
-    job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
-    job_config.autodetect = True
+        while True:
+            print(f"Offset: {offset}")
+            leads = get_leads_data(url_base, headers, limit, offset)
+            if leads is None:
+                print("Falha ao obter leads. Encerrando a coleta de dados.")
+                break
+            if not leads:
+                break
 
-    # Load the DataFrame to BigQuery
-    load_job = client.load_table_from_dataframe(df_leads, table_ref, job_config=job_config)
-    load_job.result()  # Wait for the job to complete
+            all_leads.extend(leads)
+            offset += limit
 
-    logger.info(
-        f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros_coletados} registros.")
+            # Imprimir o uso de memória a cada iteração
+            print_memory_usage()
+
+        if all_leads:
+            df = pd.DataFrame(all_leads)
+
+            # Manter apenas as colunas desejadas
+            columns_to_keep = [
+                'idlead', 'gestor', 'imobiliaria', 'corretor', 'situacao', 'nome', 'score',
+                'data_cad', 'midia_principal', 'sexo', 'renda_familiar', 'valor_negocio', 'estado',
+                'cidade', 'profissao', 'origem', 'data_reativacao', 'data_vencimento', 'ultima_data_conversao',
+                'empreendimento', 'tags', 'autor_ultima_alteracao', 'qtde_simulacoes_associadas',
+                'qtde_reservas_associadas', 'link_interacoes', 'link_simulacoes', 'link_reservas',
+                'link_interesses', 'idrd_station', 'link_rdstation', 'midias', 'interacao',
+                'data_cancelamento', 'motivo_cancelamento', 'submotivo_cancelamento', 'valor_venda',
+                'campos_adicionais', 'data_venda'
+            ]
+
+            df = df[columns_to_keep]
+
+            # Normalizar e limpar as colunas aninhadas
+            df = normalize_nested_columns(df)
+
+            # Aplicar a limpeza a todos os valores no DataFrame
+            for column in df.columns:
+                df[column] = df[column].apply(lambda x: clean_value(x))
+
+            # Upload the transformed DataFrame to BigQuery
+            upload_to_bigquery(dataset_id, table_id, df)
+
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"Tempo total de execução: {elapsed_time:.2f} segundos")
+
+    # START
+    main()
 
 
 def get_extraction_tasks():
@@ -1106,30 +1068,30 @@ def get_extraction_tasks():
         list: List of task configurations
     """
     return [
-        {
-            'task_id': 'run_leads',
-            'python_callable': run_leads,
-        },
-        {
-            'task_id': 'run_vendas',
-            'python_callable': run_vendas
-        },
-        {
-            'task_id': 'run_reservas',
-            'python_callable': run_reservas,
-        },
-        {
-            'task_id': 'run_precadastros',
-            'python_callable': run_precadastros,
-        },
-        {
-            'task_id': 'run_corretores',
-            'python_callable': run_corretores,
-        },
-        {
-            'task_id': 'run_historico_situacoes',
-            'python_callable': run_historico_situacoes,
-        },
+        # {
+        #     'task_id': 'run_leads',
+        #     'python_callable': run_leads,
+        # },
+        # {
+        #     'task_id': 'run_vendas',
+        #     'python_callable': run_vendas
+        # },
+        # {
+        #     'task_id': 'run_reservas',
+        #     'python_callable': run_reservas,
+        # },
+        # {
+        #     'task_id': 'run_precadastros',
+        #     'python_callable': run_precadastros,
+        # },
+        # {
+        #     'task_id': 'run_corretores',
+        #     'python_callable': run_corretores,
+        # },
+        # {
+        #     'task_id': 'run_historico_situacoes',
+        #     'python_callable': run_historico_situacoes,
+        # },
         {
             'task_id': 'run_lead',
             'python_callable': run_lead,
