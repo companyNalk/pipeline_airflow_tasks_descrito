@@ -896,7 +896,6 @@ def run_lead(customer):
     import pathlib
     import random
     import re
-    import functools
     import logging
     from google.cloud import bigquery
     from requests.exceptions import HTTPError
@@ -947,47 +946,27 @@ def run_lead(customer):
             """Aplana uma lista de registros JSON."""
             return [Utils._flatten_json(record) for record in records]
 
-    # Função para aplicar patches nas funções Utils
-    def apply_utils_patches():
-        """Aplica patches nas funções da classe Utils para remover campos específicos."""
-        logger.info("Aplicando patches nas funções da classe Utils para remover campos específicos")
+        @staticmethod
+        def filter_fields(flattened_records):
+            """Remove campos específicos dos registros já aplanados."""
+            # Padrões para campos que devem ser removidos
+            interacao_pattern = re.compile(r'^interacao_')
+            tarefa_descricao_pattern = re.compile(r'^tarefa_[1-9]_descricao$')
 
-        # Salvar a referência original da função _flatten_json
-        original_flatten_json = Utils._flatten_json
-
-        # Padrões para campos que devem ser removidos
-        interacao_pattern = re.compile(r'^interacao_')
-        tarefa_descricao_pattern = re.compile(r'^tarefa_[1-9]_descricao$')
-
-        # Criar uma nova versão da função que remove campos indesejados
-        @functools.wraps(original_flatten_json)
-        def patched_flatten_json(json_obj, parent_key='', sep='_'):
-            # Primeiro, usar a função original para achatar o JSON
-            flattened = original_flatten_json(json_obj, parent_key, sep)
-
-            # Depois, filtrar as chaves que correspondem aos padrões a serem removidos
-            filtered = {}
-            for k, v in flattened.items():
-                # Verificar se a chave começa com 'interacao_'
-                if interacao_pattern.match(k):
-                    continue
-
-                # Verificar se a chave segue o padrão 'tarefa_X_descricao' onde X é um dígito de 1 a 9
-                if tarefa_descricao_pattern.match(k):
-                    continue
-
-                # Se não corresponder a nenhum padrão a ser filtrado, manter o campo
-                filtered[k] = v
-
-            return filtered
-
-        # Substituir a função original pela versão patcheada
-        Utils._flatten_json = patched_flatten_json
-
-        logger.info("✅ Patches aplicados com sucesso")
-
-    # Aplicar patches para remover campos específicos
-    apply_utils_patches()
+            filtered_records = []
+            for record in flattened_records:
+                filtered_record = {}
+                for k, v in record.items():
+                    # Verificar se a chave começa com 'interacao_'
+                    if interacao_pattern.match(k):
+                        continue
+                    # Verificar se a chave segue o padrão 'tarefa_X_descricao' onde X é um dígito de 1 a 9
+                    if tarefa_descricao_pattern.match(k):
+                        continue
+                    # Se não corresponder a nenhum padrão a ser filtrado, manter o campo
+                    filtered_record[k] = v
+                filtered_records.append(filtered_record)
+            return filtered_records
 
     # Configuração da requisição
     headers = {
@@ -1000,7 +979,7 @@ def run_lead(customer):
     # Inicialização de variáveis
     todas_dados = []  # Para armazenar os dados coletados
     offset = 0
-    limit = 30  # Conforme visto na resposta da API
+    limit = 1000  # Conforme visto na resposta da API
     max_retries = 5  # Número máximo de tentativas
     total_registros = None
 
@@ -1084,12 +1063,17 @@ def run_lead(customer):
         return
 
     # Aplanar os registros JSON antes de converter para DataFrame
+    logger.info("Aplanando registros JSON...")
     flattened_data = Utils.flatten_records(todas_dados)
 
-    # Converter os dados coletados para um DataFrame
-    df_leads = pd.DataFrame(flattened_data)
+    # Aplicar filtro para remover campos indesejados
+    logger.info("Removendo campos indesejados (interacao_ e tarefa_X_descricao)...")
+    filtered_data = Utils.filter_fields(flattened_data)
+
+    # Converter os dados filtrados para um DataFrame
+    df_leads = pd.DataFrame(filtered_data)
     total_registros_coletados = len(df_leads)
-    logger.info(f"Total de registros coletados: {total_registros_coletados}")
+    logger.info(f"Total de registros coletados (após filtragem): {total_registros_coletados}")
 
     # Verificar se coletamos o número esperado de registros
     if total_registros is not None and total_registros_coletados < total_registros:
