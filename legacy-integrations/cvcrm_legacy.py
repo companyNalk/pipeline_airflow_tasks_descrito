@@ -774,7 +774,7 @@ def run_lead(customer):
     URL_BASE = f"https://{DOMINIO}.cvcrm.com.br/api/v1/cvdw/leads/corretores"
 
     dataset_id = 'cvcrm'
-    table_id = 'cvcrm_lead'
+    table_id = 'cvcrm_leads'
 
     url_base = URL_BASE
     headers = {
