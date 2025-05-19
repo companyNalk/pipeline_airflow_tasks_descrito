@@ -895,9 +895,17 @@ def run_lead(customer):
     import time
     import pathlib
     import random
+    import re
+    import functools
+    import logging
     from google.cloud import bigquery
     from requests.exceptions import HTTPError
 
+    # Configurar logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+
+    # Configuração
     DOMINIO = customer['api_dominio']
     EMAIL = customer['api_email']
     ACCESS_TOKEN = customer['api_access_token']
@@ -910,117 +918,200 @@ def run_lead(customer):
     dataset_id = 'cvcrm'
     table_id = 'cvcrm_leads'
 
-    url_base = URL_BASE
+    # Classe Utils para aplanar JSON
+    class Utils:
+        @staticmethod
+        def _flatten_json(json_obj, parent_key='', sep='_'):
+            """Aplana um objeto JSON aninhado."""
+            items = []
+            for k, v in json_obj.items():
+                new_key = f"{parent_key}{sep}{k}" if parent_key else k
+
+                if isinstance(v, dict):
+                    items.extend(Utils._flatten_json(v, new_key, sep).items())
+                elif isinstance(v, list):
+                    # Tratando listas
+                    for i, item in enumerate(v):
+                        if isinstance(item, dict):
+                            # Para cada item da lista que é um dicionário
+                            items.extend(Utils._flatten_json(item, f"{new_key}_{i + 1}", sep).items())
+                        else:
+                            # Para itens da lista que não são dicionários
+                            items.append((f"{new_key}_{i + 1}", item))
+                else:
+                    items.append((new_key, v))
+            return dict(items)
+
+        @staticmethod
+        def flatten_records(records):
+            """Aplana uma lista de registros JSON."""
+            return [Utils._flatten_json(record) for record in records]
+
+    # Função para aplicar patches nas funções Utils
+    def apply_utils_patches():
+        """Aplica patches nas funções da classe Utils para remover campos específicos."""
+        logger.info("Aplicando patches nas funções da classe Utils para remover campos específicos")
+
+        # Salvar a referência original da função _flatten_json
+        original_flatten_json = Utils._flatten_json
+
+        # Padrões para campos que devem ser removidos
+        interacao_pattern = re.compile(r'^interacao_')
+        tarefa_descricao_pattern = re.compile(r'^tarefa_[1-9]_descricao$')
+
+        # Criar uma nova versão da função que remove campos indesejados
+        @functools.wraps(original_flatten_json)
+        def patched_flatten_json(json_obj, parent_key='', sep='_'):
+            # Primeiro, usar a função original para achatar o JSON
+            flattened = original_flatten_json(json_obj, parent_key, sep)
+
+            # Depois, filtrar as chaves que correspondem aos padrões a serem removidos
+            filtered = {}
+            for k, v in flattened.items():
+                # Verificar se a chave começa com 'interacao_'
+                if interacao_pattern.match(k):
+                    continue
+
+                # Verificar se a chave segue o padrão 'tarefa_X_descricao' onde X é um dígito de 1 a 9
+                if tarefa_descricao_pattern.match(k):
+                    continue
+
+                # Se não corresponder a nenhum padrão a ser filtrado, manter o campo
+                filtered[k] = v
+
+            return filtered
+
+        # Substituir a função original pela versão patcheada
+        Utils._flatten_json = patched_flatten_json
+
+        logger.info("✅ Patches aplicados com sucesso")
+
+    # Aplicar patches para remover campos específicos
+    apply_utils_patches()
+
+    # Configuração da requisição
     headers = {
         "accept": "application/json",
         "content-type": "application/json",
         "email": EMAIL,
         "token": ACCESS_TOKEN
     }
-    data = {
-        "pagina": 1,
-        "registros_por_pagina": 500
-    }
 
     # Inicialização de variáveis
     todas_dados = []  # Para armazenar os dados coletados
-    pagina_atual = 1
+    offset = 0
+    limit = 30  # Conforme visto na resposta da API
     max_retries = 5  # Número máximo de tentativas
-    ultima_pagina = None
-    registros_na_pagina = 0
+    total_registros = None
+
+    logger.info(f"Iniciando extração de leads de {URL_BASE}")
 
     while True:
-        # Atualizar o número da página na requisição
-        data["pagina"] = pagina_atual
-
         retry_count = 0
         success = False
+
+        # Parâmetros da requisição
+        params = {
+            "offset": offset,
+            "limit": limit
+        }
 
         # Loop de retry com backoff exponencial
         while not success and retry_count < max_retries:
             try:
                 # Fazer a requisição
-                response = requests.get(url_base, headers=headers, json=data)
+                logger.info(f"Requisitando dados com offset={offset}, limit={limit}")
+                response = requests.get(URL_BASE, headers=headers, params=params)
                 response.raise_for_status()  # Levanta exceção para status codes de erro
                 response_data = response.json()
                 success = True  # Se chegar aqui, a requisição foi bem-sucedida
 
-                # Captura o total de páginas
-                if ultima_pagina is None:
-                    ultima_pagina = response_data["total_de_paginas"]
-                    print(f"Total de páginas a processar: {ultima_pagina}")
+                # Captura o total de registros na primeira requisição
+                if total_registros is None and "total" in response_data:
+                    total_registros = response_data["total"]
+                    logger.info(f"Total de registros a serem coletados: {total_registros}")
 
-                # Adicionar os dados da página atual na lista total
-                if "dados" in response_data and response_data["dados"]:
-                    todas_dados.extend(response_data["dados"])
-                    registros_na_pagina = len(response_data["dados"])
-                    print(
-                        f"Página {pagina_atual}/{ultima_pagina} processada com sucesso. Registros: {registros_na_pagina}")
+                # Verifica se a resposta contém leads
+                if "leads" in response_data and response_data["leads"]:
+                    batch_size = len(response_data["leads"])
+                    todas_dados.extend(response_data["leads"])
+                    logger.info(
+                        f"Batch com offset {offset} processado com sucesso. Registros: {batch_size}. Total até agora: {len(todas_dados)}/{total_registros}")
                 else:
-                    print(f"Página {pagina_atual}/{ultima_pagina} não contém dados.")
+                    logger.warning(f"Batch com offset {offset} não contém dados.")
 
             except HTTPError as e:
                 if e.response.status_code == 429:
                     retry_count += 1
                     # Backoff exponencial com jitter (variação aleatória)
                     wait_time = (2 ** retry_count) + random.uniform(0, 1)
-                    print(
+                    logger.warning(
                         f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                     time.sleep(wait_time)
                 else:
                     # Para outros erros HTTP, registre e levante a exceção
-                    print(f"Erro HTTP: {e}")
+                    logger.error(f"Erro HTTP: {e}")
                     raise
             except Exception as e:
                 # Para outros tipos de exceções
-                print(f"Erro inesperado: {e}")
+                logger.error(f"Erro inesperado: {e}")
                 raise
 
         # Se saiu do loop de retry sem sucesso, interrompe o processamento
         if not success:
-            print(
-                f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            logger.error(
+                f"Falha ao processar o batch com offset {offset} após {max_retries} tentativas. Continuando com os dados já coletados.")
 
-        # Avançar para a próxima página
-        pagina_atual += 1
+        # Avançar para o próximo batch
+        offset += limit
 
-        # Verificar se todas as páginas foram processadas
-        if pagina_atual > ultima_pagina and ultima_pagina is not None:
-            print(f"Todas as {ultima_pagina} páginas foram processadas.")
+        # Verificar se todos os registros foram processados
+        if total_registros is not None and len(todas_dados) >= total_registros:
+            logger.info(f"Todos os {total_registros} registros foram coletados.")
+            break
+
+        # Se a última resposta continha menos registros que o limite, provavelmente chegamos ao fim
+        if success and "leads" in response_data and len(response_data["leads"]) < limit:
+            logger.info("Chegamos ao final dos dados disponíveis.")
             break
 
         # Pausa entre requisições para evitar alcançar limites de taxa
-        time.sleep(5)
+        time.sleep(1)
 
     # Verificar se foram coletados dados
     if not todas_dados:
-        print("Nenhum dado foi coletado. Encerrando sem atualizar o BigQuery.")
+        logger.warning("Nenhum dado foi coletado. Encerrando sem atualizar o BigQuery.")
         return
 
+    # Aplanar os registros JSON antes de converter para DataFrame
+    flattened_data = Utils.flatten_records(todas_dados)
+
     # Converter os dados coletados para um DataFrame
-    df_corretores = pd.DataFrame(todas_dados)
-    total_registros = len(df_corretores)
-    print(f"Total de registros coletados: {total_registros}")
+    df_leads = pd.DataFrame(flattened_data)
+    total_registros_coletados = len(df_leads)
+    logger.info(f"Total de registros coletados: {total_registros_coletados}")
 
     # Verificar se coletamos o número esperado de registros
-    if ultima_pagina is not None:
-        registros_esperados = 500 * (ultima_pagina - 1) + registros_na_pagina  # Estimativa
-        if total_registros < registros_esperados:
-            print(
-                f"AVISO: Número de registros coletados ({total_registros}) é menor que o esperado ({registros_esperados}).")
+    if total_registros is not None and total_registros_coletados < total_registros:
+        logger.warning(
+            f"AVISO: Número de registros coletados ({total_registros_coletados}) é menor que o esperado ({total_registros}).")
 
     # Carregar para o BigQuery
+    logger.info(f"Carregando dados para BigQuery: {dataset_id}.{table_id}")
     client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
     table_ref = client.dataset(dataset_id).table(table_id)
+
     # Define the table schema
     job_config = bigquery.LoadJobConfig()
     job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
     job_config.autodetect = True
+
     # Load the DataFrame to BigQuery
-    load_job = client.load_table_from_dataframe(df_corretores, table_ref, job_config=job_config)
+    load_job = client.load_table_from_dataframe(df_leads, table_ref, job_config=job_config)
     load_job.result()  # Wait for the job to complete
 
-    print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
+    logger.info(
+        f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros_coletados} registros.")
 
 
 def get_extraction_tasks():
@@ -1031,30 +1122,30 @@ def get_extraction_tasks():
         list: List of task configurations
     """
     return [
-        {
-            'task_id': 'run_leads',
-            'python_callable': run_leads,
-        },
-        {
-            'task_id': 'run_vendas',
-            'python_callable': run_vendas
-        },
-        {
-            'task_id': 'run_reservas',
-            'python_callable': run_reservas,
-        },
-        {
-            'task_id': 'run_precadastros',
-            'python_callable': run_precadastros,
-        },
-        {
-            'task_id': 'run_corretores',
-            'python_callable': run_corretores,
-        },
-        {
-            'task_id': 'run_historico_situacoes',
-            'python_callable': run_historico_situacoes,
-        },
+        # {
+        #     'task_id': 'run_leads',
+        #     'python_callable': run_leads,
+        # },
+        # {
+        #     'task_id': 'run_vendas',
+        #     'python_callable': run_vendas
+        # },
+        # {
+        #     'task_id': 'run_reservas',
+        #     'python_callable': run_reservas,
+        # },
+        # {
+        #     'task_id': 'run_precadastros',
+        #     'python_callable': run_precadastros,
+        # },
+        # {
+        #     'task_id': 'run_corretores',
+        #     'python_callable': run_corretores,
+        # },
+        # {
+        #     'task_id': 'run_historico_situacoes',
+        #     'python_callable': run_historico_situacoes,
+        # },
         {
             'task_id': 'run_lead',
             'python_callable': run_lead,
