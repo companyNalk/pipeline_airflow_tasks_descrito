@@ -907,7 +907,6 @@ def run_lead(customer):
     # Configurações da API
     URL_BASE = f"https://{DOMINIO}.cvcrm.com.br/api/cvio/lead"
 
-
     # Configurações do BigQuery
     SERVICE_ACCOUNT_FILE = pathlib.Path('config', 'setup_automatico.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_FILE
@@ -926,7 +925,10 @@ def run_lead(customer):
                 response = requests.get(url_base, headers=headers, params=params)
                 response.raise_for_status()
                 data = response.json()
-                return data.get('leads', [])
+                # Verifica se há alguma informação sobre total de registros na resposta
+                total_records = data.get('total', 0)
+                leads = data.get('leads', [])
+                return leads, total_records
             except requests.exceptions.HTTPError as e:
                 print(f"HTTP error occurred: {e}")
                 if response.status_code in [520, 525]:
@@ -941,7 +943,7 @@ def run_lead(customer):
                 print(f"Erro na decodificação JSON. Resposta: {response.text}")
                 break
 
-        return None
+        return None, 0
 
     def normalize_nested_columns(df):
         # Extraindo valores de colunas aninhadas
@@ -1003,29 +1005,77 @@ def run_lead(customer):
             "email": EMAIL
         }
 
-        limit = 1000
+        limit = 1000  # Manter o limite de registros por página em 1000
         offset = 0
+        total_records = None  # Variável para armazenar o total de registros
 
         all_leads = []
-
         start_time = time.time()
 
-        while True:
-            print(f"Offset: {offset}")
-            leads = get_leads_data(url_base, headers, limit, offset)
+        # Primeira chamada para obter o total de registros
+        initial_leads, total_records = get_leads_data(url_base, headers, limit, offset)
+
+        if initial_leads is None:
+            print("Falha ao obter leads. Encerrando a coleta de dados.")
+            return
+
+        all_leads.extend(initial_leads)
+        expected_pages = (total_records // limit) + (1 if total_records % limit > 0 else 0)
+
+        print(f"Total de registros: {total_records}")
+        print(f"Páginas esperadas: {expected_pages}")
+
+        # Iniciar da segunda página (offset = limit)
+        offset = limit
+        page = 1
+
+        # Continuar a paginação até obter todos os registros
+        while offset < total_records:
+            print(f"Buscando página {page + 1} / {expected_pages} (Offset: {offset})")
+            leads, _ = get_leads_data(url_base, headers, limit, offset)
+
             if leads is None:
-                print("Falha ao obter leads. Encerrando a coleta de dados.")
-                break
+                print(f"Falha ao obter leads na página {page + 1}. Tentando novamente...")
+                # Esperar um pouco antes de tentar novamente
+                time.sleep(10)
+                leads, _ = get_leads_data(url_base, headers, limit, offset)
+
+                if leads is None:
+                    print(f"Falha novamente. Prosseguindo para a próxima página.")
+                    offset += limit
+                    page += 1
+                    continue
+
             if not leads:
-                break
+                print(f"Página {page + 1} retornou vazia. Verificando se é a última página...")
+
+                # Verifica se já obtemos todos os registros esperados
+                if len(all_leads) >= total_records:
+                    print("Todos os registros foram obtidos. Finalizando.")
+                    break
+
+                # Se não obtivemos todos os registros, verificamos se há problemas com o offset
+                verify_offset = offset - 1  # Tentativa com offset ajustado
+                verify_leads, _ = get_leads_data(url_base, headers, 1, verify_offset)
+
+                if verify_leads:
+                    print(f"Encontrados registros com offset ajustado. Tentando continuar a paginação...")
+                else:
+                    print("Nenhum registro adicional encontrado. Finalizando a coleta.")
+                    break
 
             all_leads.extend(leads)
             offset += limit
+            page += 1
+
+            # Imprimir progresso
+            print(f"Registros coletados até agora: {len(all_leads)} / {total_records}")
 
             # Imprimir o uso de memória a cada iteração
             print_memory_usage()
 
         if all_leads:
+            print(f"Total de leads coletados: {len(all_leads)}")
             df = pd.DataFrame(all_leads)
 
             # Manter apenas as colunas desejadas
@@ -1040,6 +1090,9 @@ def run_lead(customer):
                 'campos_adicionais', 'data_venda'
             ]
 
+            # Verificar se todas as colunas existem no DataFrame
+            columns_to_keep = [col for col in columns_to_keep if col in df.columns]
+
             df = df[columns_to_keep]
 
             # Normalizar e limpar as colunas aninhadas
@@ -1051,6 +1104,8 @@ def run_lead(customer):
 
             # Upload the transformed DataFrame to BigQuery
             upload_to_bigquery(dataset_id, table_id, df)
+        else:
+            print("Nenhum lead foi coletado.")
 
         end_time = time.time()
         elapsed_time = end_time - start_time
