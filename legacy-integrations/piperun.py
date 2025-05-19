@@ -2,7 +2,6 @@
 Piperun module for data extraction functions.
 This module contains functions specific to the Piperun integration.
 """
-
 import os
 import pathlib
 import re
@@ -17,7 +16,7 @@ from core import gcs
 from google.cloud import storage
 
 
-def run_activies(customer):
+def run_activities(customer):
     API_URL = customer['api_url']
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
@@ -89,7 +88,7 @@ def run_activies(customer):
 
             except Exception as e:
                 print(f"Erro ao processar resposta: {e}")
-                break
+                raise
 
         return all_data
 
@@ -116,6 +115,157 @@ def run_activies(customer):
             return
 
         df = pd.DataFrame(data)
+        upload_to_gcs(df)
+
+    # START
+    main()
+
+
+def run_companies(customer):
+    API_URL = customer['api_url']
+    API_TOKEN = customer['api_token']
+    BUCKET_NAME = customer['bucket_name']
+    DESTINATION_FOLDER = "companies"
+    DESTINATION_FILENAME = "piperun_companies.csv"
+
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    HEADERS = {
+        "accept": "application/json",
+        "token": API_TOKEN
+    }
+    PARAMS = {
+        "show": 200,
+        "page": 1
+    }
+
+    def normalize_column_name(name):
+        nfkd = unicodedata.normalize('NFKD', name)
+        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+        return re.sub(r"\s+", "_", cleaned).lower()
+
+    def flatten_dict(d, parent_key='', sep='_'):
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    def get_companies():
+        all_data = []
+        total_collected = 0
+
+        while True:
+            response = requests.get(API_URL, headers=HEADERS, params=PARAMS)
+
+            if response.status_code == 429:
+                print("Limite excedido. Aguardando 30 segundos...")
+                time.sleep(30)
+                continue
+
+            if response.status_code != 200:
+                print(f"Erro {response.status_code}: {response.text}")
+                break
+
+            try:
+                data = response.json()
+                if "data" not in data or not isinstance(data["data"], list):
+                    print("Formato inesperado da resposta da API.")
+                    break
+
+                companies = data["data"]
+                if not companies:
+                    print("Nenhuma empresa retornada.")
+                    break
+
+                for item in companies:
+                    flat = flatten_dict(item)
+                    all_data.append(flat)
+
+                total_collected += len(companies)
+                print(f"Coletados {total_collected} registros até agora...")
+
+                if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
+                    PARAMS["page"] += 1
+                else:
+                    break
+
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"Erro ao processar resposta: {e}")
+                raise
+
+        return all_data
+
+    def convert_boolean_to_int(df):
+        """Converte colunas booleanas para inteiros (0/1)."""
+        bool_columns = df.select_dtypes(include=['bool']).columns
+        for col in bool_columns:
+            df[col] = df[col].astype(int)
+        return df
+
+    def clean_dataframe(df):
+        """Realiza limpeza e tratamento do DataFrame."""
+        # Normaliza os nomes das colunas
+        df.columns = [normalize_column_name(col) for col in df.columns]
+
+        # Converte valores booleanos para int (0/1)
+        df = convert_boolean_to_int(df)
+
+        # Trata colunas específicas que sabemos que são booleanas mas podem não ser
+        # detectadas corretamente pelo pandas
+        boolean_columns = [
+            'status', 'is_brand', 'is_supplier', 'is_client',
+            'is_carrier', 'is_franchise', 'is_channel',
+            'is_distributor', 'is_manufacturer', 'is_partner'
+        ]
+
+        for col in boolean_columns:
+            if col in df.columns:
+                # Primeiro converte para string para lidar com possíveis valores nulos
+                df[col] = df[col].astype(str)
+                # Mapeia valores para 0/1
+                df[col] = df[col].map({'True': 1, 'true': 1, '1': 1,
+                                       'False': 0, 'false': 0, '0': 0,
+                                       'None': 0, 'nan': 0, 'null': 0})
+                # Preenche valores nulos com 0
+                df[col] = df[col].fillna(0).astype(int)
+
+        return df
+
+    def upload_to_gcs(df: pd.DataFrame):
+        try:
+            storage_client = storage.Client(project=customer['project_id'])
+            bucket = storage_client.bucket(BUCKET_NAME)
+            blob = bucket.blob(f"{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+
+            buffer = StringIO()
+            df.to_csv(buffer, sep=";", index=False)
+            buffer.seek(0)
+            blob.upload_from_string(buffer.getvalue(), content_type="text/csv")
+
+            print(f"Arquivo enviado com sucesso para: gs://{BUCKET_NAME}/{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+        except Exception as e:
+            print(f"Erro ao enviar para o GCS: {e}")
+            raise
+
+    def main():
+        data = get_companies()
+        if not data:
+            print("Nenhum dado para exportar.")
+            return
+
+        df = pd.DataFrame(data)
+
+        # Limpa e trata o DataFrame
+        df = clean_dataframe(df)
+
         upload_to_gcs(df)
 
     # START
@@ -240,7 +390,7 @@ def run_deals(customer):
                 time.sleep(1)
             except Exception as e:
                 print(f"Erro ao processar JSON: {e}")
-                break
+                raise
 
         return all_deals
 
@@ -288,6 +438,9 @@ def run_deals(customer):
 
     def detect_and_convert_date_columns(df):
         """Detecta colunas de data e converte para o formato BigQuery"""
+        # Exemplo das primeiras linhas para detecção
+        sample = df.head(10)
+
         date_columns = []
 
         # Identifica colunas que parecem conter datas
@@ -343,6 +496,240 @@ def run_deals(customer):
     main()
 
 
+def run_lost_reasons(customer):
+    API_URL = customer['api_url']
+    API_TOKEN = customer['api_token']
+    BUCKET_NAME = customer['bucket_name']
+    DESTINATION_FOLDER = "lost_reasons"
+    DESTINATION_FILENAME = "piperun_lost_reasons.csv"
+
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    HEADERS = {
+        "accept": "application/json",
+        "token": API_TOKEN
+    }
+    PARAMS = {
+        "show": 200,
+        "page": 1
+    }
+
+    def normalize_column_name(name):
+        nfkd = unicodedata.normalize('NFKD', name)
+        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+        return re.sub(r"\s+", "_", cleaned).lower()
+
+    def flatten_dict(d, parent_key='', sep='_'):
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    def get_lost_reasons():
+        all_data = []
+        total_collected = 0
+
+        while True:
+            response = requests.get(API_URL, headers=HEADERS, params=PARAMS)
+
+            if response.status_code == 429:
+                print("Limite excedido. Aguardando 30 segundos...")
+                time.sleep(30)
+                continue
+
+            if response.status_code != 200:
+                print(f"Erro {response.status_code}: {response.text}")
+                break
+
+            try:
+                data = response.json()
+                if "data" not in data or not isinstance(data["data"], list):
+                    print("Formato inesperado da resposta da API.")
+                    break
+
+                lost_reasons = data["data"]
+                if not lost_reasons:
+                    print("Nenhuma razão de perda retornada.")
+                    break
+
+                for item in lost_reasons:
+                    flat = flatten_dict(item)
+                    all_data.append(flat)
+
+                total_collected += len(lost_reasons)
+                print(f"Coletados {total_collected} registros até agora...")
+
+                if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
+                    PARAMS["page"] += 1
+                else:
+                    break
+
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"Erro ao processar resposta: {e}")
+                raise
+
+        return all_data
+
+    def upload_to_gcs(df: pd.DataFrame):
+        try:
+            storage_client = storage.Client(project=customer['project_id'])
+            bucket = storage_client.bucket(BUCKET_NAME)
+            blob = bucket.blob(f"{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+
+            buffer = StringIO()
+            df.to_csv(buffer, sep=";", index=False)
+            buffer.seek(0)
+            blob.upload_from_string(buffer.getvalue(), content_type="text/csv")
+
+            print(f"Arquivo enviado com sucesso para: gs://{BUCKET_NAME}/{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+        except Exception as e:
+            print(f"Erro ao enviar para o GCS: {e}")
+            raise
+
+    def main():
+        data = get_lost_reasons()
+        if not data:
+            print("Nenhum dado para exportar.")
+            return
+
+        df = pd.DataFrame(data)
+
+        # Normaliza os nomes das colunas se necessário
+        df.columns = [normalize_column_name(col) for col in df.columns]
+
+        upload_to_gcs(df)
+
+    # START
+    main()
+
+
+def run_origins(customer):
+    API_URL = customer['api_url']
+    API_TOKEN = customer['api_token']
+    BUCKET_NAME = customer['bucket_name']
+    DESTINATION_FOLDER = "origins"
+    DESTINATION_FILENAME = "piperun_origins.csv"
+
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    HEADERS = {
+        "accept": "application/json",
+        "token": API_TOKEN
+    }
+    PARAMS = {
+        "show": 200,
+        "page": 1
+    }
+
+    def normalize_column_name(name):
+        nfkd = unicodedata.normalize('NFKD', name)
+        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+        return re.sub(r"\s+", "_", cleaned).lower()
+
+    def flatten_dict(d, parent_key='', sep='_'):
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    def get_origins():
+        all_data = []
+        total_collected = 0
+
+        while True:
+            response = requests.get(API_URL, headers=HEADERS, params=PARAMS)
+
+            if response.status_code == 429:
+                print("Limite excedido. Aguardando 30 segundos...")
+                time.sleep(30)
+                continue
+
+            if response.status_code != 200:
+                print(f"Erro {response.status_code}: {response.text}")
+                break
+
+            try:
+                data = response.json()
+                if "data" not in data or not isinstance(data["data"], list):
+                    print("Formato inesperado da resposta da API.")
+                    break
+
+                origins = data["data"]
+                if not origins:
+                    print("Nenhuma origem retornada.")
+                    break
+
+                for item in origins:
+                    flat = flatten_dict(item)
+                    all_data.append(flat)
+
+                total_collected += len(origins)
+                print(f"Coletados {total_collected} registros até agora...")
+
+                if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
+                    PARAMS["page"] += 1
+                else:
+                    break
+
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"Erro ao processar resposta: {e}")
+                raise
+
+        return all_data
+
+    def upload_to_gcs(df: pd.DataFrame):
+        try:
+            storage_client = storage.Client(project=customer['project_id'])
+            bucket = storage_client.bucket(BUCKET_NAME)
+            blob = bucket.blob(f"{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+
+            buffer = StringIO()
+            df.to_csv(buffer, sep=";", index=False)
+            buffer.seek(0)
+            blob.upload_from_string(buffer.getvalue(), content_type="text/csv")
+
+            print(f"Arquivo enviado com sucesso para: gs://{BUCKET_NAME}/{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+        except Exception as e:
+            print(f"Erro ao enviar para o GCS: {e}")
+            raise
+
+    def main():
+        data = get_origins()
+        if not data:
+            print("Nenhum dado para exportar.")
+            return
+
+        df = pd.DataFrame(data)
+
+        # Normaliza os nomes das colunas se necessário
+        df.columns = [normalize_column_name(col) for col in df.columns]
+
+        # Converte valores booleanos para int (0/1) se necessário
+        if 'active' in df.columns:
+            df['active'] = df['active'].astype(int)
+
+        upload_to_gcs(df)
+
+    # START
+    main()
+
+
 def get_extraction_tasks():
     """
     Get the list of data extraction tasks for Moskit.
@@ -352,11 +739,23 @@ def get_extraction_tasks():
     """
     return [
         {
-            'task_id': 'extract_activies',
-            'python_callable': run_activies
+            'task_id': 'extract_activities',
+            'python_callable': run_activities
+        },
+        {
+            'task_id': 'extract_companies',
+            'python_callable': run_companies
         },
         {
             'task_id': 'extract_deals',
             'python_callable': run_deals
+        },
+        {
+            'task_id': 'extract_lost_reasons',
+            'python_callable': run_lost_reasons
+        },
+        {
+            'task_id': 'extract_origins',
+            'python_callable': run_origins
         }
     ]
