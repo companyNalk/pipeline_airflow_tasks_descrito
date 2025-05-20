@@ -21,7 +21,7 @@ def run_activities(customer):
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
     DESTINATION_FOLDER = "activities"
-    DESTINATION_FILENAME = "piperun_activities.csv"
+    DESTINATION_FILENAME = "activities.csv"
 
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
@@ -126,7 +126,7 @@ def run_companies(customer):
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
     DESTINATION_FOLDER = "companies"
-    DESTINATION_FILENAME = "piperun_companies.csv"
+    DESTINATION_FILENAME = "companies.csv"
 
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
@@ -277,7 +277,7 @@ def run_deals(customer):
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
     DESTINATION_FOLDER = "deals"
-    DESTINATION_FILENAME = "piperun_deals.csv"
+    DESTINATION_FILENAME = "deals.csv"
 
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
@@ -501,7 +501,7 @@ def run_lost_reasons(customer):
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
     DESTINATION_FOLDER = "lost_reasons"
-    DESTINATION_FILENAME = "piperun_lost_reasons.csv"
+    DESTINATION_FILENAME = "lost_reasons.csv"
 
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
@@ -616,7 +616,7 @@ def run_origins(customer):
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
     DESTINATION_FOLDER = "origins"
-    DESTINATION_FILENAME = "piperun_origins.csv"
+    DESTINATION_FILENAME = "origins.csv"
 
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
