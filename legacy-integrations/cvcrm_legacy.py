@@ -1123,30 +1123,30 @@ def get_extraction_tasks():
         list: List of task configurations
     """
     return [
-        # {
-        #     'task_id': 'run_leads',
-        #     'python_callable': run_leads,
-        # },
-        # {
-        #     'task_id': 'run_vendas',
-        #     'python_callable': run_vendas
-        # },
-        # {
-        #     'task_id': 'run_reservas',
-        #     'python_callable': run_reservas,
-        # },
-        # {
-        #     'task_id': 'run_precadastros',
-        #     'python_callable': run_precadastros,
-        # },
-        # {
-        #     'task_id': 'run_corretores',
-        #     'python_callable': run_corretores,
-        # },
-        # {
-        #     'task_id': 'run_historico_situacoes',
-        #     'python_callable': run_historico_situacoes,
-        # },
+        {
+            'task_id': 'run_leads',
+            'python_callable': run_leads,
+        },
+        {
+            'task_id': 'run_vendas',
+            'python_callable': run_vendas
+        },
+        {
+            'task_id': 'run_reservas',
+            'python_callable': run_reservas,
+        },
+        {
+            'task_id': 'run_precadastros',
+            'python_callable': run_precadastros,
+        },
+        {
+            'task_id': 'run_corretores',
+            'python_callable': run_corretores,
+        },
+        {
+            'task_id': 'run_historico_situacoes',
+            'python_callable': run_historico_situacoes,
+        },
         {
             'task_id': 'run_lead',
             'python_callable': run_lead,
