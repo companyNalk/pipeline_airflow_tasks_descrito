@@ -50,7 +50,7 @@ def run_activities(customer):
         total_collected = 0
 
         while True:
-            response = requests.get(API_URL, headers=HEADERS, params=PARAMS)
+            response = requests.get(f"{API_URL}/activities", headers=HEADERS, params=PARAMS)
 
             if response.status_code == 429:
                 print("Limite excedido. Aguardando 30 segundos...")
@@ -161,7 +161,7 @@ def run_companies(customer):
         total_collected = 0
 
         while True:
-            response = requests.get(API_URL, headers=HEADERS, params=PARAMS)
+            response = requests.get(f"{API_URL}/companies", headers=HEADERS, params=PARAMS)
 
             if response.status_code == 429:
                 print("Limite excedido. Aguardando 30 segundos...")
@@ -354,7 +354,7 @@ def run_deals(customer):
         total_collected = 0
 
         while True:
-            response = requests.get(API_URL, headers=HEADERS, params=PARAMS)
+            response = requests.get(f"{API_URL}/deals", headers=HEADERS, params=PARAMS)
 
             if response.status_code == 429:
                 print("Limite de requisições excedido. Aguardando 30 segundos...")
@@ -536,7 +536,7 @@ def run_lost_reasons(customer):
         total_collected = 0
 
         while True:
-            response = requests.get(API_URL, headers=HEADERS, params=PARAMS)
+            response = requests.get(f"{API_URL}/lostReasons", headers=HEADERS, params=PARAMS)
 
             if response.status_code == 429:
                 print("Limite excedido. Aguardando 30 segundos...")
@@ -651,7 +651,7 @@ def run_origins(customer):
         total_collected = 0
 
         while True:
-            response = requests.get(API_URL, headers=HEADERS, params=PARAMS)
+            response = requests.get(f"{API_URL}/origins", headers=HEADERS, params=PARAMS)
 
             if response.status_code == 429:
                 print("Limite excedido. Aguardando 30 segundos...")
