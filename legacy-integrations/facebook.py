@@ -30,7 +30,9 @@ def run(customer):
     HISTORICAL_START_DATE = customer['start_date']
     API_ACCESS_TOKEN = customer['access_token']
     API_ACCOUNT_IDS = customer['accounts_ids'].split(',')
-
+    print('HISTORICAL_START_DATE', HISTORICAL_START_DATE)
+    print('API_ACCESS_TOKEN', API_ACCESS_TOKEN)
+    print('API_ACCOUNT_IDS', API_ACCOUNT_IDS)
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
     
     # Create a temporary directory for storing files
@@ -398,7 +400,7 @@ def run(customer):
                 
                 # Generate CREATE TABLE query
                 create_table_query = clickhouse.get_create_table_query(combined_df, database, table_name)
-                
+                combined_df['date'] = pd.to_datetime(combined_df['date']).dt.date
                 # Execute CREATE TABLE query
                 client.command(create_table_query)
                 print(f"Created or verified table: {database}.{table_name}")
