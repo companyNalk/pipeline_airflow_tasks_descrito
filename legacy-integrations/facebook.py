@@ -30,7 +30,10 @@ def run(customer):
     HISTORICAL_START_DATE = customer['start_date']
     API_ACCESS_TOKEN = customer['access_token']
     API_ACCOUNT_IDS = customer['accounts_ids'].split(',')
-
+    print('HISTORICAL_START_DATE', HISTORICAL_START_DATE)
+    print('API_ACCESS_TOKEN', API_ACCESS_TOKEN)
+    print('API_ACCOUNT_IDS', API_ACCOUNT_IDS)
+    quit()
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
     
     # Create a temporary directory for storing files
@@ -398,7 +401,7 @@ def run(customer):
                 
                 # Generate CREATE TABLE query
                 create_table_query = clickhouse.get_create_table_query(combined_df, database, table_name)
-                
+                combined_df['date'] = pd.to_datetime(combined_df['date']).dt.date
                 # Execute CREATE TABLE query
                 client.command(create_table_query)
                 print(f"Created or verified table: {database}.{table_name}")
@@ -443,7 +446,7 @@ def run(customer):
             """Get list of dates to process"""
             print(f"\nChecking dates from {HISTORICAL_START_DATE} to yesterday...")
             start = datetime.strptime(HISTORICAL_START_DATE, "%Y-%m-%d").date()
-            yesterday = datetime.now().date() - timedelta(days=1)  # Yesterday, not today
+            yesterday = datetime.strptime('2024-05-30', "%Y-%m-%d").date()  # Yesterday, not today
 
             dates = []
             current = start
