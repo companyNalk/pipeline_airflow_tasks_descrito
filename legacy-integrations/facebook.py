@@ -33,7 +33,6 @@ def run(customer):
     print('HISTORICAL_START_DATE', HISTORICAL_START_DATE)
     print('API_ACCESS_TOKEN', API_ACCESS_TOKEN)
     print('API_ACCOUNT_IDS', API_ACCOUNT_IDS)
-    quit()
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
     
     # Create a temporary directory for storing files
@@ -446,7 +445,7 @@ def run(customer):
             """Get list of dates to process"""
             print(f"\nChecking dates from {HISTORICAL_START_DATE} to yesterday...")
             start = datetime.strptime(HISTORICAL_START_DATE, "%Y-%m-%d").date()
-            yesterday = datetime.strptime('2024-05-30', "%Y-%m-%d").date()  # Yesterday, not today
+            yesterday = datetime.now().date() - timedelta(days=1)  # Yesterday, not today
 
             dates = []
             current = start
