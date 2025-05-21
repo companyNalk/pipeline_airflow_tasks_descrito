@@ -30,7 +30,9 @@ def run(customer):
     API_ACCOUNT_IDS = customer['accounts_ids'].split(',')
     conta_bm = customer['conta_bm']
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
-    
+    print('API_ACCESS_TOKEN', API_ACCESS_TOKEN)
+    print('API_ACCOUNT_IDS', API_ACCOUNT_IDS)
+    print('conta_bm', conta_bm)
     # Create a temporary directory for storing files
     TEMP_DIR = Path(tempfile.gettempdir()) / f"facebook_ads_inc_{uuid.uuid4().hex}"
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
