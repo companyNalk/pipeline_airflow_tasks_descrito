@@ -34,7 +34,7 @@ def fetch_data(endpoint, token, page=1, params=None, debug_info=None):
 
     # Adapta os parâmetros de paginação
     if endpoint != "answers/overview":
-        params.update({"currentPage": page, "perPage": 1000})
+        params.update({"currentPage": page, "perPage": 100000})
 
     debug_info = debug_info or f"{endpoint}:p{page}"
 
@@ -53,7 +53,7 @@ def fetch_page(endpoint, token, page=1):
                 'items': [data],  # Encapsula o resultado em uma lista para manter consistência
                 'meta': {
                     'total': 1,
-                    'perPage': 1000,
+                    'perPage': 100000,
                     'totalPages': 1,
                     'currentPage': 1,
                 },
@@ -66,7 +66,7 @@ def fetch_page(endpoint, token, page=1):
         # Adaptação dos metadados conforme a estrutura da API Digisac
         meta = {
             'total': int(data.get('total', 0)),
-            'perPage': int(data.get('perPage', 1000)),
+            'perPage': int(data.get('perPage', 100000)),
             'totalPages': int(data.get('lastPage', 1)),
             'currentPage': int(data.get('currentPage', page)),
         }
