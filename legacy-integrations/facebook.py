@@ -33,7 +33,7 @@ def run(customer):
     print('HISTORICAL_START_DATE', HISTORICAL_START_DATE)
     print('API_ACCESS_TOKEN', API_ACCESS_TOKEN)
     print('API_ACCOUNT_IDS', API_ACCOUNT_IDS)
-    quit()
+
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
     
     # Create a temporary directory for storing files
