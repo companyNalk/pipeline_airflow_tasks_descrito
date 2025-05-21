@@ -28,7 +28,7 @@ def run(customer):
     # Configuration
     API_ACCESS_TOKEN = customer['access_token']
     API_ACCOUNT_IDS = customer['accounts_ids'].split(',')
-
+    conta_bm = customer['conta_bm']
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
     
     # Create a temporary directory for storing files
@@ -396,12 +396,12 @@ def run(customer):
                 client = self.clickhouse_client
                 
                 # Generate CREATE TABLE query
+                combined_df['conta_bm'] = conta_bm
                 create_table_query = clickhouse.get_create_table_query(combined_df, database, table_name)
                 
                 # Execute CREATE TABLE query
                 client.command(create_table_query)
                 print(f"Created or verified table: {database}.{table_name}")
-                
                 # Insert data
                 result = clickhouse.insert_df_to_clickhouse(combined_df, database, table_name, client, False)
                 if result:
@@ -428,7 +428,7 @@ def run(customer):
                     return False
                 
                 # Check if data for this date exists
-                check_query = f"SELECT count() FROM {database}.{table_name} WHERE date = '{date_str}'"
+                check_query = f"SELECT count() FROM {database}.{table_name} WHERE date = '{date_str}' and conta_bm='{conta_bm}'"
                 result = client.query(check_query)
                 count = result.result_rows[0][0]
                 
