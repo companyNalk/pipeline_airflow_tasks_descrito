@@ -6,6 +6,10 @@ from core import gcs
 
 
 def run_leads(customer):
+    if not customer.get('cvdw_active', False):
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+        return
+
     import requests
     import pandas as pd
     import os
@@ -157,6 +161,10 @@ def run_leads(customer):
 
 
 def run_vendas(customer):
+    if not customer.get('cvdw_active', False):
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+        return
+
     import requests
     import pandas as pd
     import os
@@ -291,6 +299,10 @@ def run_vendas(customer):
 
 
 def run_reservas(customer):
+    if not customer.get('cvdw_active', False):
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+        return
+
     import requests
     import pandas as pd
     import os
@@ -426,6 +438,10 @@ def run_reservas(customer):
 
 
 def run_precadastros(customer):
+    if not customer.get('cvdw_active', False):
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+        return
+
     import requests
     import pandas as pd
     import os
@@ -561,6 +577,10 @@ def run_precadastros(customer):
 
 
 def run_corretores(customer):
+    if not customer.get('cvdw_active', False):
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+        return
+
     import requests
     import pandas as pd
     import os
@@ -696,6 +716,10 @@ def run_corretores(customer):
 
 
 def run_historico_situacoes(customer):
+    if not customer.get('cvdw_active', False):
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+        return
+
     import requests
     import pandas as pd
     import os
@@ -888,6 +912,10 @@ def run_historico_situacoes(customer):
 
 
 def run_lead(customer):
+    if not customer.get('cvdw_active', False):
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+        return
+
     import requests
     import pandas as pd
     import os
