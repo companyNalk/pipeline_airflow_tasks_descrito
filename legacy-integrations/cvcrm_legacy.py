@@ -577,7 +577,7 @@ def run_corretores(customer):
     SERVICE_ACCOUNT_FILE = pathlib.Path('config', 'setup_automatico.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_FILE
 
-    URL_BASE = f"https://{DOMINIO}.cvcrm.com.br/api/v1/cvdw/leads/corretores"
+    URL_BASE = f"https://{DOMINIO}.cvcrm.com.br/api/v1/cvdw/corretores"
 
     dataset_id = 'cvcrm'
     table_id = 'cvcrm_corretores'
