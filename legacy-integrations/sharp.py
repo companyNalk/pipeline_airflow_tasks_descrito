@@ -11,7 +11,9 @@ def run(customer):
     import json
     import os
     import pandas as pd
+    import re
     import requests
+    import unicodedata
     from google.cloud import storage
     import pathlib
 
@@ -25,6 +27,13 @@ def run(customer):
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
 
+    # Função para normalização de nomes de colunas
+    def normalize_column_name(name):
+        nfkd = unicodedata.normalize('NFKD', str(name))
+        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+        return re.sub(r"\s+", "_", cleaned).lower()
+
     @functions_framework.http
     def main(request):
         storage_client = storage.Client(project=customer['project_id'])
@@ -33,8 +42,10 @@ def run(customer):
         # Função para upload e print de sucesso/erro
         def upload_to_gcs(dataframe, path):
             try:
-                bucket.blob(path).upload_from_string(dataframe.to_csv(index=False), 'text/csv')
-                print(f"Dados enviados para {path} com sucesso.")
+                # Usando ponto e vírgula (;) como separador
+                csv_content = dataframe.to_csv(index=False, sep=';')
+                bucket.blob(path).upload_from_string(csv_content, 'text/csv')
+                print(f"Dados enviados para {path} com sucesso (separador: ponto e vírgula).")
             except Exception as e:
                 print(f"Erro ao enviar dados para {path}: {e}")
 
@@ -72,6 +83,8 @@ def run(customer):
                 fr.append(df)
 
         final = pd.concat(fr)
+        # Normalizar nomes das colunas
+        final.columns = [normalize_column_name(col) for col in final.columns]
         upload_to_gcs(final, f'stages/stages_{ACCOUNT}.csv')
 
         # USERS
@@ -105,7 +118,9 @@ def run(customer):
                 fr.append(df)
 
         final = pd.concat(fr)
-        upload_to_gcs(final, f'users/users_{ACCOUNT}.csv')
+        # Normalizar nomes das colunas
+        final.columns = [normalize_column_name(col) for col in final.columns]
+        upload_to_gcs(final, 'Users/users_deskbee.csv')
 
         # CAMPAIGNS
         fr = []
@@ -138,6 +153,8 @@ def run(customer):
                 fr.append(df)
 
         final = pd.concat(fr)
+        # Normalizar nomes das colunas
+        final.columns = [normalize_column_name(col) for col in final.columns]
         upload_to_gcs(final, f'campaigns/campaigns_{ACCOUNT}.csv')
 
         # FIELDS
@@ -171,6 +188,8 @@ def run(customer):
                 fr.append(df)
 
         final = pd.concat(fr)
+        # Normalizar nomes das colunas
+        final.columns = [normalize_column_name(col) for col in final.columns]
         upload_to_gcs(final, f'fields/fields_{ACCOUNT}.csv')
 
         # LEADS
@@ -215,6 +234,8 @@ def run(customer):
 
         if fr:
             final = pd.concat(fr)
+            # Normalizar nomes das colunas
+            final.columns = [normalize_column_name(col) for col in final.columns]
             upload_to_gcs(final, f'leads/leads_{ACCOUNT}.csv')
             print(f"Total de registros coletados do endpoint Leads: {total_leads}")
 
@@ -262,10 +283,12 @@ def run(customer):
 
         if fr:
             final = pd.concat(fr)
+            # Normalizar nomes das colunas
+            final.columns = [normalize_column_name(col) for col in final.columns]
             upload_to_gcs(final, f'opportunities/opportunities_{ACCOUNT}.csv')
             print(f"Total de registros coletados do endpoint Opportunities: {total_opportunities}")
 
-        # EVENTS
+        # # EVENTS
         # today = str(date.today() - timedelta(days=1)) + " 00:00:00"
         # fr = []
         # offset = -500
@@ -291,7 +314,7 @@ def run(customer):
         #     except (ValueError, KeyError):
         #         print(f"Erro ao decodificar resposta JSON ou chave 'event' ausente na resposta para offset {offset}.")
         #         break
-        #
+        # 
         #     if count == 0:
         #         break
         #     else:
@@ -301,10 +324,12 @@ def run(customer):
         #         df['offset'] = offset
         #         df['import_date'] = pd.to_datetime('today').strftime('%Y-%m-%d')
         #         fr.append(df)
-        #
+        # 
         # if fr:
         #     final = pd.concat(fr)
-        #     upload_to_gcs(final, f'events/events_{ACCOUNT}.csv')
+        #     # Normalizar nomes das colunas
+        #     final.columns = [normalize_column_name(col) for col in final.columns]
+        #     upload_to_gcs(final, f'Events/events_deskbee_{datetime.today().strftime("%Y%m%d%H%M%S")}.csv')
 
     # START
     main(None)
