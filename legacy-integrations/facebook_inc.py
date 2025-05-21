@@ -403,7 +403,7 @@ def run(customer):
                 print(f"Created or verified table: {database}.{table_name}")
                 
                 # Insert data
-                result = clickhouse.insert_df_to_clickhouse(combined_df, database, table_name, client)
+                result = clickhouse.insert_df_to_clickhouse(combined_df, database, table_name, client, False)
                 if result:
                     print(f"Successfully uploaded {len(combined_df)} records to ClickHouse table {database}.{table_name}")
                 else:
