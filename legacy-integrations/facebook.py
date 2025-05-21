@@ -30,6 +30,7 @@ def run(customer):
     HISTORICAL_START_DATE = customer['start_date']
     API_ACCESS_TOKEN = customer['access_token']
     API_ACCOUNT_IDS = customer['accounts_ids'].split(',')
+    CONTA_BM = customer['conta_bm']
     print('HISTORICAL_START_DATE', HISTORICAL_START_DATE)
     print('API_ACCESS_TOKEN', API_ACCESS_TOKEN)
     print('API_ACCOUNT_IDS', API_ACCOUNT_IDS)
@@ -384,11 +385,11 @@ def run(customer):
             
             # Combine all DataFrames into one
             combined_df = pd.concat(self.all_data_frames, ignore_index=True)
-            
             if combined_df.empty:
                 print("WARNING: Combined DataFrame is empty, nothing to upload")
                 return
             
+            combined_df['conta_bm'] = CONTA_BM
             print(f"Uploading combined data to ClickHouse ({len(combined_df)} rows)")
             
             # Create a client with the provided connection parameters
@@ -433,7 +434,7 @@ def run(customer):
                     return False
                 
                 # Check if data for this date exists
-                check_query = f"SELECT count() FROM {database}.{table_name} WHERE date = '{date_str}'"
+                check_query = f"SELECT count() FROM {database}.{table_name} WHERE date = '{date_str}' and conta_bm='{CONTA_BM}'"
                 result = client.query(check_query)
                 count = result.result_rows[0][0]
                 
