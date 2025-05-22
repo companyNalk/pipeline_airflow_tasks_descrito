@@ -391,6 +391,7 @@ def run(customer):
                 return
             
             combined_df['conta_bm'] = CONTA_BM
+            combined_df['date'] = pd.to_datetime(combined_df['date']).dt.date
             print(f"Uploading combined data to ClickHouse ({len(combined_df)} rows)")
             
             # Create a client with the provided connection parameters
@@ -403,7 +404,6 @@ def run(customer):
                 
                 # Generate CREATE TABLE query
                 create_table_query = clickhouse.get_create_table_query(combined_df, database, table_name)
-                combined_df['date'] = pd.to_datetime(combined_df['date']).dt.date
                 # Execute CREATE TABLE query
                 client.command(create_table_query)
                 print(f"Created or verified table: {database}.{table_name}")
