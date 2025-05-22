@@ -6,10 +6,10 @@ from core import gcs
 
 
 def run_leads(customer):
-    print(customer['cvdw_active'])
-    if not customer['cvdw_active']:
-        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
-        return
+    # if not customer['cvdw_active']:
+    #     print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+    #     return
+    print(f'VALUE: {customer["cvdw_active"]}')
 
     import requests
     import pandas as pd
