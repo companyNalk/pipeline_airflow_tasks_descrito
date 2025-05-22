@@ -6,9 +6,9 @@ from core import gcs
 
 
 def run_leads(customer):
-    # if not customer['cvdw_active']:
-    #     print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
-    #     return
+    if not customer['cvdw_active']:
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+        return
     print(f'VALUE: {customer["cvdw_active"]}')
 
     import requests
@@ -913,10 +913,6 @@ def run_historico_situacoes(customer):
 
 
 def run_lead(customer):
-    if not customer['cvdw_active']:
-        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
-        return
-
     import requests
     import pandas as pd
     import os
