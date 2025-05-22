@@ -384,6 +384,7 @@ def run(customer):
             # Combine all DataFrames into one
             combined_df = pd.concat(self.all_data_frames, ignore_index=True)
             combined_df['date'] = pd.to_datetime(combined_df['date']).dt.date
+            combined_df['conta_bm'] = conta_bm
             if combined_df.empty:
                 print("WARNING: Combined DataFrame is empty, nothing to upload")
                 return
@@ -398,7 +399,6 @@ def run(customer):
                 client = self.clickhouse_client
                 
                 # Generate CREATE TABLE query
-                combined_df['conta_bm'] = conta_bm
                 create_table_query = clickhouse.get_create_table_query(combined_df, database, table_name)
                 
                 # Execute CREATE TABLE query
