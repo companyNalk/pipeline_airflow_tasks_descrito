@@ -393,43 +393,47 @@ def run_reports(customer):
 
     def fetch_reports():
         """Busca relatórios de atendimentos."""
-        take = 200
-        skip = 0
-        all_data = []
-        total_collected = 0
+        try:
+            take = 200
+            skip = 0
+            all_data = []
+            total_collected = 0
 
-        while True:
-            # Configura os parâmetros da requisição
-            params = {
-                "start_date": START_DATE,
-                "end_date": END_DATE,
-                "take": take,
-                "skip": skip
-            }
-            response = requests.get(URL, headers=HEADERS, params=params)
+            while True:
+                # Configura os parâmetros da requisição
+                params = {
+                    "start_date": START_DATE,
+                    "end_date": END_DATE,
+                    "take": take,
+                    "skip": skip
+                }
+                response = requests.get(URL, headers=HEADERS, params=params)
 
-            # Verifica o status da resposta
-            if response.status_code != 200:
-                print(f"Erro na requisição. Código: {response.status_code}, Detalhes: {response.text}")
-                break
+                # Verifica o status da resposta
+                if response.status_code != 200:
+                    print(f"Erro na requisição. Código: {response.status_code}, Detalhes: {response.text}")
+                    break
 
-            # Processa os dados
-            data = response.json().get("reports", [])
-            quantidade = len(data)
-            if quantidade == 0:  # Se não há mais dados, encerra a coleta
-                break
+                # Processa os dados
+                data = response.json().get("reports", [])
+                quantidade = len(data)
+                if quantidade == 0:  # Se não há mais dados, encerra a coleta
+                    break
 
-            all_data.extend(data)
-            total_collected += quantidade
-            print(f"Coletados {total_collected} registros até agora (registros nesta página: {quantidade}).")
+                all_data.extend(data)
+                total_collected += quantidade
+                print(f"Coletados {total_collected} registros até agora (registros nesta página: {quantidade}).")
 
-            # Incrementa o `skip` para a próxima página
-            skip += take
+                # Incrementa o `skip` para a próxima página
+                skip += take
 
-            # Adiciona um atraso para evitar sobrecarregar o servidor
-            time.sleep(1)
+                # Adiciona um atraso para evitar sobrecarregar o servidor
+                time.sleep(1)
 
-        return all_data
+            return all_data
+        except Exception as e:
+            print(e)
+            raise
 
     def save_to_gcs(bucket_name, folder, data):
         """Salva os relatórios coletados no GCS."""
@@ -632,6 +636,7 @@ def run_wallets(customer):
             print(f"Arquivo enviado para gs://{bucket_name}/{folder}/carteiras.csv com sucesso.")
         except Exception as e:
             print(f"Erro ao enviar o arquivo para o GCS: {e}")
+            raise
 
     def main():
         """Função principal para executar a coleta e envio das carteiras."""
@@ -682,6 +687,9 @@ def run_workflows(customer):
         except ValueError:
             print("Erro ao processar a resposta JSON.")
             return []
+        except Exception as e:
+            print(e)
+            raise
 
     def save_to_gcs(bucket_name, folder, data):
         """Salva os workflows no GCS."""
