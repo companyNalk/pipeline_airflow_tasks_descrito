@@ -9,7 +9,7 @@ import time
 from core import gcs
 
 
-def make_request_with_retry(func, max_retries=5, base_delay=1, max_delay=300):
+def make_request_with_retry(func, max_retries=10, base_delay=1, max_delay=300):
     """
     Executa uma função com retry automático para lidar com rate limiting.
     """
