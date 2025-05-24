@@ -15,12 +15,12 @@ from google.cloud import storage
 
 def run_qualification(customer):
     # Configurações Globais
-    print(f"API TOKEN: {customer['API_TOKEN']}")
+    print(f"API TOKEN: {customer['api_token']}")
 
     ENDPOINT = 'qualificacoes'
-    API_TOKEN = customer['API_TOKEN']
-    BASE_URL = f"{customer['BASE_URL']}/{ENDPOINT}"
-    HEADERS = {"Content-Type": "application/json", "Access-Token": API_TOKEN}
+    api_token = customer['api_token']
+    base_url = f"{customer['base_url']}/{ENDPOINT}"
+    HEADERS = {"Content-Type": "application/json", "Access-Token": api_token}
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
     BUCKET_NAME = customer['bucket_name']
@@ -50,7 +50,7 @@ def run_qualification(customer):
 
         while True:
             params["page"] = page
-            response = requests.get(BASE_URL, headers=HEADERS, params=params)
+            response = requests.get(base_url, headers=HEADERS, params=params)
 
             if response.status_code != 200:
                 print(f"Erro na requisição. Código: {response.status_code}")
@@ -271,9 +271,9 @@ def run_qualification(customer):
 
 def run_opportunity(customer):
     ENDPOINT = 'oportunidades'
-    API_TOKEN = customer['API_TOKEN']
-    BASE_URL = f"{customer['BASE_URL']}/{ENDPOINT}"
-    HEADERS = {"Content-Type": "application/json", "Access-Token": API_TOKEN}
+    api_token = customer['api_token']
+    base_url = f"{customer['base_url']}/{ENDPOINT}"
+    HEADERS = {"Content-Type": "application/json", "Access-Token": api_token}
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
     BUCKET_NAME = customer['bucket_name']
@@ -312,7 +312,7 @@ def run_opportunity(customer):
             params_count.update(query_params)
 
         # Faz a requisição inicial silenciosamente
-        requests.get(BASE_URL, headers=HEADERS, params=params_count)
+        requests.get(base_url, headers=HEADERS, params=params_count)
 
         # Agora inicia a coleta página a página
         page = 1
@@ -334,7 +334,7 @@ def run_opportunity(customer):
 
         while True:
             params["page"] = page
-            response = requests.get(BASE_URL, headers=HEADERS, params=params)
+            response = requests.get(base_url, headers=HEADERS, params=params)
 
             if response.status_code != 200:
                 print(f"Erro na requisição. Código: {response.status_code}")
