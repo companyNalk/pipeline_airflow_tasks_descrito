@@ -59,8 +59,8 @@ def run(customer):
             return False
         
         try:
-            client = storage.Client()
-            bucket = client.get_bucket(BUCKET_NAME)
+            storage_client = storage.Client(project=customer['project_id'])
+            bucket = storage_client.bucket(BUCKET_NAME)
             blob = bucket.blob(f"{FOLDER_NAME}/{filename}")
 
             # Escrevendo diretamente no GCS
