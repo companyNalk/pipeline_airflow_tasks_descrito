@@ -98,91 +98,19 @@ def run(customer):
         return df.loc[:, ~df.columns.duplicated()]
 
     # Funções de diagnóstico
-    # def debug_stages_data(stages_df, deals_df):
-    #     if 'stage_id' not in deals_df.columns:
-    #         print("ERRO: Coluna 'stage_id' não encontrada em deals_df!")
-    #         return
-    #
-    #     stage_ids_in_deals = deals_df['stage_id'].astype(str).unique()
-    #     stage_ids_in_stages = stages_df['id'].astype(str).unique()
-    #
-    #     missing_stages = [sid for sid in stage_ids_in_deals if sid not in stage_ids_in_stages]
-    #     if missing_stages:
-    #         print(f"ALERTA: {len(missing_stages)} IDs de stages em deals não estão em stages_df!")
     def debug_stages_data(stages_df, deals_df):
-        """
-        Função corrigida para debug com validações robustas
-        """
-        # Verificar se os DataFrames não estão vazios
-        if stages_df.empty:
-            print("AVISO: stages_df está vazio para debug")
-            return
-
-        if deals_df.empty:
-            print("AVISO: deals_df está vazio para debug")
-            return
-
-        # Verificar se as colunas necessárias existem
-        if 'id' not in stages_df.columns:
-            print(f"ERRO: Coluna 'id' não encontrada em stages_df! Colunas disponíveis: {list(stages_df.columns)}")
-            return
-
         if 'stage_id' not in deals_df.columns:
             print("ERRO: Coluna 'stage_id' não encontrada em deals_df!")
             return
 
-        try:
-            stage_ids_in_deals = deals_df['stage_id'].astype(str).unique()
-            stage_ids_in_stages = stages_df['id'].astype(str).unique()
+        stage_ids_in_deals = deals_df['stage_id'].astype(str).unique()
+        stage_ids_in_stages = stages_df['id'].astype(str).unique()
 
-            missing_stages = [sid for sid in stage_ids_in_deals if sid not in stage_ids_in_stages]
-            if missing_stages:
-                print(f"ALERTA: {len(missing_stages)} IDs de stages em deals não estão em stages_df!")
-                print(f"IDs faltantes: {missing_stages[:10]}...")  # Mostrar apenas os primeiros 10
+        missing_stages = [sid for sid in stage_ids_in_deals if sid not in stage_ids_in_stages]
+        if missing_stages:
+            print(f"ALERTA: {len(missing_stages)} IDs de stages em deals não estão em stages_df!")
 
-        except Exception as e:
-            print(f"Erro durante debug de stages: {e}")
-
-    # def diagnose_and_fix_stage_id(deals_df, stages_df):
-    #     stage_columns = ['stage_id', 'etapa', 'stage', 'pipeline_stage_id']
-    #     existing_stage_columns = [col for col in stage_columns if col in deals_df.columns]
-    #
-    #     if existing_stage_columns:
-    #         stage_column = existing_stage_columns[0]
-    #         if stage_column != 'stage_id':
-    #             deals_df['stage_id'] = deals_df[stage_column]
-    #     else:
-    #         numeric_cols = [col for col in deals_df.columns
-    #                         if deals_df[col].dtype in ['int64', 'float64']
-    #                         or (pd.api.types.is_object_dtype(deals_df[col])
-    #                             and deals_df[col].astype(str).str.isdigit().any())]
-    #
-    #         stage_ids = set(str(x) for x in stages_df['id'])
-    #
-    #         for col in numeric_cols:
-    #             unique_values = set(str(x) for x in deals_df[col].unique() if pd.notna(x))
-    #             match_count = len(unique_values.intersection(stage_ids))
-    #
-    #             if match_count > 0 and (match_count >= 3 or match_count / len(unique_values) > 0.2):
-    #                 deals_df['stage_id'] = deals_df[col]
-    #                 break
-    #
-    #     return deals_df
     def diagnose_and_fix_stage_id(deals_df, stages_df):
-        # Verificar se stages_df não está vazio e tem a coluna 'id'
-        if stages_df.empty:
-            print("AVISO: stages_df está vazio. Não é possível fazer diagnóstico de stage_id.")
-            return deals_df
-
-        if 'id' not in stages_df.columns:
-            print(f"AVISO: Coluna 'id' não encontrada em stages_df. Colunas disponíveis: {list(stages_df.columns)}")
-            return deals_df
-
-        # Verificar se deals_df não está vazio
-        if deals_df.empty:
-            print("AVISO: deals_df está vazio.")
-            return deals_df
-
         stage_columns = ['stage_id', 'etapa', 'stage', 'pipeline_stage_id']
         existing_stage_columns = [col for col in stage_columns if col in deals_df.columns]
 
@@ -190,47 +118,21 @@ def run(customer):
             stage_column = existing_stage_columns[0]
             if stage_column != 'stage_id':
                 deals_df['stage_id'] = deals_df[stage_column]
-                print(f"Usando coluna '{stage_column}' como stage_id")
         else:
-            print("Nenhuma coluna de stage encontrada nos deals. Tentando identificar automaticamente...")
-
-            # Tentar identificar coluna que pode ser stage_id
             numeric_cols = [col for col in deals_df.columns
                             if deals_df[col].dtype in ['int64', 'float64']
                             or (pd.api.types.is_object_dtype(deals_df[col])
                                 and deals_df[col].astype(str).str.isdigit().any())]
 
-            # Converter IDs de stages para string para comparação
-            try:
-                stage_ids = set(str(x) for x in stages_df['id'] if pd.notna(x))
-                print(f"Stage IDs disponíveis: {len(stage_ids)} encontrados")
+            stage_ids = set(str(x) for x in stages_df['id'])
 
-                # Procurar coluna que melhor corresponde aos stage_ids
-                best_match_col = None
-                best_match_count = 0
+            for col in numeric_cols:
+                unique_values = set(str(x) for x in deals_df[col].unique() if pd.notna(x))
+                match_count = len(unique_values.intersection(stage_ids))
 
-                for col in numeric_cols:
-                    try:
-                        unique_values = set(str(x) for x in deals_df[col].unique() if pd.notna(x))
-                        match_count = len(unique_values.intersection(stage_ids))
-
-                        if match_count > best_match_count and (
-                                match_count >= 3 or match_count / len(unique_values) > 0.2):
-                            best_match_col = col
-                            best_match_count = match_count
-
-                    except Exception as e:
-                        print(f"Erro ao verificar coluna '{col}': {e}")
-                        continue
-
-                if best_match_col:
-                    deals_df['stage_id'] = deals_df[best_match_col]
-                    print(f"Identificada coluna '{best_match_col}' como stage_id ({best_match_count} correspondências)")
-                else:
-                    print("Não foi possível identificar automaticamente uma coluna stage_id válida")
-
-            except Exception as e:
-                print(f"Erro ao processar stage_ids: {e}")
+                if match_count > 0 and (match_count >= 3 or match_count / len(unique_values) > 0.2):
+                    deals_df['stage_id'] = deals_df[col]
+                    break
 
         return deals_df
 
@@ -559,116 +461,42 @@ def run(customer):
 
         return df
 
-    # def enrich_deals(deals_df: pd.DataFrame, pipelines_df: pd.DataFrame,
-    #                  stages_df: pd.DataFrame, products_df: pd.DataFrame) -> pd.DataFrame:
-    #     enriched = deals_df.copy()
-    #
-    #     # Verificar stages
-    #     debug_stages_data(stages_df, enriched)
-    #
-    #     # Join com pipelines
-    #     if 'pipeline_id' in enriched.columns and not pipelines_df.empty:
-    #         try:
-    #             enriched = enriched.merge(
-    #                 pipelines_df[['id', 'name', 'order_nr']],
-    #                 left_on='pipeline_id', right_on='id',
-    #                 how='left', suffixes=('', '_pipeline')
-    #             )
-    #             enriched.rename(columns={'name': 'pipeline_name', 'order_nr': 'pipeline_order'}, inplace=True)
-    #             if 'id_pipeline' in enriched.columns:
-    #                 enriched.drop(['id_pipeline'], axis=1, inplace=True)
-    #         except Exception as e:
-    #             print(f"Erro ao juntar pipelines: {e}")
-    #
-    #     # Mapear stage_id para nomes de etapas
-    #     if 'stage_id' in enriched.columns and not stages_df.empty:
-    #         try:
-    #             # Criar dicionários de mapeamento
-    #             stages_dict = dict(zip(stages_df['id'].astype(str), stages_df['name']))
-    #             order_dict = dict(zip(stages_df['id'].astype(str), stages_df['order_nr']))
-    #
-    #             # Aplicar mapeamentos
-    #             enriched['etapa'] = enriched['stage_id'].astype(str).map(stages_dict)
-    #             enriched['stage_order'] = enriched['stage_id'].astype(str).map(order_dict)
-    #             enriched['etapa'] = enriched['etapa'].fillna(enriched['stage_id'].astype(str))
-    #         except Exception as e:
-    #             print(f"Erro ao mapear stages: {e}")
-    #
-    #     # Adicionar produtos aos deals
-    #     if not products_df.empty and 'deal_id' in products_df.columns:
-    #         try:
-    #             prod_by_deal = products_df.groupby('deal_id')
-    #             for i, deal in enriched.iterrows():
-    #                 deal_id = deal['id']
-    #                 if deal_id in prod_by_deal.groups:
-    #                     prods = prod_by_deal.get_group(deal_id).to_dict('records')
-    #                     for j, prod in enumerate(prods[:5], 1):
-    #                         enriched.at[i, f'product_name_{j}'] = prod.get('name', '')
-    #                         enriched.at[i, f'product_quantity_{j}'] = prod.get('quantity', 0)
-    #                         enriched.at[i, f'product_price_{j}'] = prod.get('item_price', 0)
-    #                         enriched.at[i, f'product_id_{j}'] = prod.get('product_id', '')
-    #         except Exception as e:
-    #             print(f"Erro ao adicionar produtos: {e}")
-    #
-    #     # Corrigir inversão entre canal_de_origem e id_do_canal_de_origem
-    #     return fix_channel_fields(enriched)
     def enrich_deals(deals_df: pd.DataFrame, pipelines_df: pd.DataFrame,
                      stages_df: pd.DataFrame, products_df: pd.DataFrame) -> pd.DataFrame:
         enriched = deals_df.copy()
 
-        # Verificar stages com validação
+        # Verificar stages
         debug_stages_data(stages_df, enriched)
 
-        # Join com pipelines - com validação
-        if not pipelines_df.empty and 'pipeline_id' in enriched.columns and 'id' in pipelines_df.columns:
+        # Join com pipelines
+        if 'pipeline_id' in enriched.columns and not pipelines_df.empty:
             try:
-                required_cols = ['id', 'name', 'order_nr']
-                available_cols = ['id'] + [col for col in ['name', 'order_nr'] if col in pipelines_df.columns]
-
                 enriched = enriched.merge(
-                    pipelines_df[available_cols],
+                    pipelines_df[['id', 'name', 'order_nr']],
                     left_on='pipeline_id', right_on='id',
                     how='left', suffixes=('', '_pipeline')
                 )
-
-                # Renomear apenas as colunas que existem
-                rename_dict = {}
-                if 'name' in pipelines_df.columns:
-                    rename_dict['name'] = 'pipeline_name'
-                if 'order_nr' in pipelines_df.columns:
-                    rename_dict['order_nr'] = 'pipeline_order'
-
-                if rename_dict:
-                    enriched.rename(columns=rename_dict, inplace=True)
-
+                enriched.rename(columns={'name': 'pipeline_name', 'order_nr': 'pipeline_order'}, inplace=True)
                 if 'id_pipeline' in enriched.columns:
                     enriched.drop(['id_pipeline'], axis=1, inplace=True)
-
             except Exception as e:
                 print(f"Erro ao juntar pipelines: {e}")
 
-        # Mapear stage_id para nomes de etapas - com validação
-        if not stages_df.empty and 'stage_id' in enriched.columns and 'id' in stages_df.columns:
+        # Mapear stage_id para nomes de etapas
+        if 'stage_id' in enriched.columns and not stages_df.empty:
             try:
-                # Verificar se a coluna 'name' existe em stages_df
-                if 'name' in stages_df.columns:
-                    stages_dict = dict(zip(stages_df['id'].astype(str), stages_df['name']))
-                    enriched['etapa'] = enriched['stage_id'].astype(str).map(stages_dict)
-                    enriched['etapa'] = enriched['etapa'].fillna(enriched['stage_id'].astype(str))
-                else:
-                    print("AVISO: Coluna 'name' não encontrada em stages_df")
+                # Criar dicionários de mapeamento
+                stages_dict = dict(zip(stages_df['id'].astype(str), stages_df['name']))
+                order_dict = dict(zip(stages_df['id'].astype(str), stages_df['order_nr']))
 
-                # Verificar se a coluna 'order_nr' existe em stages_df
-                if 'order_nr' in stages_df.columns:
-                    order_dict = dict(zip(stages_df['id'].astype(str), stages_df['order_nr']))
-                    enriched['stage_order'] = enriched['stage_id'].astype(str).map(order_dict)
-                else:
-                    print("AVISO: Coluna 'order_nr' não encontrada em stages_df")
-
+                # Aplicar mapeamentos
+                enriched['etapa'] = enriched['stage_id'].astype(str).map(stages_dict)
+                enriched['stage_order'] = enriched['stage_id'].astype(str).map(order_dict)
+                enriched['etapa'] = enriched['etapa'].fillna(enriched['stage_id'].astype(str))
             except Exception as e:
                 print(f"Erro ao mapear stages: {e}")
 
-        # Adicionar produtos aos deals - mantém a lógica original
+        # Adicionar produtos aos deals
         if not products_df.empty and 'deal_id' in products_df.columns:
             try:
                 prod_by_deal = products_df.groupby('deal_id')
