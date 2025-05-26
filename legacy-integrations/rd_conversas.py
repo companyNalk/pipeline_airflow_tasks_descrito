@@ -3,7 +3,139 @@ RD Conversas module for data extraction functions.
 This module contains functions specific to the RD Conversas integration.
 """
 
+import json
+
 from core import gcs
+
+
+def safe_csv_value(value):
+    """
+    Converte um valor para string segura para CSV, escapando separadores.
+    """
+    if value is None:
+        return ""
+
+    # Converte para string
+    str_value = str(value)
+
+    # Remove ou substitui caracteres problemáticos
+    str_value = str_value.replace(';', ',')  # Substitui ; por ,
+    str_value = str_value.replace('\n', ' ')  # Remove quebras de linha
+    str_value = str_value.replace('\r', ' ')  # Remove retorno de carro
+    str_value = str_value.replace('"', "'")  # Substitui aspas duplas por simples
+
+    return str_value.strip()
+
+
+def flatten_data(data):
+    """
+    Achata estruturas aninhadas nos dados.
+    """
+    flattened = {}
+
+    for key, value in data.items():
+        if isinstance(value, dict):
+            # Se o valor é um dicionário, achata suas chaves
+            for nested_key, nested_value in value.items():
+                flattened_key = f"{key}_{nested_key}"
+                flattened[flattened_key] = nested_value if nested_value is not None else ""
+        elif isinstance(value, list):
+            # Se o valor é uma lista, converta para string JSON
+            flattened[key] = json.dumps(value) if value else ""
+        else:
+            # Para valores simples, use como está
+            flattened[key] = value if value is not None else ""
+
+    return flattened
+
+
+def save_dynamic_csv_to_gcs(storage_client, bucket_name, folder, filename, data):
+    """
+    Função genérica para salvar dados com estrutura dinâmica no GCS.
+    """
+    if not data:
+        print("Nenhum dado para salvar.")
+        return
+
+    try:
+        print("Iniciando o upload para o GCS...")
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(f"{folder}/{filename}")
+
+        from io import StringIO
+        csv_buffer = StringIO()
+
+        # Coletar todas as chaves possíveis dos dados achatados
+        all_keys = set()
+        for row in data:
+            all_keys.update(row.keys())
+
+        # Ordenar as chaves para consistência
+        header = sorted(list(all_keys))
+
+        # Escrever o cabeçalho
+        csv_buffer.write(";".join(header) + "\n")
+
+        # Escrever os dados
+        for row in data:
+            row_values = []
+            for key in header:
+                value = row.get(key, "")
+                safe_value = safe_csv_value(value)
+                row_values.append(safe_value)
+
+            csv_buffer.write(";".join(row_values) + "\n")
+
+        csv_buffer.seek(0)
+
+        # Carregar o CSV para o GCS
+        blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
+        print(f"Arquivo enviado para gs://{bucket_name}/{folder}/{filename} com sucesso.")
+    except Exception as e:
+        print(f"Erro ao enviar o arquivo para o GCS: {e}")
+        raise
+
+
+def save_simple_csv_to_gcs(storage_client, bucket_name, folder, filename, header, data, field_mapping):
+    """
+    Função genérica para salvar dados com estrutura simples no GCS.
+    """
+    if not data:
+        print("Nenhum dado para salvar.")
+        return
+
+    try:
+        print("Iniciando o upload para o GCS...")
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(f"{folder}/{filename}")
+
+        from io import StringIO
+        csv_buffer = StringIO()
+
+        # Escrever o cabeçalho
+        csv_buffer.write(header + "\n")
+
+        # Escrever os dados
+        for item in data:
+            values = []
+            for field in field_mapping:
+                if callable(field):
+                    value = field(item)
+                else:
+                    value = item.get(field, "Não especificado")
+                safe_value = safe_csv_value(value)
+                values.append(safe_value)
+
+            csv_buffer.write(";".join(values) + "\n")
+
+        csv_buffer.seek(0)
+
+        # Carregar o CSV para o GCS
+        blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
+        print(f"Arquivo enviado para gs://{bucket_name}/{folder}/{filename} com sucesso.")
+    except Exception as e:
+        print(f"Erro ao enviar o arquivo para o GCS: {e}")
+        raise
 
 
 def run_customers(customer):
@@ -11,7 +143,6 @@ def run_customers(customer):
     import requests
     import time
     from google.cloud import storage
-    from io import StringIO
     import pathlib
 
     # Configurações
@@ -53,7 +184,10 @@ def run_customers(customer):
                 if quantidade == 0:  # Se não há mais dados, encerra a coleta
                     break
 
-                all_data.extend(data)
+                # Achata os dados aninhados
+                flattened_data = [flatten_data(item) for item in data]
+                all_data.extend(flattened_data)
+
                 total_collected += quantidade
                 print(f"Coletados {total_collected} registros até agora (registros nesta página: {quantidade}).")
 
@@ -68,44 +202,14 @@ def run_customers(customer):
             print(e)
             raise
 
-    def save_to_gcs(bucket_name, folder, data):
-        """Salva os dados coletados no GCS."""
-        if not data:
-            print("Nenhum dado para salvar.")
-            return
-
-        try:
-            print("Iniciando o upload para o GCS...")
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
-            blob = bucket.blob(f"{folder}/customers.csv")
-
-            # Converte os dados para CSV em memória
-            csv_buffer = StringIO()
-
-            # Escrever o cabeçalho
-            header = data[0].keys()
-            csv_buffer.write(";".join(header) + "\n")
-
-            # Escrever os dados
-            for row in data:
-                csv_buffer.write(";".join(map(str, row.values())) + "\n")
-
-            csv_buffer.seek(0)
-
-            # Carregar o CSV para o GCS
-            blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-            print(f"Arquivo enviado para gs://{bucket_name}/{folder}/customers.csv com sucesso.")
-        except Exception as e:
-            print(f"Erro ao enviar o arquivo para o GCS: {e}")
-            raise
-
     def main():
         """Função principal para executar a coleta e envio dos dados."""
         print("Iniciando a coleta de dados de clientes do RD Station Conversas...")
         customers = fetch_customers()
         print(f"Coleta finalizada. Total de registros coletados: {len(customers)}")
-        save_to_gcs(BUCKET_NAME, 'customers', customers)
+
+        storage_client = storage.Client(project=customer['project_id'])
+        save_dynamic_csv_to_gcs(storage_client, BUCKET_NAME, 'customers', 'customers.csv', customers)
 
     # START
     main()
@@ -115,7 +219,6 @@ def run_flows(customer):
     import os
     import requests
     from google.cloud import storage
-    from io import StringIO
     import pathlib
 
     # Configurações
@@ -151,42 +254,21 @@ def run_flows(customer):
             print(e)
             raise
 
-    def save_to_gcs(bucket_name, folder, data):
-        """Salva os dados coletados no GCS."""
-        if not data:
-            print("Nenhum dado para salvar.")
-            return
-
-        try:
-            print("Iniciando o upload para o GCS...")
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
-            blob = bucket.blob(f"{folder}/flows.csv")
-
-            # Converte os dados para CSV em memória
-            csv_buffer = StringIO()
-
-            # Escreve o cabeçalho
-            csv_buffer.write("ID;Título\n")
-
-            # Escreve os dados
-            for flow in data:
-                csv_buffer.write(f"{flow.get('id', 'Não especificado')};{flow.get('title', 'Não especificado')}\n")
-
-            csv_buffer.seek(0)
-
-            # Carregar o CSV para o GCS
-            blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-            print(f"Arquivo enviado para gs://{bucket_name}/{folder}/flows.csv com sucesso.")
-        except Exception as e:
-            print(f"Erro ao enviar o arquivo para o GCS: {e}")
-            raise
-
     def main():
         """Função principal para executar a coleta e envio dos dados."""
         print("Iniciando a coleta de flows...")
         flows = fetch_flows()
-        save_to_gcs(BUCKET_NAME, 'flows', flows)
+
+        storage_client = storage.Client(project=customer['project_id'])
+        save_simple_csv_to_gcs(
+            storage_client,
+            BUCKET_NAME,
+            'flows',
+            'flows.csv',
+            "ID;Título",
+            flows,
+            ['id', 'title']
+        )
 
     # START
     main()
@@ -195,7 +277,6 @@ def run_flows(customer):
 def run_integrations(customer):
     import requests
     import os
-    from io import StringIO
     from google.cloud import storage
     import pathlib
 
@@ -235,44 +316,21 @@ def run_integrations(customer):
             print(e)
             raise
 
-    def save_to_gcs(bucket_name, folder, data):
-        """Salva os dados coletados no GCS."""
-        if not data:
-            print("Nenhum dado para salvar.")
-            return
-
-        try:
-            print("Iniciando o upload para o GCS...")
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
-            blob = bucket.blob(f"{folder}/whatsapp_integrations.csv")
-
-            # Converte os dados para CSV em memória
-            csv_buffer = StringIO()
-
-            # Escreve o cabeçalho
-            csv_buffer.write("ID da Integração;Descrição\n")
-
-            # Escreve os dados
-            for integration in data:
-                id_integration = integration.get("id", "Não especificado")
-                description = integration.get("description", "Não especificado")
-                csv_buffer.write(f"{id_integration};{description}\n")
-
-            csv_buffer.seek(0)
-
-            # Carregar o CSV para o GCS
-            blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-            print(f"Arquivo enviado para gs://{bucket_name}/{folder}/whatsapp_integrations.csv com sucesso.")
-        except Exception as e:
-            print(f"Erro ao enviar o arquivo para o GCS: {e}")
-            raise
-
     def main():
         """Função principal para executar a coleta e envio dos dados."""
         print("Iniciando a coleta de integrações do WhatsApp...")
         integrations = fetch_integrations()
-        save_to_gcs(BUCKET_NAME, 'whatsapp/integrations', integrations)
+
+        storage_client = storage.Client(project=customer['project_id'])
+        save_simple_csv_to_gcs(
+            storage_client,
+            BUCKET_NAME,
+            'whatsapp/integrations',
+            'whatsapp_integrations.csv',
+            "ID da Integração;Descrição",
+            integrations,
+            ['id', 'description']
+        )
 
     # START
     main()
@@ -281,7 +339,6 @@ def run_integrations(customer):
 def run_integrations_official(customer):
     import requests
     import os
-    from io import StringIO
     from google.cloud import storage
     import pathlib
 
@@ -321,43 +378,21 @@ def run_integrations_official(customer):
             print(e)
             raise
 
-    def save_to_gcs(bucket_name, folder, data):
-        """Salva os dados coletados no GCS."""
-        if not data:
-            print("Nenhum dado para salvar.")
-            return
-
-        try:
-            print("Iniciando o upload para o GCS...")
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
-            blob = bucket.blob(f"{folder}/whatsapp_integrations_official.csv")
-
-            # Converte os dados para CSV em memória
-            csv_buffer = StringIO()
-
-            # Escreve o cabeçalho
-            csv_buffer.write("Chave;Descrição\n")
-
-            # Escreve os dados
-            for integration in data:
-                csv_buffer.write(
-                    f"{integration.get('key', 'Não especificado')};{integration.get('label', 'Não especificado')}\n")
-
-            csv_buffer.seek(0)
-
-            # Carregar o CSV para o GCS
-            blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-            print(f"Arquivo enviado para gs://{bucket_name}/{folder}/whatsapp_integrations_official.csv com sucesso.")
-        except Exception as e:
-            print(f"Erro ao enviar o arquivo para o GCS: {e}")
-            raise
-
     def main():
         """Função principal para executar a coleta e envio dos dados."""
         print("Iniciando a coleta de integrações oficiais do WhatsApp...")
         integrations = fetch_integrations_official()
-        save_to_gcs(BUCKET_NAME, 'whatsapp/integrations/official', integrations)
+
+        storage_client = storage.Client(project=customer['project_id'])
+        save_simple_csv_to_gcs(
+            storage_client,
+            BUCKET_NAME,
+            'whatsapp/integrations/official',
+            'whatsapp_integrations_official.csv',
+            "Chave;Descrição",
+            integrations,
+            ['key', 'label']
+        )
 
     # START
     main()
@@ -368,7 +403,6 @@ def run_reports(customer):
     import os
     import time
     from datetime import datetime
-    from io import StringIO
     from google.cloud import storage
     import pathlib
 
@@ -420,7 +454,10 @@ def run_reports(customer):
                 if quantidade == 0:  # Se não há mais dados, encerra a coleta
                     break
 
-                all_data.extend(data)
+                # Achata os dados aninhados
+                flattened_data = [flatten_data(item) for item in data]
+                all_data.extend(flattened_data)
+
                 total_collected += quantidade
                 print(f"Coletados {total_collected} registros até agora (registros nesta página: {quantidade}).")
 
@@ -435,44 +472,14 @@ def run_reports(customer):
             print(e)
             raise
 
-    def save_to_gcs(bucket_name, folder, data):
-        """Salva os relatórios coletados no GCS."""
-        if not data:
-            print("Nenhum dado para salvar.")
-            return
-
-        try:
-            print("Iniciando o upload para o GCS...")
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
-            blob = bucket.blob(f"{folder}/relatorios_atendimentos.csv")
-
-            # Converte os dados para CSV em memória
-            csv_buffer = StringIO()
-
-            # Escreve o cabeçalho
-            header = data[0].keys()
-            csv_buffer.write(";".join(header) + "\n")
-
-            # Escreve os dados
-            for row in data:
-                csv_buffer.write(";".join(str(row[key]) for key in header) + "\n")
-
-            csv_buffer.seek(0)
-
-            # Carregar o CSV para o GCS
-            blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-            print(f"Arquivo enviado para gs://{bucket_name}/{folder}/relatorios_atendimentos.csv com sucesso.")
-        except Exception as e:
-            print(f"Erro ao enviar o arquivo para o GCS: {e}")
-            raise
-
     def main():
         """Função principal para executar a coleta e envio dos relatórios."""
         print("Iniciando a coleta de relatórios de atendimentos...")
         reports = fetch_reports()
         print(f"Coleta finalizada. Total de registros coletados: {len(reports)}")
-        save_to_gcs(BUCKET_NAME, 'reports', reports)
+
+        storage_client = storage.Client(project=customer['project_id'])
+        save_dynamic_csv_to_gcs(storage_client, BUCKET_NAME, 'reports', 'relatorios_atendimentos.csv', reports)
 
     # START
     main()
@@ -481,7 +488,6 @@ def run_reports(customer):
 def run_templates(customer):
     import requests
     import os
-    from io import StringIO
     from google.cloud import storage
     import pathlib
 
@@ -521,44 +527,21 @@ def run_templates(customer):
             print(e)
             raise
 
-    def save_to_gcs(bucket_name, folder, data):
-        """Salva os templates no GCS."""
-        if not data:
-            print("Nenhum dado para salvar.")
-            return
-
-        try:
-            print("Iniciando o upload para o GCS...")
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
-            blob = bucket.blob(f"{folder}/mensagens_template.csv")
-
-            # Converte os dados para CSV em memória
-            csv_buffer = StringIO()
-
-            # Escreve o cabeçalho
-            csv_buffer.write("ID;Conteúdo;URL da Mídia\n")
-
-            # Escreve os dados
-            for template in data:
-                csv_buffer.write(f"{template.get('id', 'Não especificado')};"
-                                 f"{template.get('content', 'Não especificado')};"
-                                 f"{template.get('content_media', 'Não especificado')}\n")
-
-            csv_buffer.seek(0)
-
-            # Carregar o CSV para o GCS
-            blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-            print(f"Arquivo enviado para gs://{bucket_name}/{folder}/mensagens_template.csv com sucesso.")
-        except Exception as e:
-            print(f"Erro ao enviar o arquivo para o GCS: {e}")
-            raise
-
     def main():
         """Função principal para executar a coleta e envio das mensagens de template."""
         print("Iniciando a coleta de mensagens de template...")
         templates = fetch_templates()
-        save_to_gcs(BUCKET_NAME, 'template', templates)
+
+        storage_client = storage.Client(project=customer['project_id'])
+        save_simple_csv_to_gcs(
+            storage_client,
+            BUCKET_NAME,
+            'template',
+            'mensagens_template.csv',
+            "ID;Conteúdo;URL da Mídia",
+            templates,
+            ['id', 'content', 'content_media']
+        )
 
     # START
     main()
@@ -567,7 +550,6 @@ def run_templates(customer):
 def run_wallets(customer):
     import requests
     import os
-    from io import StringIO
     from google.cloud import storage
     import pathlib
 
@@ -607,42 +589,21 @@ def run_wallets(customer):
             print(e)
             raise
 
-    def save_to_gcs(bucket_name, folder, data):
-        """Salva as carteiras no GCS."""
-        if not data:
-            print("Nenhum dado para salvar.")
-            return
-
-        try:
-            print("Iniciando o upload para o GCS...")
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
-            blob = bucket.blob(f"{folder}/carteiras.csv")
-
-            # Converte os dados para CSV em memória
-            csv_buffer = StringIO()
-
-            # Escreve o cabeçalho
-            csv_buffer.write("Carteiras\n")
-
-            # Escreve os dados
-            for wallet in data:
-                csv_buffer.write(f"{wallet}\n")
-
-            csv_buffer.seek(0)
-
-            # Carrega o CSV para o GCS
-            blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-            print(f"Arquivo enviado para gs://{bucket_name}/{folder}/carteiras.csv com sucesso.")
-        except Exception as e:
-            print(f"Erro ao enviar o arquivo para o GCS: {e}")
-            raise
-
     def main():
         """Função principal para executar a coleta e envio das carteiras."""
         print("Iniciando a coleta de carteiras...")
         wallets = fetch_wallets()
-        save_to_gcs(BUCKET_NAME, 'wallets', wallets)
+
+        storage_client = storage.Client(project=customer['project_id'])
+        save_simple_csv_to_gcs(
+            storage_client,
+            BUCKET_NAME,
+            'wallets',
+            'carteiras.csv',
+            "Carteiras",
+            wallets,
+            [lambda x: x]  # Para dados simples, apenas retorna o valor
+        )
 
     # START
     main()
@@ -651,7 +612,6 @@ def run_wallets(customer):
 def run_workflows(customer):
     import requests
     import os
-    from io import StringIO
     from google.cloud import storage
     import pathlib
 
@@ -691,45 +651,44 @@ def run_workflows(customer):
             print(e)
             raise
 
-    def save_to_gcs(bucket_name, folder, data):
-        """Salva os workflows no GCS."""
-        if not data:
-            print("Nenhum dado para salvar.")
-            return
+    def process_workflows(workflows):
+        """Processa workflows para expandir estágios em linhas separadas."""
+        processed_data = []
+        for workflow in workflows:
+            company = workflow.get("company", "Não especificado")
+            wallet_stages = workflow.get("wallet", [])
 
-        try:
-            print("Iniciando o upload para o GCS...")
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
-            blob = bucket.blob(f"{folder}/workflows.csv")
-
-            # Converte os dados para CSV em memória
-            csv_buffer = StringIO()
-
-            # Escreve o cabeçalho
-            csv_buffer.write("Empresa;Estágio do Workflow\n")
-
-            # Escreve os dados
-            for workflow in data:
-                company = workflow.get("company", "Não especificado")
-                wallet_stages = workflow.get("wallet", [])
+            if wallet_stages:
                 for stage in wallet_stages:
-                    csv_buffer.write(f"{company};{stage}\n")
+                    processed_data.append({
+                        "company": company,
+                        "stage": stage
+                    })
+            else:
+                # Se não há estágios, cria uma linha com empresa e estágio vazio
+                processed_data.append({
+                    "company": company,
+                    "stage": "Não especificado"
+                })
 
-            csv_buffer.seek(0)
-
-            # Carrega o CSV para o GCS
-            blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-            print(f"Arquivo enviado para gs://{bucket_name}/{folder}/workflows.csv com sucesso.")
-        except Exception as e:
-            print(f"Erro ao enviar o arquivo para o GCS: {e}")
-            raise
+        return processed_data
 
     def main():
         """Função principal para executar a coleta e envio dos workflows."""
         print("Iniciando a coleta de workflows...")
         workflows = fetch_workflows()
-        save_to_gcs(BUCKET_NAME, 'workflows', workflows)
+        processed_workflows = process_workflows(workflows)
+
+        storage_client = storage.Client(project=customer['project_id'])
+        save_simple_csv_to_gcs(
+            storage_client,
+            BUCKET_NAME,
+            'workflows',
+            'workflows.csv',
+            "Empresa;Estágio do Workflow",
+            processed_workflows,
+            ['company', 'stage']
+        )
 
     # START
     main()
