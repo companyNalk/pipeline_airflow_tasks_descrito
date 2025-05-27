@@ -365,7 +365,7 @@ def run(customer):
 
     print("[INFO] Iniciando requisição para exportar dados do ClickUp...")
 
-    response = requests.post(url, headers=headers, params=params, json=payload)
+    response = requests.post(url, headers=headers, params=params, json=API_PAYLOAD)
     if response.ok:
         data = response.json()
         csv_url = data.get("url")  # pega o campo 'url'
@@ -379,7 +379,7 @@ def run(customer):
 
             if csv_response.ok:
                 # Salva diretamente no Google Cloud Storage
-                destination_path = "clickup/clientes.csv"
+                destination_path = "clientes/clientes.csv"
 
                 if upload_csv_to_gcs(csv_response.content.decode('utf-8'), destination_path):
                     print(f"✅ Processo finalizado! CSV salvo no GCS em: gs://{BUCKET_NAME}/{destination_path}")
