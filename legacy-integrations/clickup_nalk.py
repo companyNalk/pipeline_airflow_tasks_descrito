@@ -4,16 +4,45 @@ This module contains functions specific to the Clickup NALK integration.
 """
 
 from core import gcs
+import requests
+import os
+import pathlib
+import pandas as pd
+import io
+import re
+from google.cloud import storage
+
+
+def clean_csv_content(csv_content):
+    """Remove quebras de linha de qualquer quantidade dentro dos campos CSV"""
+    try:
+        # Normaliza diferentes tipos de quebra de linha
+        content = csv_content.replace('\r\n', '\n').replace('\r', '\n')
+
+        # Regex para campos entre aspas
+        quoted_pattern = r'"([^"]*(?:""[^"]*)*)"'
+
+        def replace_newlines(match):
+            field_content = match.group(1)
+            # Remove todas as quebras de linha e substitui por espaço
+            cleaned = re.sub(r'\n+', ' ', field_content)
+            return f'"{cleaned}"'
+
+        # Aplica limpeza nos campos entre aspas
+        content = re.sub(quoted_pattern, replace_newlines, content)
+
+        # Remove espaços múltiplos
+        content = re.sub(r' +', ' ', content)
+
+        return content
+
+    except Exception as e:
+        print(f"Erro na limpeza: {e}")
+        return csv_content
 
 
 def run(customer):
-    import requests
-    import os
-    import pathlib
-    from google.cloud import storage
-
     API_BEARER_TOKEN = customer['api_bearer_token']
-    API_PAYLOAD = customer['api_payload']
     BUCKET_NAME = customer['bucket_name']
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
 
@@ -39,8 +68,7 @@ def run(customer):
         "time_in_status_total": "False"
     }
 
-    # Substitua o payload abaixo pelo seu JSON (como o que você colou)
-    payload = {"id": "8chnhk3-79111", "members": [], "group_members": [], "name": "Integração Nalk",
+    API_PAYLOAD = {"id": "8chnhk3-79111", "members": [], "group_members": [], "name": "Integração Nalk",
                "parent": {"id": "901103907816", "type": 6}, "type": 1, "creator": 75379731, "pinned": False,
                "me_view": False, "locked": False, "visibility": 1,
                "settings": {"show_task_locations": False, "show_subtasks": 1, "show_subtask_parent_names": False,
@@ -334,57 +362,64 @@ def run(customer):
                "board_settings": {}, "team_id": "9011119715", "sidebar_view": False, "sidebar_orderindex": None,
                "sidebar_num_subcats_between": 0, "doc_type": 1, "unfolded_st_ids": []}
 
-    # Função para fazer upload direto para o GCS
     def upload_csv_to_gcs(csv_content, destination_path):
         try:
+            # Limpa quebras de linha
+            cleaned_csv = clean_csv_content(csv_content)
+
+            # Processa com pandas para garantir consistência
+            df = pd.read_csv(io.StringIO(cleaned_csv))
+
+            # Remove quebras de linha em todas as colunas de texto
+            for col in df.select_dtypes(include=['object']).columns:
+                df[col] = df[col].astype(str).str.replace('\n', ' ').str.replace('\r', ' ').str.strip()
+
+            # Converte de volta para CSV
+            final_csv = df.to_csv(index=False, lineterminator='\n')
+
             blob = bucket.blob(destination_path)
-            blob.upload_from_string(csv_content, content_type="text/csv")
+            blob.upload_from_string(final_csv, content_type="text/csv")
             print(f"✅ CSV salvo em gs://{BUCKET_NAME}/{destination_path}")
             return True
+
         except Exception as e:
-            print(f"❌ Falha ao fazer upload para {destination_path}: {str(e)}")
+            print(f"❌ Falha ao fazer upload: {str(e)}")
             return False
 
     print("[INFO] Iniciando requisição para exportar dados do ClickUp...")
 
-    response = requests.post(url, headers=headers, params=params, json=payload)
+    response = requests.post(url, headers=headers, params=params, json=API_PAYLOAD)
     if response.ok:
         data = response.json()
-        csv_url = data.get("url")  # pega o campo 'url'
+        csv_url = data.get("url")
 
         if csv_url:
             print("📎 Link do CSV obtido:", csv_url)
-
-            # Passo 3: faz o download do CSV
             print("[INFO] Fazendo download do CSV...")
-            csv_response = requests.get(csv_url)
 
+            csv_response = requests.get(csv_url)
             if csv_response.ok:
-                # Salva diretamente no Google Cloud Storage
                 destination_path = "clientes/clientes.csv"
 
-                if upload_csv_to_gcs(csv_response.content.decode('utf-8'), destination_path):
-                    print(f"✅ Processo finalizado! CSV salvo no GCS em: gs://{BUCKET_NAME}/{destination_path}")
+                # Detecta encoding
+                try:
+                    csv_content = csv_response.content.decode('utf-8')
+                except UnicodeDecodeError:
+                    csv_content = csv_response.content.decode('latin-1')
+
+                if upload_csv_to_gcs(csv_content, destination_path):
+                    print(f"✅ Processo finalizado! CSV salvo no GCS")
                 else:
                     print("❌ Falha ao salvar no GCS")
             else:
                 print(f"❌ Falha ao baixar o CSV: {csv_response.status_code}")
-                print(csv_response.text)
         else:
             print("❌ Campo 'url' não encontrado na resposta.")
-            print("Resposta completa:", data)
     else:
         print(f"❌ Erro ao fazer POST: {response.status_code}")
-        print("Resposta:", response.text)
 
 
 def get_extraction_tasks():
-    """
-    Get the list of data extraction tasks for ClickUp NALK.
-
-    Returns:
-        list: List of task configurations
-    """
     return [
         {
             'task_id': 'run',
