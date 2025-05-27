@@ -773,14 +773,8 @@ class TestProcessAndSaveDataInChunks:
         assert result == df.to_dict(orient='records')
         mock_to_csv.assert_called_once()
         mock_logging.info.assert_any_call(
-            f"Processamento concluído: {len(df)} registros salvos em output/{endpoint_name}/{endpoint_name}.csv"
+            "Processamento concluído: 1 registros salvos em chunks separados"
         )
-
-        # THEN
-        assert result == df.to_dict(orient='records')
-        mock_to_csv.assert_called_once()
-        mock_logging.info.assert_any_call(
-            f"Processamento concluído: {len(df)} registros salvos em output/{endpoint_name}/{endpoint_name}.csv")
 
     def test_processing_exception(self):
         """Testa tratamento de exceções durante o processamento."""
@@ -813,15 +807,23 @@ class TestProcessDataInBatches:
 
         # WHEN
         with patch.object(Utils, 'process_and_save_data_in_chunks', return_value=mock_items) as mock_process, \
-                patch('commons.utils.logging'), \
-                patch('os.makedirs'), \
-                patch('os.path.exists', return_value=False):
+             patch('commons.utils.logging'), \
+             patch('os.makedirs'), \
+             patch('os.path.exists', return_value=False):
             result = Utils.process_data_in_batches(endpoint_name, endpoint_path, headers, fetch_page)
 
         # THEN
         assert result["registros"] == 1
         assert result["status"] == "Sucesso"
-        mock_process.assert_called_once_with(mock_items, endpoint_name, chunk_size=100, save_to_disk=True)
+
+        mock_process.assert_called_once_with(
+            mock_items,
+            endpoint_name,
+            chunk_size=100,
+            save_to_disk=True,
+            batch_id=0,
+            skip_empty_columns=False
+        )
 
     def test_success_multiple_pages_with_batching(self):
         """Testa processamento de múltiplas páginas com batch_size 2."""
