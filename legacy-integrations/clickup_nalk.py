@@ -365,7 +365,7 @@ def run(customer):
 
     print("[INFO] Iniciando requisição para exportar dados do ClickUp...")
 
-    response = requests.post(url, headers=headers, params=params, json=API_PAYLOAD)
+    response = requests.post(url, headers=headers, params=params, json=payload)
     if response.ok:
         data = response.json()
         csv_url = data.get("url")  # pega o campo 'url'
