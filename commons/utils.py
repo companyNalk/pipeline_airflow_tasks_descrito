@@ -222,6 +222,31 @@ class Utils:
             raise
 
     @staticmethod
+    def _remove_newlines_from_fields(data: List[Dict]) -> List[Dict]:
+        """
+        Remove quebras de linha (\n, \r ou \r\n) de todos os campos de texto.
+        """
+        if not data:
+            return data
+
+        processed_data = []
+
+        for item in data:
+            processed_item = {}
+
+            for key, value in item.items():
+                # Processar apenas valores string
+                if isinstance(value, str):
+                    # Substituir quebras de linha por espaços
+                    processed_item[key] = value.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+                else:
+                    processed_item[key] = value
+
+            processed_data.append(processed_item)
+
+        return processed_data
+
+    @staticmethod
     def process_and_save_data(raw_data: List[Dict], endpoint_name: str) -> List[Dict]:
         """
         Processa dados brutos e salva o resultado como CSV.
@@ -233,6 +258,9 @@ class Utils:
         try:
             # Normalizar e processar dados
             logging.info(f"Processando {len(raw_data)} registros do endpoint {endpoint_name}")
+
+            # Remover quebra de linhas
+            raw_data = Utils._remove_newlines_from_fields(raw_data)
 
             # Normalizar as chaves dos dados
             normalized_data = Utils._normalize_keys(raw_data)
