@@ -12,7 +12,7 @@ def run(customer):
     import pathlib
     from google.cloud import storage
 
-    bearer_token = customer['bearer_token']
+    api_bearer_token = customer['api_bearer_token']
 
     # Configuração do Google Cloud Storage
     BUCKET_NAME = customer['bucket_name']
@@ -26,7 +26,7 @@ def run(customer):
 
     url = "https://cu-prod-prod-us-west-2-2-export-service.clickup.com/v1/exportView"
     headers = {
-        "Authorization": f"Bearer {bearer_token}",
+        "Authorization": f"Bearer {api_bearer_token}",
         "Content-Type": "application/json",
         "x-csrf": "1",
         "x-workspace-id": "9011119715"
