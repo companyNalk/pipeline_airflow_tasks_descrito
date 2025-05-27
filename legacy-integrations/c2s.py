@@ -5,6 +5,7 @@ This module contains functions specific to the Contact2Sale integration.
 
 from core import gcs
 
+
 def run(customer):
     import requests
     import csv
@@ -49,15 +50,15 @@ def run(customer):
         tracemalloc.stop()
 
         print(f"\n[{operation_name}] Tempo total de execução: {end_time - start_time:.2f} segundos")
-        print(f"[{operation_name}] Uso de memória atual: {current / 10**6:.2f} MB")
-        print(f"[{operation_name}] Pico de uso de memória: {peak / 10**6:.2f} MB")
+        print(f"[{operation_name}] Uso de memória atual: {current / 10 ** 6:.2f} MB")
+        print(f"[{operation_name}] Pico de uso de memória: {peak / 10 ** 6:.2f} MB")
 
     # Função genérica para upload de dados para o GCS
     def upload_to_gcs(data, filename, headers=None):
         if not data:
             print(f"[WARNING] Sem dados para enviar para {filename}")
             return False
-        
+
         try:
             storage_client = storage.Client(project=customer['project_id'])
             bucket = storage_client.bucket(BUCKET_NAME)
@@ -79,7 +80,7 @@ def run(customer):
                         all_keys = set()
                         for item in data:
                             all_keys.update(item.keys())
-                        
+
                         # Normalizar os cabeçalhos
                         headers = sorted(list(all_keys))
                         normalized_headers = [normalize_column_name(header) for header in headers]
@@ -100,13 +101,13 @@ def run(customer):
             return True
         except Exception as e:
             print(f"[ERROR] Falha ao fazer upload para {filename}: {str(e)}")
-            return False
+            raise
 
     # Funções para coleta de dados dos diferentes endpoints
 
     def collect_companies():
         base_url = "https://api.contact2sale.com/integration/me"
-        
+
         print("[INFO] Iniciando a coleta de empresas...")
         response = requests.get(base_url, headers=API_HEADERS)
 
@@ -136,7 +137,7 @@ def run(customer):
 
     def collect_leads():
         base_url = "https://api.contact2sale.com/integration/leads"
-        
+
         page = 1
         per_page = 50
         all_leads = []
@@ -172,30 +173,30 @@ def run(customer):
             time.sleep(1)  # Intervalo para evitar sobrecarga na API
 
         print(f"[SUCCESS] Coleta de leads finalizada. Total: {len(all_leads)}")
-        
+
         # Processar os dados para extração apenas dos atributos
         processed_leads = []
-        
+
         # Identificar todos os campos possíveis para garantir consistência no CSV
         all_fields = set()
         for lead in all_leads:
             attributes = lead.get("attributes", {})
             all_fields.update(attributes.keys())
-        
+
         # Ordenar os campos para garantir ordem consistente
         field_list = sorted(list(all_fields))
-        
+
         # Processar cada lead
         for lead in all_leads:
             attributes = lead.get("attributes", {})
             processed_lead = {field: attributes.get(field, "") for field in field_list}
             processed_leads.append(processed_lead)
-        
+
         return processed_leads, field_list
 
     def collect_sellers():
         base_url = "https://api.contact2sale.com/integration/sellers"
-        
+
         print("[INFO] Iniciando a coleta de sellers...")
         response = requests.get(base_url, headers=API_HEADERS)
 
@@ -210,7 +211,7 @@ def run(customer):
 
     def collect_tags():
         base_url = "https://api.contact2sale.com/integration/tags"
-        
+
         print("[INFO] Iniciando a coleta de tags...")
         response = requests.get(base_url, headers=API_HEADERS)
 
@@ -227,53 +228,53 @@ def run(customer):
     # Funções para processamento de cada endpoint
     def process_companies():
         start_time = monitor_performance()
-        
+
         companies = collect_companies()
         if companies:
             headers = ["company_name", "company_id"]
             upload_to_gcs(companies, "companies.csv", headers)
-        
+
         report_performance(start_time, "Companies")
 
     def process_leads():
         start_time = monitor_performance()
-        
+
         leads, headers = collect_leads()
         if leads:
             upload_to_gcs(leads, "leads.csv", headers)
-        
+
         report_performance(start_time, "Leads")
 
     def process_sellers():
         start_time = monitor_performance()
-        
+
         sellers = collect_sellers()
         if sellers:
             headers = ["id", "name", "phone", "company"]
             upload_to_gcs(sellers, "sellers.csv", headers)
-        
+
         report_performance(start_time, "Sellers")
 
     def process_tags():
         start_time = monitor_performance()
-        
+
         tags = collect_tags()
         if tags:
             headers = ["tag_id", "name"]
             upload_to_gcs(tags, "tags.csv", headers)
-        
+
         report_performance(start_time, "Tags")
 
     # Função principal para execução sequencial
     def run_sequential():
         print("[START] Iniciando coleta sequencial dos dados do Contact2Sale")
         global_start = time.time()
-        
+
         process_companies()
         process_leads()
         process_sellers()
         process_tags()
-        
+
         global_end = time.time()
         print(f"\n[COMPLETE] Processo finalizado. Tempo total: {global_end - global_start:.2f} segundos")
 
@@ -281,7 +282,7 @@ def run(customer):
     def run_parallel():
         print("[START] Iniciando coleta paralela dos dados do Contact2Sale")
         global_start = time.time()
-        
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = [
                 executor.submit(process_companies),
@@ -289,12 +290,14 @@ def run(customer):
                 executor.submit(process_sellers),
                 executor.submit(process_tags)
             ]
-            
+
             concurrent.futures.wait(futures)
-        
+
         global_end = time.time()
         print(f"\n[COMPLETE] Processo finalizado. Tempo total: {global_end - global_start:.2f} segundos")
+
     run_sequential()
+
 
 def get_extraction_tasks():
     """
