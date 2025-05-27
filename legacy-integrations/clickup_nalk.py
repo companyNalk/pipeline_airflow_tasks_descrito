@@ -12,13 +12,11 @@ def run(customer):
     import pathlib
     from google.cloud import storage
 
-    api_bearer_token = customer['api_bearer_token']
-
-    # Configuração do Google Cloud Storage
+    API_BEARER_TOKEN = customer['api_bearer_token']
+    API_PAYLOAD = customer['api_payload']
     BUCKET_NAME = customer['bucket_name']
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
 
-    # Autenticação no Google Cloud Storage
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
     credentials = gcs.load_credentials_from_env()
     storage_client = storage.Client(credentials=credentials)
@@ -26,7 +24,7 @@ def run(customer):
 
     url = "https://cu-prod-prod-us-west-2-2-export-service.clickup.com/v1/exportView"
     headers = {
-        "Authorization": f"Bearer {api_bearer_token}",
+        "Authorization": f"Bearer {API_BEARER_TOKEN}",
         "Content-Type": "application/json",
         "x-csrf": "1",
         "x-workspace-id": "9011119715"
