@@ -704,9 +704,10 @@ def run_contact_by_phone(customer):
     import time
     from google.cloud import storage
     import pathlib
+    import json
 
     # Verifica se o parâmetro de página inicial está configurado
-    if not str(customer['start_page_by_contact_phone']).isdigit():
+    if 'start_page_by_contact_phone' not in customer:
         print("Parâmetro 'start_page_by_contact_phone' não encontrado. Função não será executada.")
         return
 
@@ -719,10 +720,10 @@ def run_contact_by_phone(customer):
     START_PAGE = int(customer['start_page_by_contact_phone'])
 
     # Configurações para tratamento de rate limiting e páginas vazias
-    MAX_RETRIES = 5  # Máximo de tentativas em caso de erro 429
-    RETRY_DELAY = 30  # Segundos para aguardar em caso de erro 429
-    MAX_EMPTY_PAGES = 10  # Máximo de páginas vazias consecutivas antes de parar
-    REQUEST_DELAY = 1  # Delay entre requisições normais
+    MAX_RETRIES = 5
+    RETRY_DELAY = 30
+    MAX_EMPTY_PAGES = 10
+    REQUEST_DELAY = 1
 
     HEADERS = {
         "Content-Type": "application/json",
@@ -732,6 +733,45 @@ def run_contact_by_phone(customer):
     # Configuração do GCP
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    def flatten_nested_data(data, parent_key='', separator='_'):
+        """
+        Função recursiva para achatar dados aninhados profundamente.
+        """
+        items = []
+
+        if isinstance(data, dict):
+            for key, value in data.items():
+                new_key = f"{parent_key}{separator}{key}" if parent_key else key
+
+                if isinstance(value, dict):
+                    # Se é um dicionário, chama recursivamente
+                    items.extend(flatten_nested_data(value, new_key, separator).items())
+                elif isinstance(value, list):
+                    # Se é uma lista, processa cada item
+                    if value:  # Se a lista não está vazia
+                        for i, item in enumerate(value):
+                            if isinstance(item, dict):
+                                # Se o item da lista é um dicionário, achata com índice
+                                list_key = f"{new_key}_{i}"
+                                items.extend(flatten_nested_data(item, list_key, separator).items())
+                            else:
+                                # Se o item da lista é um valor simples
+                                items.append((f"{new_key}_{i}", str(item) if item is not None else ""))
+
+                        # Também salva a lista completa como JSON para referência
+                        items.append((f"{new_key}_json", json.dumps(value, ensure_ascii=False)))
+                    else:
+                        # Lista vazia
+                        items.append((new_key, ""))
+                else:
+                    # Valor simples
+                    items.append((new_key, str(value) if value is not None else ""))
+        else:
+            # Se não é um dicionário, retorna o valor como está
+            items.append((parent_key, str(data) if data is not None else ""))
+
+        return dict(items)
 
     def make_request_with_retry(url, headers, params=None, max_retries=MAX_RETRIES):
         """Faz requisição com retry em caso de rate limiting (429)."""
@@ -743,7 +783,7 @@ def run_contact_by_phone(customer):
                     return response
                 elif response.status_code == 429:
                     if attempt < max_retries:
-                        wait_time = RETRY_DELAY * (2 ** attempt)  # Backoff exponencial
+                        wait_time = RETRY_DELAY * (2 ** attempt)
                         print(
                             f"Rate limit atingido (429). Aguardando {wait_time} segundos antes da tentativa {attempt + 2}/{max_retries + 1}...")
                         time.sleep(wait_time)
@@ -775,16 +815,13 @@ def run_contact_by_phone(customer):
             empty_pages_count = 0
 
             while True:
-                # Configura os parâmetros da requisição
-                params = {"page": page, "limit": 100}
+                params = {"page": page}
                 response = make_request_with_retry(CUSTOMERS_URL, HEADERS, params)
 
-                # Verifica se a requisição foi bem-sucedida
                 if not response or response.status_code != 200:
                     print(f"Erro na requisição de clientes. Código: {response.status_code if response else 'None'}")
                     break
 
-                # Processa os dados
                 data = response.json()
                 quantidade = len(data)
 
@@ -792,15 +829,12 @@ def run_contact_by_phone(customer):
                     empty_pages_count += 1
                     print(f"Página {page} vazia. Páginas vazias consecutivas: {empty_pages_count}")
 
-                    # Se atingiu o máximo de páginas vazias consecutivas, para
                     if empty_pages_count >= MAX_EMPTY_PAGES:
                         print(f"Atingido máximo de {MAX_EMPTY_PAGES} páginas vazias consecutivas. Finalizando coleta.")
                         break
                 else:
-                    # Reset do contador de páginas vazias se encontrou dados
                     empty_pages_count = 0
 
-                    # Extrai telefones válidos
                     for customer_data in data:
                         cel_phone = customer_data.get('cel_phone')
                         if cel_phone and cel_phone.strip():
@@ -814,10 +848,7 @@ def run_contact_by_phone(customer):
                     print(
                         f"Processados {total_collected} clientes até agora (clientes nesta página: {quantidade}), página atual: {page}.")
 
-                # Incrementa a página para a próxima requisição
                 page += 1
-
-                # Adiciona um atraso para evitar sobrecarregar o servidor
                 time.sleep(REQUEST_DELAY)
 
             print(f"Total de telefones válidos encontrados: {len(all_phones)}")
@@ -855,23 +886,37 @@ def run_contact_by_phone(customer):
 
                 print(f"Verificando contato {i}/{total_phones} para telefone: {phone}")
 
-                # Verifica se o contato existe
                 contact_result = check_contact_exists(phone)
 
-                # Monta o resultado
-                result = {
+                # Prepara o resultado base
+                base_result = {
                     'customer_id': customer_id,
-                    'full_name': full_name,
+                    'customer_full_name': full_name,
                     'cel_phone': phone,
-                    'contact_exists': contact_result.get('exists', False),
-                    'contact_data': contact_result if contact_result.get('exists') else None,
-                    'error': contact_result.get('error', None)
                 }
 
-                contacts_results.append(result)
+                # Processa o resultado da verificação de contato
+                if contact_result.get('exists', False) and 'data' in contact_result:
+                    # Contato existe - achata todos os dados do contato
+                    contact_data = contact_result['data']
+                    flattened_contact = flatten_nested_data(contact_data, 'contact')
 
-                # Adiciona um atraso para evitar sobrecarregar o servidor
-                time.sleep(0.5)  # Meio segundo entre requisições
+                    # Adiciona informações de controle
+                    base_result.update({
+                        'contact_exists': True,
+                        'api_message': contact_result.get('message', ''),
+                        **flattened_contact
+                    })
+                else:
+                    # Contato não existe ou erro
+                    base_result.update({
+                        'contact_exists': False,
+                        'api_message': contact_result.get('message', ''),
+                        'error': contact_result.get('error', None)
+                    })
+
+                contacts_results.append(base_result)
+                time.sleep(0.5)
 
             return contacts_results
         except Exception as e:
@@ -893,10 +938,7 @@ def run_contact_by_phone(customer):
         print("Iniciando verificação de contatos por telefone...")
         contacts_results = fetch_contacts_by_phone(phones_data)
 
-        # Achata os dados para o CSV
-        flattened_results = [flatten_data(result) for result in contacts_results]
-
-        print(f"Verificação finalizada. Total de registros: {len(flattened_results)}")
+        print(f"Verificação finalizada. Total de registros: {len(contacts_results)}")
 
         storage_client = storage.Client(project=customer['project_id'])
         save_dynamic_csv_to_gcs(
@@ -904,7 +946,7 @@ def run_contact_by_phone(customer):
             BUCKET_NAME,
             'contact_by_phone',
             'contact_by_phone.csv',
-            flattened_results
+            contacts_results
         )
 
     # START
