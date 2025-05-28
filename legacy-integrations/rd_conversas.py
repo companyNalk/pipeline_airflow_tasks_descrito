@@ -694,6 +694,170 @@ def run_workflows(customer):
     main()
 
 
+def run_contact_by_phone(customer):
+    """
+    Busca contatos por telefone a partir de uma página específica de clientes.
+    Só executa se 'start_page_by_contact_phone' estiver configurado no customer.
+    """
+    import os
+    import requests
+    import time
+    from google.cloud import storage
+    import pathlib
+
+    # Verifica se o parâmetro de página inicial está configurado
+    if 'start_page_by_contact_phone' not in customer:
+        print("Parâmetro 'start_page_by_contact_phone' não encontrado. Função não será executada.")
+        return
+
+    # Configurações
+    TOKEN = customer['api_token']
+    BASE_URL = customer['api_base_url']
+    CUSTOMERS_URL = f'{BASE_URL}/v2/customers'
+    CONTACTS_URL = f'{BASE_URL}/v2/contacts'
+    BUCKET_NAME = customer['bucket_name']
+    START_PAGE = customer['start_page_by_contact_phone']
+
+    HEADERS = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {TOKEN}"
+    }
+
+    # Configuração do GCP
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    def fetch_customers_phones():
+        """Busca os telefones dos clientes do endpoint customers a partir da página especificada."""
+        try:
+            page = START_PAGE  # Começa da página especificada
+            # limit = 1000
+            all_phones = []
+            total_collected = 0
+
+            while True:
+                # Configura os parâmetros da requisição
+                params = {"page": page}
+                response = requests.get(CUSTOMERS_URL, headers=HEADERS, params=params)
+
+                # Verifica o status da resposta
+                if response.status_code != 200:
+                    print(f"Erro na requisição de clientes. Código: {response.status_code}, Detalhes: {response.text}")
+                    break
+
+                # Processa os dados
+                data = response.json()
+                quantidade = len(data)
+                if quantidade == 0:  # Se não há mais dados, encerra a coleta
+                    break
+
+                # Extrai telefones válidos
+                for customer_data in data:
+                    cel_phone = customer_data.get('cel_phone')
+                    if cel_phone and cel_phone.strip():  # Verifica se o telefone não é None ou vazio
+                        all_phones.append({
+                            'customer_id': customer_data.get('_id'),
+                            'full_name': customer_data.get('full_name'),
+                            'cel_phone': cel_phone.strip()
+                        })
+
+                total_collected += quantidade
+                print(
+                    f"Processados {total_collected} clientes até agora (clientes nesta página: {quantidade}), página atual: {page}.")
+
+                # Incrementa a página para a próxima requisição
+                page += 1
+
+                # Adiciona um atraso para evitar sobrecarregar o servidor
+                time.sleep(1)
+
+            print(f"Total de telefones válidos encontrados: {len(all_phones)}")
+            return all_phones
+        except Exception as e:
+            print(f"Erro ao buscar telefones dos clientes: {e}")
+            raise
+
+    def check_contact_exists(phone):
+        """Verifica se um contato existe para o telefone fornecido."""
+        try:
+            url = f"{CONTACTS_URL}/{phone}/exists"
+            response = requests.get(url, headers=HEADERS)
+
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"Erro ao verificar contato para {phone}. Código: {response.status_code}")
+                return {"exists": False, "error": f"HTTP {response.status_code}"}
+        except Exception as e:
+            print(f"Erro ao verificar contato para {phone}: {e}")
+            return {"exists": False, "error": str(e)}
+
+    def fetch_contacts_by_phone(phones_data):
+        """Verifica a existência de contatos para cada telefone."""
+        try:
+            contacts_results = []
+            total_phones = len(phones_data)
+
+            for i, phone_info in enumerate(phones_data, 1):
+                phone = phone_info['cel_phone']
+                customer_id = phone_info['customer_id']
+                full_name = phone_info['full_name']
+
+                print(f"Verificando contato {i}/{total_phones} para telefone: {phone}")
+
+                # Verifica se o contato existe
+                contact_result = check_contact_exists(phone)
+
+                # Monta o resultado
+                result = {
+                    'customer_id': customer_id,
+                    'full_name': full_name,
+                    'cel_phone': phone,
+                    'contact_exists': contact_result.get('exists', False),
+                    'contact_data': contact_result if contact_result.get('exists') else None,
+                    'error': contact_result.get('error', None)
+                }
+
+                contacts_results.append(result)
+
+                # Adiciona um atraso para evitar sobrecarregar o servidor
+                time.sleep(0.5)  # Meio segundo entre requisições
+
+            return contacts_results
+        except Exception as e:
+            print(f"Erro ao verificar contatos por telefone: {e}")
+            raise
+
+    def main():
+        """Função principal para executar a coleta e envio dos dados de contatos por telefone."""
+        print(f"Iniciando a coleta de telefones dos clientes a partir da página {START_PAGE}...")
+        phones_data = fetch_customers_phones()
+
+        if not phones_data:
+            print("Nenhum telefone válido encontrado nos clientes.")
+            return
+
+        print("Iniciando verificação de contatos por telefone...")
+        contacts_results = fetch_contacts_by_phone(phones_data)
+
+        # Achata os dados para o CSV
+        flattened_results = [flatten_data(result) for result in contacts_results]
+
+        print(f"Verificação finalizada. Total de registros: {len(flattened_results)}")
+
+        storage_client = storage.Client(project=customer['project_id'])
+        save_dynamic_csv_to_gcs(
+            storage_client,
+            BUCKET_NAME,
+            'contact_by_phone',
+            'contact_by_phone.csv',
+            flattened_results
+        )
+
+    # START
+    main()
+
+
 def get_extraction_tasks():
     """
     Get the list of data extraction tasks for RD Conversas.
@@ -702,36 +866,40 @@ def get_extraction_tasks():
         list: List of task configurations
     """
     return [
+        # {
+        #     'task_id': 'run_customers',
+        #     'python_callable': run_customers
+        # },
+        # {
+        #     'task_id': 'run_flows',
+        #     'python_callable': run_flows
+        # },
+        # {
+        #     'task_id': 'run_integrations',
+        #     'python_callable': run_integrations
+        # },
+        # {
+        #     'task_id': 'run_integrations_official',
+        #     'python_callable': run_integrations_official
+        # },
+        # {
+        #     'task_id': 'run_reports',
+        #     'python_callable': run_reports
+        # },
+        # {
+        #     'task_id': 'run_templates',
+        #     'python_callable': run_templates
+        # },
+        # {
+        #     'task_id': 'run_wallets',
+        #     'python_callable': run_wallets
+        # },
+        # {
+        #     'task_id': 'run_workflows',
+        #     'python_callable': run_workflows
+        # },
         {
-            'task_id': 'run_customers',
-            'python_callable': run_customers
-        },
-        {
-            'task_id': 'run_flows',
-            'python_callable': run_flows
-        },
-        {
-            'task_id': 'run_integrations',
-            'python_callable': run_integrations
-        },
-        {
-            'task_id': 'run_integrations_official',
-            'python_callable': run_integrations_official
-        },
-        {
-            'task_id': 'run_reports',
-            'python_callable': run_reports
-        },
-        {
-            'task_id': 'run_templates',
-            'python_callable': run_templates
-        },
-        {
-            'task_id': 'run_wallets',
-            'python_callable': run_wallets
-        },
-        {
-            'task_id': 'run_workflows',
-            'python_callable': run_workflows
-        },
+            'task_id': 'run_contact_by_phone',
+            'python_callable': run_contact_by_phone
+        }
     ]
