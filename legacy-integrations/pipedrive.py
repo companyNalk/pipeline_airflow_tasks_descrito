@@ -90,7 +90,7 @@ def run(customer):
             return True
         except Exception as e:
             print(f"Erro no upload de {filename}: {e}")
-            return False
+            raise
 
     def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
         if df.empty: return df
@@ -740,7 +740,6 @@ def run_persons(customer):
             return True
         except Exception as e:
             print(f"Erro no upload de {filename}: {e}")
-            # return False
             raise
 
     def normalize_df(df: pd.DataFrame) -> pd.DataFrame:
