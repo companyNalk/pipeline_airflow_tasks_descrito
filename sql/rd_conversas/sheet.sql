@@ -1,3 +1,12 @@
+# CONTACT_BY_PHONE
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.rd_conversas.contact_by_phone
+OPTIONS (
+  format = 'CSV',
+  field_delimiter=';',
+  skip_leading_rows=1,
+  allow_quoted_newlines=true,
+  uris = ['gs://{bucket_name}/contact_by_phone/contact_by_phone.csv']);
+
 # CUSTOMERS
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.rd_conversas.customers
 OPTIONS (
@@ -71,6 +80,12 @@ OPTIONS (
   uris = ['gs://{bucket_name}/workflows/workflows.csv']);
 
 -- GOLD
+# CONTACT_BY_PHONE
+CREATE OR REPLACE TABLE `{project_id}.vendas.rd_conversas_contact_by_phone_gold`
+AS
+SELECT *
+FROM `{project_id}.rd_conversas.contact_by_phone`;
+
 # CUSTOMERS
 CREATE OR REPLACE TABLE `{project_id}.vendas.rd_conversas_customers_gold`
 AS
