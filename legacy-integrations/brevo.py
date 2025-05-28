@@ -3,13 +3,14 @@ Brevo module for data extraction functions.
 This module contains functions specific to the Brevo integration.
 """
 
-import os
-import time
 import csv
 import io
 import logging
+import time
+
 import requests
 from core import gcs
+
 
 def run(customer):
     """
@@ -49,10 +50,10 @@ def run(customer):
                 return True
             else:
                 logging.error(f"Falha na autenticação! Código {response.status_code}: {response.text}")
-                return False
+                raise
         except requests.exceptions.RequestException as e:
             logging.error(f"Erro de conexão ao autenticar: {e}")
-            return False
+            raise
 
     # ===================================
     # Função para Coletar Campanhas
@@ -89,7 +90,7 @@ def run(customer):
 
             except requests.exceptions.RequestException as e:
                 logging.error(f"Erro ao buscar {campaign_type}Campaigns: {e}")
-                break
+                raise
 
         logging.info(f"Total de {len(campaigns)} campanhas de {campaign_type.upper()} coletadas.")
         return campaigns
@@ -101,16 +102,20 @@ def run(customer):
         """Salva arquivos CSV no Google Cloud Storage."""
         logging.info(f"Enviando arquivo {file_name} para o Google Cloud Storage...")
 
-        csv_file = open(customer['project_id'] + '_' + file_name + '_brevo.csv', 'w+')
-        csv_file.write(data)
-        credentials = gcs.load_credentials_from_env()
-        gcs.write_file_to_gcs(
-            bucket_name=BUCKET_NAME,
-            local_file_path=csv_file.name,
-            destination_name=f"{FOLDER_NAME}/{file_name}",
-            credentials=credentials
-        )
-        logging.info(f"Arquivo {file_name} salvo com sucesso no bucket {BUCKET_NAME}/{FOLDER_NAME}!")
+        try:
+            csv_file = open(customer['project_id'] + '_' + file_name + '_brevo.csv', 'w+')
+            csv_file.write(data)
+            credentials = gcs.load_credentials_from_env()
+            gcs.write_file_to_gcs(
+                bucket_name=BUCKET_NAME,
+                local_file_path=csv_file.name,
+                destination_name=f"{FOLDER_NAME}/{file_name}",
+                credentials=credentials
+            )
+            logging.info(f"Arquivo {file_name} salvo com sucesso no bucket {BUCKET_NAME}/{FOLDER_NAME}!")
+        except Exception as e:
+            logging.info(e)
+            raise
 
     # ===================================
     # Função para Criar e Salvar CSV
@@ -144,17 +149,17 @@ def run(customer):
             return "Falha na autenticação", 403
 
         logging.info("Coletando campanhas...")
-        
+
         email_campaigns = fetch_campaigns("email")
         sms_campaigns = fetch_campaigns("sms")
 
         logging.info("Criando e salvando arquivos CSV...")
-        
+
         save_campaigns_to_csv(email_campaigns, "email_campaigns.csv")
         save_campaigns_to_csv(sms_campaigns, "sms_campaigns.csv")
 
         logging.info("Execução concluída com sucesso!")
-        
+
         return "Execução concluída", 200
 
     main()
