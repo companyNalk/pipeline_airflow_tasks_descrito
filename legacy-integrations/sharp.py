@@ -48,6 +48,7 @@ def run(customer):
                 print(f"Dados enviados para {path} com sucesso (separador: ponto e vírgula).")
             except Exception as e:
                 print(f"Erro ao enviar dados para {path}: {e}")
+                raise
 
         # STAGES
         fr = []
