@@ -221,11 +221,15 @@ def run(customer):
 
     def upload_to_gcs(bucket_name, destination_blob_name, content, storage_client):
         """Faz o upload do conteúdo para o Google Cloud Storage."""
-        bucket = storage_client.bucket(bucket_name)
-        blob = bucket.blob(destination_blob_name)
+        try:
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(destination_blob_name)
 
-        blob.upload_from_string(content, 'text/csv')
-        print(f"Arquivo {destination_blob_name} enviado para o bucket {bucket_name}.")
+            blob.upload_from_string(content, 'text/csv')
+            print(f"Arquivo {destination_blob_name} enviado para o bucket {bucket_name}.")
+        except Exception as e:
+            print(e)
+            raise
 
     def get_earliest_date():
         """Define uma data de início fixa de 5 anos atrás"""
