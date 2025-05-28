@@ -216,7 +216,7 @@ def run_business_buyer(customer):
     import pathlib
 
     # Configurações iniciais
-    API_URL_CONTATOS = f"{customer['url_base']}Usuario/RetornarTipo3"
+    API_URL_CONTATOS = f"{customer['url_base']}/Usuario/RetornarTipo3"
     API_URL_NEGOCIOS_COMPRADOR = f"{customer['url_base']}/Comprador/RetornarNegocios"
     CHAVE_API = customer['api_key']
     BUCKET_NAME = customer['bucket_name']
