@@ -707,7 +707,7 @@ def run_contact_by_phone(customer):
     import json
 
     # Verifica se o parâmetro de página inicial está configurado
-    if 'start_page_by_contact_phone' not in customer:
+    if not str(customer['start_page_by_contact_phone']).isdigit():
         print("Parâmetro 'start_page_by_contact_phone' não encontrado. Função não será executada.")
         return
 
