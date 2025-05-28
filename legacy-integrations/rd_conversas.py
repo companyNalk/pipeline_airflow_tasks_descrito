@@ -888,6 +888,11 @@ def run_contact_by_phone(customer):
 
                 contact_result = check_contact_exists(phone)
 
+                # Debug: mostra a estrutura da resposta para os primeiros 3 contatos
+                if i <= 3:
+                    print(f"DEBUG - Resposta completa para {phone}:")
+                    print(json.dumps(contact_result, indent=2, ensure_ascii=False))
+
                 # Prepara o resultado base
                 base_result = {
                     'customer_id': customer_id,
@@ -896,7 +901,16 @@ def run_contact_by_phone(customer):
                 }
 
                 # Processa o resultado da verificação de contato
-                if contact_result.get('exists', False) and 'data' in contact_result:
+                api_message = contact_result.get('message', '')
+
+                # Verifica se o contato existe baseado na mensagem ou campo 'exists' ou presença de 'data'
+                contact_exists = (
+                        contact_result.get('exists', False) or
+                        'already exists' in api_message.lower() or
+                        'data' in contact_result
+                )
+
+                if contact_exists and 'data' in contact_result:
                     # Contato existe - achata todos os dados do contato
                     contact_data = contact_result['data']
                     flattened_contact = flatten_nested_data(contact_data, 'contact')
@@ -904,14 +918,21 @@ def run_contact_by_phone(customer):
                     # Adiciona informações de controle
                     base_result.update({
                         'contact_exists': True,
-                        'api_message': contact_result.get('message', ''),
+                        'api_message': api_message,
                         **flattened_contact
+                    })
+                elif contact_exists:
+                    # Contato existe mas sem dados detalhados
+                    base_result.update({
+                        'contact_exists': True,
+                        'api_message': api_message,
+                        'error': 'Contato existe mas dados não retornados'
                     })
                 else:
                     # Contato não existe ou erro
                     base_result.update({
                         'contact_exists': False,
-                        'api_message': contact_result.get('message', ''),
+                        'api_message': api_message,
                         'error': contact_result.get('error', None)
                     })
 
