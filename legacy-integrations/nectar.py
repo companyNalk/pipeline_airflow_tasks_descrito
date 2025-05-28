@@ -98,6 +98,7 @@ def run_qualification(customer):
                     flat_dict[normalize_column_name(prefix.rstrip('_'))] = obj
         except Exception as e:
             print(f"Erro ao processar objeto: {str(e)}")
+            raise
 
     def process_nested_data(data):
         if not data:
@@ -263,7 +264,7 @@ def run_qualification(customer):
                 print("Nenhum dado processado para salvar.")
         except Exception as e:
             print(f"Erro durante o processamento: {str(e)}")
-            raise e
+            raise
 
     # INICAR QUALIFICACOES
     main()
@@ -423,6 +424,7 @@ def run_opportunity(customer):
                 flat_dict[normalize_column_name(prefix.rstrip('_'))] = obj
         except Exception as e:
             print(f"Erro ao processar objeto: {str(e)}")
+            raise
 
     def process_nested_data(data):
         """Processa dados aninhados preservando todas as colunas originais"""
@@ -563,7 +565,8 @@ def run_opportunity(customer):
             else:
                 print("Nenhum dado processado para salvar.")
         except Exception as e:
-            raise e
+            print(e)
+            raise
 
     # INICAR OPORTUNIDADES
     main()
