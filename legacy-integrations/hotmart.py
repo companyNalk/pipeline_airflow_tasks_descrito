@@ -1,9 +1,10 @@
-from datetime import datetime, timedelta
-from core import gcs
+import json
 import time
+from datetime import datetime, timedelta
+
 import pandas as pd
 import requests
-import json
+from core import gcs
 
 # Common constants
 BASE_URL = 'https://developers.hotmart.com'
@@ -17,6 +18,7 @@ TRANSACTION_STATUSES = [
     'PROTESTED', 'REFUNDED', 'STARTED', 'UNDER_ANALISYS', 'WAITING_PAYMENT'
 ]
 
+
 # Function to get authentication token
 def get_token(basic_auth):
     """Obtains an access token from the Hotmart API."""
@@ -28,6 +30,7 @@ def get_token(basic_auth):
     if response.status_code != 200:
         raise Exception(f"Error obtaining token: {response.status_code} - {response.text}")
     return response.json()['access_token']
+
 
 # Function to calculate date range for the specified days
 def get_date_range(days=365):
@@ -41,6 +44,7 @@ def get_date_range(days=365):
 
     print(f"Fetching data from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
     return start_timestamp, end_timestamp
+
 
 # Function to recursively flatten nested JSON
 def flatten_json_recursive(nested_json, prefix=''):
@@ -60,17 +64,22 @@ def flatten_json_recursive(nested_json, prefix=''):
             flattened[new_key] = value
     return flattened
 
+
 # Function to convert epoch timestamps to readable dates
 def convert_dates(df):
     """Converts timestamps in epoch format to a readable format."""
     date_indicators = ['date', '_at', 'time']
-    date_cols = [col for col in df.columns if any(indicator in col.lower() for indicator in date_indicators) and df[col].dtype in ['int64', 'float64']]
+    date_cols = [col for col in df.columns if
+                 any(indicator in col.lower() for indicator in date_indicators) and df[col].dtype in ['int64',
+                                                                                                      'float64']]
 
     for col in date_cols:
         df[f"{col}_readable"] = df[col].apply(
-            lambda x: datetime.fromtimestamp(x / 1000).strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(x) and x > 0 else None
+            lambda x: datetime.fromtimestamp(x / 1000).strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(
+                x) and x > 0 else None
         )
     return df
+
 
 # Function to extract products
 def extract_products(customer):
@@ -98,12 +107,12 @@ def extract_products(customer):
 
     if df is not None and not df.empty:
         csv_data = df.to_csv(index=False)
-        
+
         # Use the GCS module to upload
         credentials = gcs.load_credentials_from_env()
         local_file_path = f"/tmp/{customer['project_id']}.hotmart.products.csv"
         df.to_csv(local_file_path, index=False)
-        
+
         gcs.write_file_to_gcs(
             bucket_name=customer['bucket_name'],
             local_file_path=local_file_path,
@@ -115,6 +124,7 @@ def extract_products(customer):
         print(f"Process completed in {time.time() - start_time:.2f} seconds")
     else:
         print("No data to process after product analysis")
+
 
 # Function to get all products with pagination
 def get_all_products(token, customer):
@@ -162,6 +172,7 @@ def get_all_products(token, customer):
     print(f"Total products obtained: {len(all_products)}")
     return {'items': all_products}
 
+
 # Function to process products
 def process_products(data):
     """Processes product data and returns a DataFrame."""
@@ -174,6 +185,7 @@ def process_products(data):
     df = pd.DataFrame(flat_items)
     df = convert_dates(df)
     return df
+
 
 # Function to extract sales history
 def extract_sales_history(customer):
@@ -201,28 +213,33 @@ def extract_sales_history(customer):
     df = process_sales(all_sales)
 
     if df is not None and not df.empty:
-        # Use the GCS module to upload
-        credentials = gcs.load_credentials_from_env()
-        local_file_path = f"/tmp/{customer['project_id']}.hotmart.sales_history.csv"
-        df.to_csv(local_file_path, index=False)
-        
-        gcs.write_file_to_gcs(
-            bucket_name=customer['bucket_name'],
-            local_file_path=local_file_path,
-            destination_name=csv_filename,
-            credentials=credentials
-        )
+        try:
+            # Use the GCS module to upload
+            credentials = gcs.load_credentials_from_env()
+            local_file_path = f"/tmp/{customer['project_id']}.hotmart.sales_history.csv"
+            df.to_csv(local_file_path, index=False)
 
-        print(f"Total sales obtained: {len(all_sales)}")
-        print(f"Process completed in {time.time() - start_time:.2f} seconds")
+            gcs.write_file_to_gcs(
+                bucket_name=customer['bucket_name'],
+                local_file_path=local_file_path,
+                destination_name=csv_filename,
+                credentials=credentials
+            )
+
+            print(f"Total sales obtained: {len(all_sales)}")
+            print(f"Process completed in {time.time() - start_time:.2f} seconds")
+        except Exception as e:
+            print(e)
+            raise
     else:
         print("No data to process after sales analysis")
+
 
 # Function to get all sales history with pagination
 def get_all_sales_history(token, customer):
     """Gets all sales history with pagination for the specified days."""
     days = int(customer.get('days_to_fetch', 365))
-    
+
     # Get date range
     start_date, end_date = get_date_range(days)
 
@@ -279,6 +296,7 @@ def get_all_sales_history(token, customer):
     print(f"Total sales obtained: {len(all_sales)}")
     return all_sales
 
+
 # Function to extract nested fields from sales data
 def extract_nested_fields(sales):
     """Extracts nested fields to flat fields from sales data."""
@@ -331,6 +349,7 @@ def extract_nested_fields(sales):
 
     return flat_data
 
+
 # Function to process sales data
 def process_sales(sales):
     """Processes sales data and returns a DataFrame."""
@@ -348,6 +367,7 @@ def process_sales(sales):
     df = convert_dates(df)
 
     return df
+
 
 # Function to extract sales users
 def extract_sales_users(customer):
@@ -377,29 +397,34 @@ def extract_sales_users(customer):
     df = process_sales_users(all_sales_users)
 
     if df is not None and not df.empty:
-        # Use the GCS module to upload
-        credentials = gcs.load_credentials_from_env()
-        local_file_path = f"/tmp/{customer['project_id']}.hotmart.sales_users.csv"
-        df.to_csv(local_file_path, index=False)
-        
-        gcs.write_file_to_gcs(
-            bucket_name=customer['bucket_name'],
-            local_file_path=local_file_path,
-            destination_name=csv_filename,
-            credentials=credentials
-        )
+        try:
+            # Use the GCS module to upload
+            credentials = gcs.load_credentials_from_env()
+            local_file_path = f"/tmp/{customer['project_id']}.hotmart.sales_users.csv"
+            df.to_csv(local_file_path, index=False)
 
-        print(f"Process completed in {time.time() - start_time:.2f} seconds")
-        print(f"Total records processed: {len(all_sales_users)}")
-        print(f"Total fields extracted: {len(df.columns)}")
+            gcs.write_file_to_gcs(
+                bucket_name=customer['bucket_name'],
+                local_file_path=local_file_path,
+                destination_name=csv_filename,
+                credentials=credentials
+            )
+
+            print(f"Process completed in {time.time() - start_time:.2f} seconds")
+            print(f"Total records processed: {len(all_sales_users)}")
+            print(f"Total fields extracted: {len(df.columns)}")
+        except Exception as e:
+            print(e)
+            raise
     else:
         print("No data to process after sales users analysis")
+
 
 # Function to get all sales users with pagination
 def get_all_sales_users(token, customer):
     """Gets all sales users with pagination for the specified days."""
     days = int(customer.get('days_to_fetch', 365))
-    
+
     # Get date range
     start_date, end_date = get_date_range(days)
 
@@ -479,7 +504,8 @@ def get_all_sales_users(token, customer):
             except requests.exceptions.RequestException as e:
                 if retry < max_retries - 1:
                     wait_time = retry_delay * (2 ** retry)
-                    print(f"Connection error: {str(e)}. Attempt {retry + 1}/{max_retries}. Waiting {wait_time} seconds...")
+                    print(
+                        f"Connection error: {str(e)}. Attempt {retry + 1}/{max_retries}. Waiting {wait_time} seconds...")
                     time.sleep(wait_time)
                 else:
                     print(f"Connection failure after {max_retries} attempts: {str(e)}")
@@ -492,6 +518,7 @@ def get_all_sales_users(token, customer):
 
     print(f"Total sales users obtained: {len(all_sales_users)}")
     return all_sales_users
+
 
 # Function to extract nested fields from sales users data
 def extract_nested_fields_users(sales_users):
@@ -556,7 +583,7 @@ def extract_nested_fields_users(sales_users):
                         for doc_type, doc_value in doc_map.items():
                             if isinstance(doc_value, list):
                                 flat_user[f'user_document_{doc_type.lower()}'] = json.dumps(doc_value,
-                                                                                        ensure_ascii=False)
+                                                                                            ensure_ascii=False)
                             else:
                                 flat_user[f'user_document_{doc_type.lower()}'] = doc_value
 
@@ -575,6 +602,7 @@ def extract_nested_fields_users(sales_users):
 
     return flat_data
 
+
 # Function to process sales users data
 def process_sales_users(sales_users):
     """Processes sales users data and returns a DataFrame."""
@@ -589,6 +617,7 @@ def process_sales_users(sales_users):
     df = pd.DataFrame(flat_data)
 
     return df
+
 
 # Function to extract subscriptions
 def extract_subscriptions(customer):
@@ -616,21 +645,26 @@ def extract_subscriptions(customer):
 
     if df is not None and not df.empty:
         # Use the GCS module to upload
-        credentials = gcs.load_credentials_from_env()
-        local_file_path = f"/tmp/{customer['project_id']}.hotmart.subscriptions.csv"
-        df.to_csv(local_file_path, index=False)
-        
-        gcs.write_file_to_gcs(
-            bucket_name=customer['bucket_name'],
-            local_file_path=local_file_path,
-            destination_name=csv_filename,
-            credentials=credentials
-        )
+        try:
+            credentials = gcs.load_credentials_from_env()
+            local_file_path = f"/tmp/{customer['project_id']}.hotmart.subscriptions.csv"
+            df.to_csv(local_file_path, index=False)
 
-        print(f"Total subscriptions obtained: {len(all_subscriptions)}")
-        print(f"Process completed in {time.time() - start_time:.2f} seconds")
+            gcs.write_file_to_gcs(
+                bucket_name=customer['bucket_name'],
+                local_file_path=local_file_path,
+                destination_name=csv_filename,
+                credentials=credentials
+            )
+
+            print(f"Total subscriptions obtained: {len(all_subscriptions)}")
+            print(f"Process completed in {time.time() - start_time:.2f} seconds")
+        except Exception as e:
+            print(e)
+            raise
     else:
         print("No data to process after subscriptions analysis")
+
 
 # Function to get all subscriptions with pagination
 def get_all_subscriptions(token):
@@ -688,6 +722,7 @@ def get_all_subscriptions(token):
     print(f"Total subscriptions obtained: {len(all_subscriptions)}")
     return all_subscriptions
 
+
 # Function to process subscriptions data
 def process_subscriptions(subscriptions):
     """Processes subscriptions data and returns a DataFrame."""
@@ -697,14 +732,15 @@ def process_subscriptions(subscriptions):
 
     # Flatten the data
     flat_items = [flatten_json_recursive(item) for item in subscriptions]
-    
+
     # Create DataFrame
     df = pd.DataFrame(flat_items)
-    
+
     # Convert dates
     df = convert_dates(df)
-    
+
     return df
+
 
 # Function to extract subscriptions summary
 def extract_subscriptions_summary(customer):
@@ -732,20 +768,25 @@ def extract_subscriptions_summary(customer):
 
     if df is not None and not df.empty:
         # Use the GCS module to upload
-        credentials = gcs.load_credentials_from_env()
-        local_file_path = f"/tmp/{customer['project_id']}.hotmart.subscriptions_summary.csv"
-        df.to_csv(local_file_path, index=False)
-        
-        gcs.write_file_to_gcs(
-            bucket_name=customer['bucket_name'],
-            local_file_path=local_file_path,
-            destination_name=csv_filename,
-            credentials=credentials
-        )
+        try:
+            credentials = gcs.load_credentials_from_env()
+            local_file_path = f"/tmp/{customer['project_id']}.hotmart.subscriptions_summary.csv"
+            df.to_csv(local_file_path, index=False)
 
-        print(f"Process completed in {time.time() - start_time:.2f} seconds")
+            gcs.write_file_to_gcs(
+                bucket_name=customer['bucket_name'],
+                local_file_path=local_file_path,
+                destination_name=csv_filename,
+                credentials=credentials
+            )
+
+            print(f"Process completed in {time.time() - start_time:.2f} seconds")
+        except Exception as e:
+            print(e)
+            raise
     else:
         print("No data to process after subscriptions summary analysis")
+
 
 # Function to get subscriptions summary
 def get_subscriptions_summary(token):
@@ -767,6 +808,7 @@ def get_subscriptions_summary(token):
 
     return response.json()
 
+
 # Function to process subscriptions summary data
 def process_subscriptions_summary(summary_data):
     """Processes subscriptions summary data and returns a DataFrame."""
@@ -776,8 +818,9 @@ def process_subscriptions_summary(summary_data):
 
     # Create a DataFrame with the summary data
     df = pd.DataFrame([summary_data])
-    
+
     return df
+
 
 # Function to extract subscriptions transactions
 def extract_subscriptions_transactions(customer):
@@ -806,27 +849,32 @@ def extract_subscriptions_transactions(customer):
 
     if df is not None and not df.empty:
         # Use the GCS module to upload
-        credentials = gcs.load_credentials_from_env()
-        local_file_path = f"/tmp/{customer['project_id']}.hotmart.subscriptions_transactions.csv"
-        df.to_csv(local_file_path, index=False)
-        
-        gcs.write_file_to_gcs(
-            bucket_name=customer['bucket_name'],
-            local_file_path=local_file_path,
-            destination_name=csv_filename,
-            credentials=credentials
-        )
+        try:
+            credentials = gcs.load_credentials_from_env()
+            local_file_path = f"/tmp/{customer['project_id']}.hotmart.subscriptions_transactions.csv"
+            df.to_csv(local_file_path, index=False)
 
-        print(f"Total subscriptions transactions obtained: {len(all_transactions)}")
-        print(f"Process completed in {time.time() - start_time:.2f} seconds")
+            gcs.write_file_to_gcs(
+                bucket_name=customer['bucket_name'],
+                local_file_path=local_file_path,
+                destination_name=csv_filename,
+                credentials=credentials
+            )
+
+            print(f"Total subscriptions transactions obtained: {len(all_transactions)}")
+            print(f"Process completed in {time.time() - start_time:.2f} seconds")
+        except Exception as e:
+            print(e)
+            raise
     else:
         print("No data to process after subscriptions transactions analysis")
+
 
 # Function to get all subscriptions transactions with pagination
 def get_all_subscriptions_transactions(token, customer):
     """Gets all subscriptions transactions with pagination for the specified days."""
     days = int(customer.get('days_to_fetch', 365))
-    
+
     # Get date range
     start_date, end_date = get_date_range(days)
 
@@ -879,6 +927,7 @@ def get_all_subscriptions_transactions(token, customer):
     print(f"Total subscriptions transactions obtained: {len(all_transactions)}")
     return all_transactions
 
+
 # Function to process subscriptions transactions data
 def process_subscriptions_transactions(transactions):
     """Processes subscriptions transactions data and returns a DataFrame."""
@@ -888,14 +937,15 @@ def process_subscriptions_transactions(transactions):
 
     # Flatten the data
     flat_items = [flatten_json_recursive(item) for item in transactions]
-    
+
     # Create DataFrame
     df = pd.DataFrame(flat_items)
-    
+
     # Convert dates
     df = convert_dates(df)
-    
+
     return df
+
 
 # Function to extract sales summary
 def extract_sales_summary(customer):
@@ -923,20 +973,25 @@ def extract_sales_summary(customer):
 
     if df is not None and not df.empty:
         # Use the GCS module to upload
-        credentials = gcs.load_credentials_from_env()
-        local_file_path = f"/tmp/{customer['project_id']}.hotmart.sales_summary.csv"
-        df.to_csv(local_file_path, index=False)
-        
-        gcs.write_file_to_gcs(
-            bucket_name=customer['bucket_name'],
-            local_file_path=local_file_path,
-            destination_name=csv_filename,
-            credentials=credentials
-        )
+        try:
+            credentials = gcs.load_credentials_from_env()
+            local_file_path = f"/tmp/{customer['project_id']}.hotmart.sales_summary.csv"
+            df.to_csv(local_file_path, index=False)
 
-        print(f"Process completed in {time.time() - start_time:.2f} seconds")
+            gcs.write_file_to_gcs(
+                bucket_name=customer['bucket_name'],
+                local_file_path=local_file_path,
+                destination_name=csv_filename,
+                credentials=credentials
+            )
+
+            print(f"Process completed in {time.time() - start_time:.2f} seconds")
+        except Exception as e:
+            print(e)
+            raise
     else:
         print("No data to process after sales summary analysis")
+
 
 # Function to get sales summary
 def get_sales_summary(token):
@@ -958,6 +1013,7 @@ def get_sales_summary(token):
 
     return response.json()
 
+
 # Function to process sales summary data
 def process_sales_summary(summary_data):
     """Processes sales summary data and returns a DataFrame."""
@@ -967,7 +1023,7 @@ def process_sales_summary(summary_data):
 
     # Create a DataFrame with the summary data
     df = pd.DataFrame([summary_data])
-    
+
     return df
 
 
