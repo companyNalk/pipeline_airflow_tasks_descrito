@@ -391,6 +391,7 @@ def generic_function(customer, endpoint_name, folder_name):
                 logger.info(f"Arquivo CSV normalizado criado: {output_file} com {len(df.columns)} colunas")
             except Exception as e:
                 logger.error(f"Erro ao salvar CSV: {e}")
+                raise
 
         logger.info(f"Processamento finalizado. DataFrame criado com {len(df)} linhas e {len(df.columns)} colunas")
 
@@ -605,7 +606,7 @@ def generic_function(customer, endpoint_name, folder_name):
                 return entity_data
             except Exception as e:
                 logger.error(f"Erro ao processar página {page_num}: {e}")
-                return None
+                raise
 
         # Processa páginas em paralelo usando um pool fixo de threads
         logger.info(f"Iniciando processamento paralelo com {MAX_WORKERS} workers")
@@ -765,7 +766,7 @@ def generic_function(customer, endpoint_name, folder_name):
         except Exception as e:
             error_message = f"Erro durante o processamento: {str(e)}"
             logger.error(error_message)
-            return error_message
+            raise
 
     # START
     main()
