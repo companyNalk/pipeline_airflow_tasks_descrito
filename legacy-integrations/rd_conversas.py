@@ -815,7 +815,7 @@ def run_contact_by_phone(customer):
             empty_pages_count = 0
 
             while True:
-                params = {"page": page}
+                params = {"page": page, "limit": 100}
                 response = make_request_with_retry(CUSTOMERS_URL, HEADERS, params)
 
                 if not response or response.status_code != 200:
