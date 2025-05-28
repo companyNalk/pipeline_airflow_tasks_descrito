@@ -5,6 +5,7 @@ This module contains functions specific to the Digital Manager Guru integration.
 
 from core import gcs
 
+
 def run_contacts(customer):
     """
     Extract contacts data from Digital Manager Guru API and upload to GCS.
@@ -14,7 +15,6 @@ def run_contacts(customer):
     """
     import concurrent.futures
     import logging
-    import os
     import re
     import time
     from datetime import datetime, timedelta
@@ -23,7 +23,6 @@ def run_contacts(customer):
 
     import pandas as pd
     import requests
-    from google.cloud import storage
 
     # CONFIG DE LOGGING
     logging.basicConfig(
@@ -36,7 +35,7 @@ def run_contacts(customer):
     GENERIC_NAME = "contacts"
     GCP_BUCKET_NAME = customer['bucket_name']
     GCP_FOLDER_PATH = GENERIC_NAME
-    
+
     # ARQUIVO CSV
     CSV_FILENAME = f"{GENERIC_NAME}.csv"
 
@@ -129,7 +128,8 @@ def run_contacts(customer):
                 except requests.exceptions.RequestException as e:
                     retries += 1
                     wait_time = 3 * retries
-                    logger.error(f"Erro na requisição: {e}. Tentativa {retries}/{max_retries}. Aguardando {wait_time}s...")
+                    logger.error(
+                        f"Erro na requisição: {e}. Tentativa {retries}/{max_retries}. Aguardando {wait_time}s...")
                     time.sleep(wait_time)
                     continue
             else:
@@ -170,7 +170,7 @@ def run_contacts(customer):
             return response
         except Exception as e:
             logger.error(f"Erro ao buscar página com cursor {cursor[:15]}: {e}")
-            return None
+            raise
 
     def collect_data_for_period(start_date, end_date):
         """
@@ -220,7 +220,8 @@ def run_contacts(customer):
                 while len(futures) < MAX_WORKERS and not cursor_queue.empty():
                     try:
                         cursor = cursor_queue.get(block=False)
-                        future = executor.submit(process_page, params, cursor, cursor_queue, all_data, processed_cursors)
+                        future = executor.submit(process_page, params, cursor, cursor_queue, all_data,
+                                                 processed_cursors)
                         futures.add(future)
                     except Empty:
                         break  # Fila vazia
@@ -244,7 +245,8 @@ def run_contacts(customer):
 
                 # Verificação periódica de progresso
                 if len(all_data) % 1000 == 0 and len(all_data) > 0:
-                    logger.info(f"Progresso: {len(all_data)} registros coletados, {cursor_queue.qsize()} páginas na fila")
+                    logger.info(
+                        f"Progresso: {len(all_data)} registros coletados, {cursor_queue.qsize()} páginas na fila")
 
         logger.info(
             f"Coleta de dados finalizada para o período {start_date} a {end_date}. Total: {len(all_data)} registros.")
@@ -467,6 +469,7 @@ def run_contacts(customer):
                 logger.info(f"Arquivo CSV normalizado criado: {output_file} com {len(df.columns)} colunas")
             except Exception as e:
                 logger.error(f"Erro ao salvar CSV: {e}")
+                raise
 
         logger.info(f"Processamento finalizado. DataFrame criado com {len(df)} linhas e {len(df.columns)} colunas")
         return df
@@ -513,7 +516,8 @@ def run_contacts(customer):
 
             # Informações adicionais úteis
             size_kb = len(csv_string) / 1024
-            logger.info(f"Arquivo '{full_blob_path}' ({size_kb:.2f} KB) enviado com sucesso para o bucket '{bucket_name}'")
+            logger.info(
+                f"Arquivo '{full_blob_path}' ({size_kb:.2f} KB) enviado com sucesso para o bucket '{bucket_name}'")
             return True
 
         except Exception as e:
@@ -614,7 +618,6 @@ def run_transactions(customer):
     """
     import concurrent.futures
     import logging
-    import os
     import re
     import time
     from datetime import datetime, timedelta
@@ -623,7 +626,6 @@ def run_transactions(customer):
 
     import pandas as pd
     import requests
-    from google.cloud import storage
 
     # CONFIG DE LOGGING
     logging.basicConfig(
@@ -636,7 +638,7 @@ def run_transactions(customer):
     GENERIC_NAME = "transactions"
     GCP_BUCKET_NAME = customer['bucket_name']
     GCP_FOLDER_PATH = GENERIC_NAME
-    
+
     # ARQUIVO CSV
     CSV_FILENAME = f"{GENERIC_NAME}.csv"
 
@@ -729,7 +731,8 @@ def run_transactions(customer):
                 except requests.exceptions.RequestException as e:
                     retries += 1
                     wait_time = 3 * retries
-                    logger.error(f"Erro na requisição: {e}. Tentativa {retries}/{max_retries}. Aguardando {wait_time}s...")
+                    logger.error(
+                        f"Erro na requisição: {e}. Tentativa {retries}/{max_retries}. Aguardando {wait_time}s...")
                     time.sleep(wait_time)
                     continue
             else:
@@ -820,7 +823,8 @@ def run_transactions(customer):
                 while len(futures) < MAX_WORKERS and not cursor_queue.empty():
                     try:
                         cursor = cursor_queue.get(block=False)
-                        future = executor.submit(process_page, params, cursor, cursor_queue, all_data, processed_cursors)
+                        future = executor.submit(process_page, params, cursor, cursor_queue, all_data,
+                                                 processed_cursors)
                         futures.add(future)
                     except Empty:
                         break  # Fila vazia
@@ -844,7 +848,8 @@ def run_transactions(customer):
 
                 # Verificação periódica de progresso
                 if len(all_data) % 1000 == 0 and len(all_data) > 0:
-                    logger.info(f"Progresso: {len(all_data)} registros coletados, {cursor_queue.qsize()} páginas na fila")
+                    logger.info(
+                        f"Progresso: {len(all_data)} registros coletados, {cursor_queue.qsize()} páginas na fila")
 
         logger.info(
             f"Coleta de dados finalizada para o período {start_date} a {end_date}. Total: {len(all_data)} registros.")
@@ -1113,7 +1118,8 @@ def run_transactions(customer):
 
             # Informações adicionais úteis
             size_kb = len(csv_string) / 1024
-            logger.info(f"Arquivo '{full_blob_path}' ({size_kb:.2f} KB) enviado com sucesso para o bucket '{bucket_name}'")
+            logger.info(
+                f"Arquivo '{full_blob_path}' ({size_kb:.2f} KB) enviado com sucesso para o bucket '{bucket_name}'")
             return True
 
         except Exception as e:
@@ -1214,7 +1220,6 @@ def run_subscriptions(customer):
     """
     import concurrent.futures
     import logging
-    import os
     import re
     import time
     from datetime import datetime, timedelta
@@ -1223,7 +1228,6 @@ def run_subscriptions(customer):
 
     import pandas as pd
     import requests
-    from google.cloud import storage
 
     # CONFIG DE LOGGING
     logging.basicConfig(
@@ -1236,7 +1240,7 @@ def run_subscriptions(customer):
     GENERIC_NAME = "subscriptions"
     GCP_BUCKET_NAME = customer['bucket_name']
     GCP_FOLDER_PATH = GENERIC_NAME
-    
+
     # ARQUIVO CSV
     CSV_FILENAME = f"{GENERIC_NAME}.csv"
 
@@ -1329,7 +1333,8 @@ def run_subscriptions(customer):
                 except requests.exceptions.RequestException as e:
                     retries += 1
                     wait_time = 3 * retries
-                    logger.error(f"Erro na requisição: {e}. Tentativa {retries}/{max_retries}. Aguardando {wait_time}s...")
+                    logger.error(
+                        f"Erro na requisição: {e}. Tentativa {retries}/{max_retries}. Aguardando {wait_time}s...")
                     time.sleep(wait_time)
                     continue
             else:
@@ -1420,7 +1425,8 @@ def run_subscriptions(customer):
                 while len(futures) < MAX_WORKERS and not cursor_queue.empty():
                     try:
                         cursor = cursor_queue.get(block=False)
-                        future = executor.submit(process_page, params, cursor, cursor_queue, all_data, processed_cursors)
+                        future = executor.submit(process_page, params, cursor, cursor_queue, all_data,
+                                                 processed_cursors)
                         futures.add(future)
                     except Empty:
                         break  # Fila vazia
@@ -1444,7 +1450,8 @@ def run_subscriptions(customer):
 
                 # Verificação periódica de progresso
                 if len(all_data) % 1000 == 0 and len(all_data) > 0:
-                    logger.info(f"Progresso: {len(all_data)} registros coletados, {cursor_queue.qsize()} páginas na fila")
+                    logger.info(
+                        f"Progresso: {len(all_data)} registros coletados, {cursor_queue.qsize()} páginas na fila")
 
         logger.info(
             f"Coleta de dados finalizada para o período {start_date} a {end_date}. Total: {len(all_data)} registros.")
@@ -1713,7 +1720,8 @@ def run_subscriptions(customer):
 
             # Informações adicionais úteis
             size_kb = len(csv_string) / 1024
-            logger.info(f"Arquivo '{full_blob_path}' ({size_kb:.2f} KB) enviado com sucesso para o bucket '{bucket_name}'")
+            logger.info(
+                f"Arquivo '{full_blob_path}' ({size_kb:.2f} KB) enviado com sucesso para o bucket '{bucket_name}'")
             return True
 
         except Exception as e:
