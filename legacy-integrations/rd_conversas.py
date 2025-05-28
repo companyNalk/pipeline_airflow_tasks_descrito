@@ -982,38 +982,38 @@ def get_extraction_tasks():
         list: List of task configurations
     """
     return [
-        # {
-        #     'task_id': 'run_customers',
-        #     'python_callable': run_customers
-        # },
-        # {
-        #     'task_id': 'run_flows',
-        #     'python_callable': run_flows
-        # },
-        # {
-        #     'task_id': 'run_integrations',
-        #     'python_callable': run_integrations
-        # },
-        # {
-        #     'task_id': 'run_integrations_official',
-        #     'python_callable': run_integrations_official
-        # },
-        # {
-        #     'task_id': 'run_reports',
-        #     'python_callable': run_reports
-        # },
-        # {
-        #     'task_id': 'run_templates',
-        #     'python_callable': run_templates
-        # },
-        # {
-        #     'task_id': 'run_wallets',
-        #     'python_callable': run_wallets
-        # },
-        # {
-        #     'task_id': 'run_workflows',
-        #     'python_callable': run_workflows
-        # },
+        {
+            'task_id': 'run_customers',
+            'python_callable': run_customers
+        },
+        {
+            'task_id': 'run_flows',
+            'python_callable': run_flows
+        },
+        {
+            'task_id': 'run_integrations',
+            'python_callable': run_integrations
+        },
+        {
+            'task_id': 'run_integrations_official',
+            'python_callable': run_integrations_official
+        },
+        {
+            'task_id': 'run_reports',
+            'python_callable': run_reports
+        },
+        {
+            'task_id': 'run_templates',
+            'python_callable': run_templates
+        },
+        {
+            'task_id': 'run_wallets',
+            'python_callable': run_wallets
+        },
+        {
+            'task_id': 'run_workflows',
+            'python_callable': run_workflows
+        },
         {
             'task_id': 'run_contact_by_phone',
             'python_callable': run_contact_by_phone
