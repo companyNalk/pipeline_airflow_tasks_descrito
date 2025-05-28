@@ -47,32 +47,32 @@ def run(customer):
     def normalize_column_name(column_name):
         if not isinstance(column_name, str):
             column_name = str(column_name)
-        
+
         column_name = column_name.lower()
         column_name = unicodedata.normalize('NFKD', column_name).encode('ASCII', 'ignore').decode('ASCII')
         column_name = re.sub(r'[^a-z0-9_]', '_', column_name)
         column_name = re.sub(r'_+', '_', column_name).strip('_')
-        
+
         return column_name
 
     def normalize_dataframe(df):
         if df.empty:
             return df
-        
+
         df.columns = [normalize_column_name(col) for col in df.columns]
         df = df.loc[:, ~df.columns.duplicated()]
-        
+
         return df
 
     def upload_df_to_gcs(df, folder, filename):
         try:
             df = normalize_dataframe(df)
-            
+
             storage_client = storage.Client()
             bucket = storage_client.bucket(BUCKET_NAME)
             blob_path = f"{folder}/{filename}"
             blob = bucket.blob(blob_path)
-            
+
             csv_buffer = StringIO()
             df.to_csv(csv_buffer, index=False, sep=";", encoding="utf-8", quotechar='"', quoting=csv.QUOTE_ALL)
             csv_buffer.seek(0)
@@ -82,39 +82,40 @@ def run(customer):
             print(f"Colunas normalizadas: {', '.join(df.columns.tolist())}")
         except Exception as e:
             print(f"Erro ao enviar o arquivo para o GCS: {e}")
+            raise
 
     def coletar_dados_com_paginacao(url, headers, page_size=500, max_retries=5, backoff_time=5):
         todos_os_dados = []
         skip = 0
-        
+
         while True:
             params = {
                 "$skip": skip,
                 "$top": page_size
             }
-            
+
             for attempt in range(max_retries):
                 try:
                     # Requisição para a API
                     response = requests.get(url, headers=headers, params=params)
-                    
+
                     if response.status_code == 500:
-                        print(f"Erro 500 na requisição. Tentativa {attempt+1}/{max_retries}")
+                        print(f"Erro 500 na requisição. Tentativa {attempt + 1}/{max_retries}")
                         time.sleep(backoff_time * (2 ** attempt))  # Backoff exponencial
                         continue
                     elif response.status_code != 200:
                         print(f"Erro na requisição: {response.status_code}, Mensagem: {response.text}")
                         return todos_os_dados
-                    
+
                     dados = response.json().get("value", [])
                     if not dados:
                         return todos_os_dados
-                    
+
                     todos_os_dados.extend(dados)
                     print(f"Coletando dados... até agora {len(todos_os_dados)} registros coletados.")
                     skip += page_size
                     break
-                    
+
                 except requests.exceptions.RequestException as e:
                     print(f"Exceção durante a requisição: {e}")
                     time.sleep(backoff_time * (2 ** attempt))
@@ -129,13 +130,13 @@ def run(customer):
         for item in dados:
             if isinstance(item.get('telephones'), list):
                 item['telephones'] = ', '.join(str(t) for t in item['telephones'])
-            
+
             for campo in ['source', 'industry', 'subSource']:
                 if isinstance(item.get(campo), dict):
                     item[f'{campo}_id'] = item[campo].get('id')
                     item[f'{campo}_value'] = item[campo].get('value')
                     del item[campo]
-            
+
             for campo in ['sdr', 'salesRep']:
                 if isinstance(item.get(campo), dict):
                     item[f'{campo}_id'] = item[campo].get('id')
@@ -146,7 +147,7 @@ def run(customer):
                     item[f'{campo}_phone2'] = item[campo].get('phone2')
                     item[f'{campo}_active'] = item[campo].get('active')
                     del item[campo]
-            
+
             dados_normalizados.append(item)
         return dados_normalizados
 
@@ -158,14 +159,14 @@ def run(customer):
                 item['salesRep_lastName'] = item['salesRep'].get('lastName')
                 item['salesRep_email'] = item['salesRep'].get('email')
                 del item['salesRep']
-            
+
             if 'preSales' in item and isinstance(item['preSales'], dict):
                 item['preSales_id'] = item['preSales'].get('id')
                 item['preSales_name'] = item['preSales'].get('name')
                 item['preSales_lastName'] = item['preSales'].get('lastName')
                 item['preSales_email'] = item['preSales'].get('email')
                 del item['preSales']
-            
+
             if 'products' in item and isinstance(item['products'], list):
                 for i, product in enumerate(item['products']):
                     item[f'product_{i}_id'] = product.get('id')
@@ -177,37 +178,37 @@ def run(customer):
                     item[f'product_{i}_finalValue'] = product.get('finalValue')
                     item[f'product_{i}_name'] = product.get('name')
                 del item['products']
-            
+
             dados_normalizados.append(item)
         return dados_normalizados
 
     def processar_campos_personalizados_leads(dados):
         if not dados:
             return pd.DataFrame()
-        
+
         df = pd.DataFrame(dados)
         df = df[['id', 'key', 'value', 'leadId']]
         df = normalize_dataframe(df)
-        
+
         df_pivot = df.pivot_table(
-            index='leadid', 
-            columns='key', 
-            values='value', 
+            index='leadid',
+            columns='key',
+            values='value',
             aggfunc=lambda x: ' '.join(str(v) for v in x)
         )
-        
+
         df_pivot.reset_index(inplace=True)
         df_pivot = normalize_dataframe(df_pivot)
-        
+
         return df_pivot
 
     def coletar_leads():
         print("Iniciando coleta de Leads")
         start_time = datetime.now()
-        
+
         endpoint = "/Leads"
         url = f"{URL_BASE}{endpoint}"
-        
+
         try:
             dados = coletar_dados_com_paginacao(url, HEADERS)
             if dados:
@@ -219,17 +220,18 @@ def run(customer):
                 print("Nenhum Lead foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Leads: {str(e)}")
-        
+            raise
+
         end_time = datetime.now()
         print(f"Tempo de execução para Leads: {end_time - start_time}")
 
     def coletar_leads_perdidos():
         print("Iniciando coleta de Leads Perdidos")
         start_time = datetime.now()
-        
+
         endpoint = "/Losts"
         url = f"{URL_BASE}{endpoint}"
-        
+
         try:
             dados = coletar_dados_com_paginacao(url, HEADERS)
             if dados:
@@ -240,17 +242,18 @@ def run(customer):
                 print("Nenhum Lead Perdido foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Leads Perdidos: {str(e)}")
-        
+            raise
+
         end_time = datetime.now()
         print(f"Tempo de execução para Leads Perdidos: {end_time - start_time}")
 
     def coletar_leads_vendidos():
         print("Iniciando coleta de Leads Vendidos")
         start_time = datetime.now()
-        
+
         endpoint = "/LeadsSold"
         url = f"{URL_BASE}{endpoint}"
-        
+
         try:
             dados = coletar_dados_com_paginacao(url, HEADERS)
             if dados:
@@ -262,17 +265,18 @@ def run(customer):
                 print("Nenhum Lead Vendido foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Leads Vendidos: {str(e)}")
-        
+            raise
+
         end_time = datetime.now()
         print(f"Tempo de execução para Leads Vendidos: {end_time - start_time}")
 
     def coletar_stages():
         print("Iniciando coleta de Stages")
         start_time = datetime.now()
-        
+
         endpoint = "/stages"
         url = f"{URL_BASE}{endpoint}"
-        
+
         try:
             response = requests.get(url, headers=HEADERS)
             if response.status_code == 200:
@@ -287,32 +291,35 @@ def run(customer):
                 print(f"Erro na requisição de Stages: {response.status_code}, Mensagem: {response.text}")
         except Exception as e:
             print(f"Erro ao processar Stages: {str(e)}")
-        
+            raise
+
         end_time = datetime.now()
         print(f"Tempo de execução para Stages: {end_time - start_time}")
 
     def coletar_campos_personalizados_leads():
         print("Iniciando coleta de Campos Personalizados de Leads")
         start_time = datetime.now()
-        
+
         endpoint = "/CustomFieldsLeads"
         url = f"{URL_BASE}{endpoint}"
-        
+
         try:
             dados = coletar_dados_com_paginacao(url, HEADERS, page_size=250)
             if dados:
                 df_processado = processar_campos_personalizados_leads(dados)
-                
+
                 if not df_processado.empty:
                     upload_df_to_gcs(df_processado, FOLDERS["custom_fields_leads"], "campos_personalizados_leads.csv")
-                    print(f"Processamento de Campos Personalizados concluído. Dados transformados de {len(dados)} registros.")
+                    print(
+                        f"Processamento de Campos Personalizados concluído. Dados transformados de {len(dados)} registros.")
                 else:
                     print("Falha ao processar os Campos Personalizados.")
             else:
                 print("Nenhum Campo Personalizado foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Campos Personalizados: {str(e)}")
-        
+            raise
+
         end_time = datetime.now()
         print(f"Tempo de execução para Campos Personalizados: {end_time - start_time}")
 
@@ -320,10 +327,10 @@ def run(customer):
     def coletar_pipelines():
         print("Iniciando coleta de Pipelines")
         start_time = datetime.now()
-        
+
         endpoint = "/Funnels"
         url = f"{URL_BASE}{endpoint}"
-        
+
         try:
             dados = coletar_dados_com_paginacao(url, HEADERS)
             if dados:
@@ -334,7 +341,8 @@ def run(customer):
                 print("Nenhum Pipeline foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Pipelines: {str(e)}")
-        
+            raise
+
         end_time = datetime.now()
         print(f"Tempo de execução para Pipelines: {end_time - start_time}")
 
@@ -342,7 +350,7 @@ def run(customer):
         print("Iniciando processo de coleta de dados da API Exact Spotter")
         start_time = datetime.now()
         print(f"Iniciando coleta de dados às {start_time}")
-        
+
         # Coletar dados de cada endpoint
         coletar_leads()
         coletar_leads_perdidos()
@@ -350,14 +358,15 @@ def run(customer):
         coletar_stages()
         coletar_campos_personalizados_leads()
         coletar_pipelines()  # Coleta de pipelines adicionada
-        
+
         end_time = datetime.now()
         execution_time = end_time - start_time
-        
+
         print(f"Coleta finalizada às {end_time}")
         print(f"Tempo total de execução: {execution_time}")
 
     main()
+
 
 def get_extraction_tasks():
     """
