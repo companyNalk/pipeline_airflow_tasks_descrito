@@ -85,46 +85,50 @@ def run_services(customer):
 
     # Função principal com paralelismo e controle eficiente das combinações
     def main():
-        start_time = time.time()
+        try:
+            start_time = time.time()
 
-        combinacoes_queue = Queue()
+            combinacoes_queue = Queue()
 
-        finalidades = [1, 2]
-        situacoes = [0, 1, 2, 3]
-        fases = [1, 2, 3, 4, 5, 6]
+            finalidades = [1, 2]
+            situacoes = [0, 1, 2, 3]
+            fases = [1, 2, 3, 4, 5, 6]
 
-        for finalidade in finalidades:
-            for situacao in situacoes:
-                for fase in fases:
-                    combinacoes_queue.put((finalidade, situacao, fase))
+            for finalidade in finalidades:
+                for situacao in situacoes:
+                    for fase in fases:
+                        combinacoes_queue.put((finalidade, situacao, fase))
 
-        todos_atendimentos = []
+            todos_atendimentos = []
 
-        def worker():
-            while not combinacoes_queue.empty():
-                finalidade, situacao, fase = combinacoes_queue.get()
-                dados = fetch_atendimentos(finalidade, situacao, fase)
-                if dados:
-                    todos_atendimentos.extend(dados)
-                combinacoes_queue.task_done()
+            def worker():
+                while not combinacoes_queue.empty():
+                    finalidade, situacao, fase = combinacoes_queue.get()
+                    dados = fetch_atendimentos(finalidade, situacao, fase)
+                    if dados:
+                        todos_atendimentos.extend(dados)
+                    combinacoes_queue.task_done()
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = [executor.submit(worker) for _ in range(20)]
-            for future in as_completed(futures):
-                future.result()
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(worker) for _ in range(20)]
+                for future in as_completed(futures):
+                    future.result()
 
-        if todos_atendimentos:
-            df = pd.json_normalize(todos_atendimentos, sep='_')
-            df.columns = [normalize_column_name(col) for col in df.columns]
+            if todos_atendimentos:
+                df = pd.json_normalize(todos_atendimentos, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
 
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-            upload_to_gcs(csv_buffer.getvalue(), "atendimentos/atendimentos_imoview.csv")
+                upload_to_gcs(csv_buffer.getvalue(), "atendimentos/atendimentos_imoview.csv")
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
 
     # START
     main()
@@ -181,22 +185,26 @@ def run_extra_fields_available(customer):
 
     # Função principal
     def main():
-        start_time = time.time()
+        try:
+            start_time = time.time()
 
-        campos_extras = fetch_campos_extras()
+            campos_extras = fetch_campos_extras()
 
-        if campos_extras:
-            df = pd.json_normalize(campos_extras, sep='_')
-            df.columns = [normalize_column_name(col) for col in df.columns]
+            if campos_extras:
+                df = pd.json_normalize(campos_extras, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
 
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-            upload_to_gcs(csv_buffer.getvalue(), f"campos_extras_imoveis/campos_extras_imoview.csv")
+                upload_to_gcs(csv_buffer.getvalue(), f"campos_extras_imoveis/campos_extras_imoview.csv")
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
 
     # START
     main()
@@ -285,43 +293,48 @@ def run_business_buyer(customer):
 
     # Função principal com paralelismo e controle de fila
     def main():
-        start_time = time.time()
-        total_contatos = get_total_contatos()
-        print(f"Total de contatos encontrados: {total_contatos}")
+        try:
+            start_time = time.time()
+            total_contatos = get_total_contatos()
+            print(f"Total de contatos encontrados: {total_contatos}")
 
-        todos_negocios = []
-        codigos_queue = Queue()
+            todos_negocios = []
+            codigos_queue = Queue()
 
-        for codigo in range(1, total_contatos + 1):
-            codigos_queue.put(codigo)
+            for codigo in range(1, total_contatos + 1):
+                codigos_queue.put(codigo)
 
-        def worker():
-            while not codigos_queue.empty():
-                codigo_cliente = codigos_queue.get()
-                negocios = fetch_negocios_por_comprador(codigo_cliente)
-                if negocios:
-                    todos_negocios.extend(negocios)
-                codigos_queue.task_done()
+            def worker():
+                while not codigos_queue.empty():
+                    codigo_cliente = codigos_queue.get()
+                    negocios = fetch_negocios_por_comprador(codigo_cliente)
+                    if negocios:
+                        todos_negocios.extend(negocios)
+                    codigos_queue.task_done()
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = [executor.submit(worker) for _ in range(20)]
-            for future in as_completed(futures):
-                future.result()
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(worker) for _ in range(20)]
+                for future in as_completed(futures):
+                    future.result()
 
-        if todos_negocios:
-            df = pd.json_normalize(todos_negocios, sep='_')
-            df.columns = [normalize_column_name(col) for col in df.columns]
+            if todos_negocios:
+                df = pd.json_normalize(todos_negocios, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
 
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-            upload_to_gcs(csv_buffer.getvalue(), f"comprador_negocios/negocios_comprador_imoview.csv")
+                upload_to_gcs(csv_buffer.getvalue(), f"comprador_negocios/negocios_comprador_imoview.csv")
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
 
-    # START
+            # START
+
     main()
 
 
@@ -408,41 +421,45 @@ def run_tenant_contracts(customer):
 
     # Função principal com paralelismo e controle de fila
     def main():
-        start_time = time.time()
-        total_contatos = get_total_contatos()
-        print(f"Total de contatos encontrados: {total_contatos}")
+        try:
+            start_time = time.time()
+            total_contatos = get_total_contatos()
+            print(f"Total de contatos encontrados: {total_contatos}")
 
-        todos_contratos = []
-        codigos_queue = Queue()
+            todos_contratos = []
+            codigos_queue = Queue()
 
-        for codigo in range(1, total_contatos + 1):
-            codigos_queue.put(codigo)
+            for codigo in range(1, total_contatos + 1):
+                codigos_queue.put(codigo)
 
-        def worker():
-            while not codigos_queue.empty():
-                codigo_cliente = codigos_queue.get()
-                contratos = fetch_contratos_por_cliente(codigo_cliente)
-                if contratos:
-                    todos_contratos.extend(contratos)
-                codigos_queue.task_done()
+            def worker():
+                while not codigos_queue.empty():
+                    codigo_cliente = codigos_queue.get()
+                    contratos = fetch_contratos_por_cliente(codigo_cliente)
+                    if contratos:
+                        todos_contratos.extend(contratos)
+                    codigos_queue.task_done()
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = [executor.submit(worker) for _ in range(100)]
-            for future in as_completed(futures):
-                future.result()
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(worker) for _ in range(100)]
+                for future in as_completed(futures):
+                    future.result()
 
-        if todos_contratos:
-            df = pd.json_normalize(todos_contratos, sep='_')
-            df.columns = [normalize_column_name(col) for col in df.columns]
+            if todos_contratos:
+                df = pd.json_normalize(todos_contratos, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
 
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-            upload_to_gcs(csv_buffer.getvalue(), f"locatario_contratos/contratos_imoview.csv")
+                upload_to_gcs(csv_buffer.getvalue(), f"locatario_contratos/contratos_imoview.csv")
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
 
     # START
     main()
@@ -531,41 +548,45 @@ def run_tenant_properties(customer):
 
     # Função principal com paralelismo e controle de fila
     def main():
-        start_time = time.time()
-        total_contatos = get_total_contatos()
-        print(f"Total de contatos encontrados: {total_contatos}")
+        try:
+            start_time = time.time()
+            total_contatos = get_total_contatos()
+            print(f"Total de contatos encontrados: {total_contatos}")
 
-        todos_imoveis = []
-        codigos_queue = Queue()
+            todos_imoveis = []
+            codigos_queue = Queue()
 
-        for codigo in range(1, total_contatos + 1):
-            codigos_queue.put(codigo)
+            for codigo in range(1, total_contatos + 1):
+                codigos_queue.put(codigo)
 
-        def worker():
-            while not codigos_queue.empty():
-                codigo_cliente = codigos_queue.get()
-                imoveis = fetch_imoveis_por_cliente(codigo_cliente)
-                if imoveis:
-                    todos_imoveis.extend(imoveis)
-                codigos_queue.task_done()
+            def worker():
+                while not codigos_queue.empty():
+                    codigo_cliente = codigos_queue.get()
+                    imoveis = fetch_imoveis_por_cliente(codigo_cliente)
+                    if imoveis:
+                        todos_imoveis.extend(imoveis)
+                    codigos_queue.task_done()
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = [executor.submit(worker) for _ in range(100)]
-            for future in as_completed(futures):
-                future.result()
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(worker) for _ in range(100)]
+                for future in as_completed(futures):
+                    future.result()
 
-        if todos_imoveis:
-            df = pd.json_normalize(todos_imoveis, sep='_')
-            df.columns = [normalize_column_name(col) for col in df.columns]
+            if todos_imoveis:
+                df = pd.json_normalize(todos_imoveis, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
 
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-            upload_to_gcs(csv_buffer.getvalue(), f"locatario_imoveis/imoveis_imoview.csv")
+                upload_to_gcs(csv_buffer.getvalue(), f"locatario_imoveis/imoveis_imoview.csv")
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
 
     # START
     main()
@@ -633,41 +654,46 @@ def run_list_users(customer):
 
     # Função principal com paralelismo controlado
     def main():
-        start_time = time.time()
+        try:
+            start_time = time.time()
 
-        dados = []
-        pagina = 1
-        continuar = True
+            dados = []
+            pagina = 1
+            continuar = True
 
-        queue = Queue()
+            queue = Queue()
 
-        while continuar:
-            queue.put(pagina)
-            pagina += 1
+            while continuar:
+                queue.put(pagina)
+                pagina += 1
 
-            if pagina % 10 == 0:
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    futures = [executor.submit(fetch_page_data, queue.get()) for _ in range(queue.qsize())]
-                    for future in futures:
-                        resultado = future.result()
-                        if resultado:
-                            dados.extend(resultado)
-                        if len(resultado) < 100:
-                            continuar = False
+                if pagina % 10 == 0:
+                    with ThreadPoolExecutor(max_workers=5) as executor:
+                        futures = [executor.submit(fetch_page_data, queue.get()) for _ in range(queue.qsize())]
+                        for future in futures:
+                            resultado = future.result()
+                            if resultado:
+                                dados.extend(resultado)
+                            if len(resultado) < 100:
+                                continuar = False
 
-        df = pd.json_normalize(dados)
-        df.columns = [normalize_column_name(col) for col in df.columns]
+            df = pd.json_normalize(dados)
+            df.columns = [normalize_column_name(col) for col in df.columns]
 
-        csv_buffer = io.StringIO()
-        df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+            csv_buffer = io.StringIO()
+            df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-        upload_to_gcs(csv_buffer.getvalue(), f"listagem_usuarios/listar_contatos.csv")
+            upload_to_gcs(csv_buffer.getvalue(), f"listagem_usuarios/listar_contatos.csv")
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
 
-    # START
+            # START
+
     main()
 
 
@@ -754,41 +780,45 @@ def run_contract_finder(customer):
 
     # Função principal com paralelismo e controle de fila
     def main():
-        start_time = time.time()
-        total_contatos = get_total_contatos()
-        print(f"Total de contatos encontrados: {total_contatos}")
+        try:
+            start_time = time.time()
+            total_contatos = get_total_contatos()
+            print(f"Total de contatos encontrados: {total_contatos}")
 
-        todos_contratos = []
-        codigos_queue = Queue()
+            todos_contratos = []
+            codigos_queue = Queue()
 
-        for codigo in range(1, total_contatos + 1):
-            codigos_queue.put(codigo)
+            for codigo in range(1, total_contatos + 1):
+                codigos_queue.put(codigo)
 
-        def worker():
-            while not codigos_queue.empty():
-                codigo_cliente = codigos_queue.get()
-                contratos = fetch_contratos_por_locador(codigo_cliente)
-                if contratos:
-                    todos_contratos.extend(contratos)
-                codigos_queue.task_done()
+            def worker():
+                while not codigos_queue.empty():
+                    codigo_cliente = codigos_queue.get()
+                    contratos = fetch_contratos_por_locador(codigo_cliente)
+                    if contratos:
+                        todos_contratos.extend(contratos)
+                    codigos_queue.task_done()
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = [executor.submit(worker) for _ in range(20)]
-            for future in as_completed(futures):
-                future.result()
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(worker) for _ in range(20)]
+                for future in as_completed(futures):
+                    future.result()
 
-        if todos_contratos:
-            df = pd.json_normalize(todos_contratos, sep='_')
-            df.columns = [normalize_column_name(col) for col in df.columns]
+            if todos_contratos:
+                df = pd.json_normalize(todos_contratos, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
 
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-            upload_to_gcs(csv_buffer.getvalue(), f"locador_contratos/contratos_locador_imoview.csv")
+                upload_to_gcs(csv_buffer.getvalue(), f"locador_contratos/contratos_locador_imoview.csv")
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
 
     # START
     main()
@@ -876,41 +906,45 @@ def run_rental_property(customer):
 
     # Função principal com paralelismo e controle de fila
     def main():
-        start_time = time.time()
-        total_contatos = get_total_contatos()
-        print(f"Total de contatos encontrados: {total_contatos}")
+        try:
+            start_time = time.time()
+            total_contatos = get_total_contatos()
+            print(f"Total de contatos encontrados: {total_contatos}")
 
-        todos_imoveis = []
-        codigos_queue = Queue()
+            todos_imoveis = []
+            codigos_queue = Queue()
 
-        for codigo in range(1, total_contatos + 1):
-            codigos_queue.put(codigo)
+            for codigo in range(1, total_contatos + 1):
+                codigos_queue.put(codigo)
 
-        def worker():
-            while not codigos_queue.empty():
-                codigo_cliente = codigos_queue.get()
-                imoveis = fetch_imoveis_por_locador(codigo_cliente)
-                if imoveis:
-                    todos_imoveis.extend(imoveis)
-                codigos_queue.task_done()
+            def worker():
+                while not codigos_queue.empty():
+                    codigo_cliente = codigos_queue.get()
+                    imoveis = fetch_imoveis_por_locador(codigo_cliente)
+                    if imoveis:
+                        todos_imoveis.extend(imoveis)
+                    codigos_queue.task_done()
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = [executor.submit(worker) for _ in range(20)]
-            for future in as_completed(futures):
-                future.result()
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(worker) for _ in range(20)]
+                for future in as_completed(futures):
+                    future.result()
 
-        if todos_imoveis:
-            df = pd.json_normalize(todos_imoveis, sep='_')
-            df.columns = [normalize_column_name(col) for col in df.columns]
+            if todos_imoveis:
+                df = pd.json_normalize(todos_imoveis, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
 
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-            upload_to_gcs(csv_buffer.getvalue(), f"locador_imoveis/imoveis_locador_imoview.csv")
+                upload_to_gcs(csv_buffer.getvalue(), f"locador_imoveis/imoveis_locador_imoview.csv")
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
 
     # START
     main()
@@ -998,41 +1032,45 @@ def run_real_state_agent(customer):
 
     # Função principal com paralelismo e controle de fila
     def main():
-        start_time = time.time()
-        total_contatos = get_total_contatos()
-        print(f"Total de contatos encontrados: {total_contatos}")
+        try:
+            start_time = time.time()
+            total_contatos = get_total_contatos()
+            print(f"Total de contatos encontrados: {total_contatos}")
 
-        todos_imoveis = []
-        codigos_queue = Queue()
+            todos_imoveis = []
+            codigos_queue = Queue()
 
-        for codigo in range(1, total_contatos + 1):
-            codigos_queue.put(codigo)
+            for codigo in range(1, total_contatos + 1):
+                codigos_queue.put(codigo)
 
-        def worker():
-            while not codigos_queue.empty():
-                codigo_cliente = codigos_queue.get()
-                imoveis = fetch_imoveis_por_vendedor(codigo_cliente)
-                if imoveis:
-                    todos_imoveis.extend(imoveis)
-                codigos_queue.task_done()
+            def worker():
+                while not codigos_queue.empty():
+                    codigo_cliente = codigos_queue.get()
+                    imoveis = fetch_imoveis_por_vendedor(codigo_cliente)
+                    if imoveis:
+                        todos_imoveis.extend(imoveis)
+                    codigos_queue.task_done()
 
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = [executor.submit(worker) for _ in range(20)]
-            for future in as_completed(futures):
-                future.result()
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(worker) for _ in range(20)]
+                for future in as_completed(futures):
+                    future.result()
 
-        if todos_imoveis:
-            df = pd.json_normalize(todos_imoveis, sep='_')
-            df.columns = [normalize_column_name(col) for col in df.columns]
+            if todos_imoveis:
+                df = pd.json_normalize(todos_imoveis, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
 
-            csv_buffer = io.StringIO()
-            df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-            upload_to_gcs(csv_buffer.getvalue(), f"vendedor_imoveis/imoveis_vendedor_imoview.csv")
+                upload_to_gcs(csv_buffer.getvalue(), f"vendedor_imoveis/imoveis_vendedor_imoview.csv")
 
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
 
     # START
     main()
@@ -1083,4 +1121,3 @@ def get_extraction_tasks():
             'python_callable': run_real_state_agent
         },
     ]
-
