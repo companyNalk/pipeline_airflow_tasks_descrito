@@ -3,6 +3,7 @@ Moskit module for data extraction functions.
 This module contains functions specific to the Moskit integration.
 """
 
+
 def run(customer):
     import requests
     import time
@@ -116,7 +117,7 @@ def run(customer):
                     stage_names[stage_id] = stage.get("name", "")
                     pipeline_id = stage.get("pipeline", {}).get("id", "")
                     stage_to_pipeline[stage_id] = pipeline_id
-                    
+
                     # Preparar dados para CSV de stages
                     stages_data.append({
                         "id": stage_id,
@@ -135,7 +136,7 @@ def run(customer):
                 for pipeline in data:
                     pipeline_id = pipeline["id"]
                     pipeline_names[pipeline_id] = pipeline["name"]
-                    
+
                     # Preparar dados para CSV de pipelines
                     pipelines_data.append({
                         "id": pipeline_id,
@@ -145,10 +146,10 @@ def run(customer):
             pass
 
         print(f"[SUCCESS] {len(stage_names)} estágios e {len(pipeline_names)} pipelines coletados!")
-        
+
         # Salvar estágios em CSV
         upload_to_gcs(stages_data, "stages/stages.csv")
-        
+
         # Salvar pipelines em CSV
         upload_to_gcs(pipelines_data, "pipelines/pipelines.csv")
 
@@ -163,7 +164,7 @@ def run(customer):
             params = {"quantity": QUANTITY, "sort": "dateCreated", "order": "ASC"}
             if next_page_token:
                 params["nextPageToken"] = next_page_token
-            
+
             try:
                 response = requests.get(BASE_URL, headers=HEADERS, params=params, timeout=TIMEOUT)
                 if response.status_code == 200:
@@ -195,7 +196,7 @@ def run(customer):
             params = {"quantity": QUANTITY}
             if next_page_token:
                 params["nextPageToken"] = next_page_token
-            
+
             try:
                 response = requests.get(USERS_URL, headers=HEADERS, params=params, timeout=TIMEOUT)
                 if response.status_code == 200:
@@ -214,7 +215,7 @@ def run(customer):
                 time.sleep(2)
 
         print(f"[SUCCESS] Coleta de usuários finalizada. Total coletado: {len(users)}")
-        
+
         users_data = []
         for user in users:
             users_data.append({
@@ -222,68 +223,70 @@ def run(customer):
                 "name": user.get("name", ""),
                 "email": user.get("email", "")
             })
-        
+
         # Salvar usuários em CSV
         upload_to_gcs(users_data, "users/users.csv")
-        
+
         return users
 
     # Função para buscar motivos de perda
     def fetch_lost_reasons():
         print("[INFO] Iniciando coleta de motivos de perda...")
-        
+
         lost_reasons = []
         try:
             response = requests.get(LOST_REASONS_URL, headers=HEADERS, timeout=TIMEOUT)
             if response.status_code == 200:
                 data = response.json()
                 lost_reasons = data
-                
+
                 # Atualizar cache
                 for reason in lost_reasons:
                     lost_reason_cache[reason["id"]] = reason.get("name", "")
-                    
+
                 print(f"[INFO] Total de motivos de perda coletados: {len(lost_reasons)}")
             else:
                 print(f"[ERROR] Falha ao buscar motivos de perda. Status code: {response.status_code}")
         except requests.exceptions.RequestException as e:
             print(f"[ERROR] Exceção ao buscar motivos de perda: {str(e)}")
-        
+            raise
+
         lost_reasons_data = []
         for reason in lost_reasons:
             lost_reasons_data.append({
                 "id": reason.get("id", ""),
                 "name": reason.get("name", "")
             })
-        
+
         # Salvar motivos de perda em CSV
         upload_to_gcs(lost_reasons_data, "lost_reasons/lost_reasons.csv")
-        
+
         return lost_reasons
 
     # Função para buscar campos personalizados
     def fetch_custom_fields():
         print("[INFO] Iniciando coleta de campos personalizados...")
-        
+
         custom_fields = []
         try:
             response = requests.get(CUSTOM_FIELDS_URL, headers=HEADERS, timeout=TIMEOUT)
             if response.status_code == 200:
                 data = response.json()
                 custom_fields = data
-                
+
                 # Atualizar cache
                 for field in custom_fields:
                     field_id = field["id"]
                     field_name = normalize_column_name(field.get("name", field_id))  # Usa normalize_column_name
                     custom_fields_mapping[field_id] = field_name
-                    
+
                 print(f"[INFO] Total de campos personalizados coletados: {len(custom_fields)}")
             else:
                 print(f"[ERROR] Falha ao buscar campos personalizados. Status code: {response.status_code}")
         except requests.exceptions.RequestException as e:
             print(f"[ERROR] Exceção ao buscar campos personalizados: {str(e)}")
-        
+            raise
+
         custom_fields_data = []
         for field in custom_fields:
             custom_fields_data.append({
@@ -291,10 +294,10 @@ def run(customer):
                 "name": field.get("name", ""),
                 "type": field.get("type", "")
             })
-        
+
         # Salvar campos personalizados em CSV
         upload_to_gcs(custom_fields_data, "custom_fields/custom_fields.csv")
-        
+
         return custom_fields
 
     # Função para fazer upload de dados para o Google Cloud Storage
@@ -302,36 +305,37 @@ def run(customer):
         if not data:
             print(f"[WARNING] Sem dados para enviar para {destination_path}")
             return
-        
+
         try:
             # Determinar todas as chaves possíveis (colunas)
             all_keys = set()
             for item in data:
                 all_keys.update(item.keys())
-            
+
             # Normalizar todos os nomes de colunas
             normalized_keys = {key: normalize_column_name(key) for key in all_keys}
             sorted_keys = sorted(list(all_keys))
-            
+
             # Criar um buffer na memória para o CSV
             output = io.StringIO()
             csv_writer = csv.writer(output, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            
+
             # Escrever cabeçalho normalizado
             csv_writer.writerow([normalized_keys[key] for key in sorted_keys])
-            
+
             # Escrever linhas
             for item in data:
                 row = [item.get(key, "") for key in sorted_keys]
                 csv_writer.writerow(row)
-            
+
             # Upload para o GCS
             blob = bucket.blob(destination_path)
             blob.upload_from_string(output.getvalue(), content_type="text/csv")
-            
+
             print(f"[SUCCESS] Arquivo salvo em gs://{BUCKET_NAME}/{destination_path}")
         except Exception as e:
             print(f"[ERROR] Falha ao fazer upload para {destination_path}: {str(e)}")
+            raise
 
     # Função para processar negócios e salvar no GCS
     def process_and_save_deals(deals):
@@ -374,7 +378,8 @@ def run(customer):
                 "pipeline_id": pipeline_id,
                 "pipeline_name": pipeline_name,
                 "lostReason_id": deal.get("lostReason", {}).get("id", ""),
-                "lostReason_name": get_name(LOST_REASONS_URL, deal.get("lostReason", {}).get("id", ""), lost_reason_cache),
+                "lostReason_name": get_name(LOST_REASONS_URL, deal.get("lostReason", {}).get("id", ""),
+                                            lost_reason_cache),
             }
 
             # Adicionar campos personalizados
@@ -382,7 +387,7 @@ def run(customer):
             for field in deal.get("entityCustomFields", []):
                 field_name = custom_fields_mapping.get(field["id"], field["id"])
                 processed_deal[f"custom_{field_name}"] = field.get("textValue", "")
-                
+
                 # Preparar dados para CSV de valores de campos personalizados
                 custom_fields_values[field["id"]] = {
                     "deal_id": deal.get("id", ""),
@@ -395,9 +400,8 @@ def run(customer):
 
             if i % 100 == 0:
                 print(f"[INFO] {i} negócios processados...")
-        
+
         # Salvar negócios em CSV
-        current_date = datetime.now().strftime("%Y%m%d_%H%M%S")
         upload_to_gcs(processed_deals, f"deals/deals.csv")
 
     # Buscar e salvar dados de cada endpoint
@@ -405,11 +409,11 @@ def run(customer):
     fetch_lost_reasons()
     fetch_users()
     fetch_stages_and_pipelines()
-    
+
     # Buscar e processar negócios
     deals = fetch_deals()
     process_and_save_deals(deals)
-    
+
     print("[COMPLETE] Processo finalizado com sucesso!")
 
 
