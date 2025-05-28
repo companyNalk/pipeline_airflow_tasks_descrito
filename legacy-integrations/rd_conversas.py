@@ -713,7 +713,7 @@ def run_contact_by_phone(customer):
     # Configurações
     TOKEN = customer['api_token']
     BASE_URL = customer['api_base_url']
-    CUSTOMERS_URL = f'{BASE_URL}/v2/customers'
+    CUSTOMERS_URL = f'https://api.megasac.tallos.com.br/v2/customers'
     CONTACTS_URL = f'{BASE_URL}/v2/contacts'
     BUCKET_NAME = customer['bucket_name']
     START_PAGE = customer['start_page_by_contact_phone']
