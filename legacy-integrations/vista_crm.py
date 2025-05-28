@@ -281,6 +281,7 @@ def run(customer):
             except Exception as e:
                 logger.error(f"Erro ao salvar arquivo {resource_type}: {str(e)}")
                 print(f"ERRO | {resource_type} | falha ao salvar")
+                raise
 
         def get_api_url(self, resource_type: str, codigo_pipe: str = "1") -> str:
             """Retorna a URL da API baseado no tipo de recurso"""
