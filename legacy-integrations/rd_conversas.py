@@ -718,6 +718,12 @@ def run_contact_by_phone(customer):
     BUCKET_NAME = customer['bucket_name']
     START_PAGE = int(customer['start_page_by_contact_phone'])
 
+    # Configurações para tratamento de rate limiting e páginas vazias
+    MAX_RETRIES = 5  # Máximo de tentativas em caso de erro 429
+    RETRY_DELAY = 30  # Segundos para aguardar em caso de erro 429
+    MAX_EMPTY_PAGES = 10  # Máximo de páginas vazias consecutivas antes de parar
+    REQUEST_DELAY = 1  # Delay entre requisições normais
+
     HEADERS = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {TOKEN}"
@@ -727,49 +733,92 @@ def run_contact_by_phone(customer):
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
 
+    def make_request_with_retry(url, headers, params=None, max_retries=MAX_RETRIES):
+        """Faz requisição com retry em caso de rate limiting (429)."""
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.get(url, headers=headers, params=params)
+
+                if response.status_code == 200:
+                    return response
+                elif response.status_code == 429:
+                    if attempt < max_retries:
+                        wait_time = RETRY_DELAY * (2 ** attempt)  # Backoff exponencial
+                        print(
+                            f"Rate limit atingido (429). Aguardando {wait_time} segundos antes da tentativa {attempt + 2}/{max_retries + 1}...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"Máximo de tentativas atingido para {url}. Retornando erro 429.")
+                        return response
+                else:
+                    print(f"Erro na requisição. Código: {response.status_code}, Detalhes: {response.text}")
+                    return response
+
+            except Exception as e:
+                if attempt < max_retries:
+                    print(f"Erro na requisição (tentativa {attempt + 1}): {e}. Tentando novamente...")
+                    time.sleep(RETRY_DELAY)
+                    continue
+                else:
+                    print(f"Erro após todas as tentativas: {e}")
+                    raise
+
+        return None
+
     def fetch_customers_phones():
         """Busca os telefones dos clientes do endpoint customers a partir da página especificada."""
         try:
-            page = START_PAGE  # Começa da página especificada
-            # limit = 1000
+            page = START_PAGE
             all_phones = []
             total_collected = 0
+            empty_pages_count = 0
 
             while True:
                 # Configura os parâmetros da requisição
-                params = {"page": page}
-                response = requests.get(CUSTOMERS_URL, headers=HEADERS, params=params)
+                params = {"page": page, "limit": 100}
+                response = make_request_with_retry(CUSTOMERS_URL, HEADERS, params)
 
-                # Verifica o status da resposta
-                if response.status_code != 200:
-                    print(f"Erro na requisição de clientes. Código: {response.status_code}, Detalhes: {response.text}")
+                # Verifica se a requisição foi bem-sucedida
+                if not response or response.status_code != 200:
+                    print(f"Erro na requisição de clientes. Código: {response.status_code if response else 'None'}")
                     break
 
                 # Processa os dados
                 data = response.json()
                 quantidade = len(data)
-                if quantidade == 0:  # Se não há mais dados, encerra a coleta
-                    break
 
-                # Extrai telefones válidos
-                for customer_data in data:
-                    cel_phone = customer_data.get('cel_phone')
-                    if cel_phone and cel_phone.strip():  # Verifica se o telefone não é None ou vazio
-                        all_phones.append({
-                            'customer_id': customer_data.get('_id'),
-                            'full_name': customer_data.get('full_name'),
-                            'cel_phone': cel_phone.strip()
-                        })
+                if quantidade == 0:
+                    empty_pages_count += 1
+                    print(f"Página {page} vazia. Páginas vazias consecutivas: {empty_pages_count}")
 
-                total_collected += quantidade
-                print(
-                    f"Processados {total_collected} clientes até agora (clientes nesta página: {quantidade}), página atual: {page}.")
+                    # Se atingiu o máximo de páginas vazias consecutivas, para
+                    if empty_pages_count >= MAX_EMPTY_PAGES:
+                        print(f"Atingido máximo de {MAX_EMPTY_PAGES} páginas vazias consecutivas. Finalizando coleta.")
+                        break
+                else:
+                    # Reset do contador de páginas vazias se encontrou dados
+                    empty_pages_count = 0
+
+                    # Extrai telefones válidos
+                    for customer_data in data:
+                        cel_phone = customer_data.get('cel_phone')
+                        if cel_phone and cel_phone.strip():
+                            all_phones.append({
+                                'customer_id': customer_data.get('_id'),
+                                'full_name': customer_data.get('full_name'),
+                                'cel_phone': cel_phone.strip()
+                            })
+
+                    total_collected += quantidade
+                    print(
+                        f"Processados {total_collected} clientes até agora (clientes nesta página: {quantidade}), página atual: {page}.")
 
                 # Incrementa a página para a próxima requisição
                 page += 1
 
                 # Adiciona um atraso para evitar sobrecarregar o servidor
-                time.sleep(1)
+                time.sleep(REQUEST_DELAY)
 
             print(f"Total de telefones válidos encontrados: {len(all_phones)}")
             return all_phones
@@ -781,13 +830,14 @@ def run_contact_by_phone(customer):
         """Verifica se um contato existe para o telefone fornecido."""
         try:
             url = f"{CONTACTS_URL}/{phone}/exists"
-            response = requests.get(url, headers=HEADERS)
+            response = make_request_with_retry(url, HEADERS)
 
-            if response.status_code == 200:
+            if response and response.status_code == 200:
                 return response.json()
             else:
-                print(f"Erro ao verificar contato para {phone}. Código: {response.status_code}")
-                return {"exists": False, "error": f"HTTP {response.status_code}"}
+                status_code = response.status_code if response else "None"
+                print(f"Erro ao verificar contato para {phone}. Código: {status_code}")
+                return {"exists": False, "error": f"HTTP {status_code}"}
         except Exception as e:
             print(f"Erro ao verificar contato para {phone}: {e}")
             return {"exists": False, "error": str(e)}
@@ -831,6 +881,9 @@ def run_contact_by_phone(customer):
     def main():
         """Função principal para executar a coleta e envio dos dados de contatos por telefone."""
         print(f"Iniciando a coleta de telefones dos clientes a partir da página {START_PAGE}...")
+        print(
+            f"Configurações: MAX_RETRIES={MAX_RETRIES}, RETRY_DELAY={RETRY_DELAY}s, MAX_EMPTY_PAGES={MAX_EMPTY_PAGES}")
+
         phones_data = fetch_customers_phones()
 
         if not phones_data:
