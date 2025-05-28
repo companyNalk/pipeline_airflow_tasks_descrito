@@ -73,19 +73,10 @@ def run(customer):
             blob.upload_from_string(csv_data, content_type='text/csv')
             logger.info(f"Arquivo enviado: gs://{BUCKET_NAME}/{gcs_path}")
 
-            # Backup histórico
-            # path_parts = gcs_path.split('/')
-            # dir_path, filename = '/'.join(path_parts[:-1]), path_parts[-1].split('.')[0]
-            # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            # hist_path = f"{dir_path}/historico/{filename}_{timestamp}.csv"
-            # hist_blob = bucket.blob(hist_path)
-            # hist_blob.upload_from_string(csv_data, content_type='text/csv')
-
             return True
         except Exception as e:
             logger.error(f"Erro ao fazer upload: {e}")
-            return False
-            raise e
+            raise
 
     # === COLETA: CATEGORIAS ===
     def extrair_dados_aninhados_categorias(categoria):
@@ -553,8 +544,7 @@ def run(customer):
         logger.warning("Execução interrompida pelo usuário")
     except Exception as e:
         logger.critical(f"Erro fatal: {e}")
-        print(f"\nERRO FATAL: {e}")
-        raise e
+        raise
 
 
 def get_extraction_tasks():
