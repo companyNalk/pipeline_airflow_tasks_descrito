@@ -4,12 +4,12 @@ This module handles the extraction of data from Agendor CRM API,
 including deals, organizations, and people.
 """
 
+import logging
 import os
 import subprocess
-import logging
-from typing import Dict, List
 
 logger = logging.getLogger(__name__)
+
 
 def run_deals(customer):
     """
@@ -29,19 +29,20 @@ def run_deals(customer):
         env["API_TOKEN"] = customer.get("api_token", "")
         env["BUCKET_NAME"] = customer.get("bucket_name", "")
         env["GOOGLE_APPLICATION_CREDENTIALS"] = customer.get("credentials_path", "/opt/airflow/config/gcp.json")
-        
+
         # Run the deals.py script
         result = subprocess.run(["python", "deals.py"], env=env, capture_output=True, text=True)
-        
+
         if result.returncode != 0:
             logger.error(f"Error extracting deals: {result.stderr}")
             return f"Error extracting deals: {result.stderr}"
-        
+
         logger.info(f"Deals extraction completed: {result.stdout}")
         return result.stdout
     except Exception as e:
         logger.error(f"Exception during deals extraction: {str(e)}")
-        return f"Exception during deals extraction: {str(e)}"
+        raise
+
 
 def run_organizations(customer):
     """
@@ -61,19 +62,20 @@ def run_organizations(customer):
         env["API_TOKEN"] = customer.get("api_token", "")
         env["BUCKET_NAME"] = customer.get("bucket_name", "")
         env["GOOGLE_APPLICATION_CREDENTIALS"] = customer.get("credentials_path", "")
-        
+
         # Run the organizations.py script
         result = subprocess.run(["python", "organizations.py"], env=env, capture_output=True, text=True)
-        
+
         if result.returncode != 0:
             logger.error(f"Error extracting organizations: {result.stderr}")
             return f"Error extracting organizations: {result.stderr}"
-        
+
         logger.info(f"Organizations extraction completed: {result.stdout}")
         return result.stdout
     except Exception as e:
         logger.error(f"Exception during organizations extraction: {str(e)}")
-        return f"Exception during organizations extraction: {str(e)}"
+        raise
+
 
 def run_people(customer):
     """
@@ -93,19 +95,20 @@ def run_people(customer):
         env["API_TOKEN"] = customer.get("api_token", "")
         env["BUCKET_NAME"] = customer.get("bucket_name", "")
         env["GOOGLE_APPLICATION_CREDENTIALS"] = customer.get("credentials_path", "")
-        
+
         # Run the people.py script
         result = subprocess.run(["python", "people.py"], env=env, capture_output=True, text=True)
-        
+
         if result.returncode != 0:
             logger.error(f"Error extracting people: {result.stderr}")
             return f"Error extracting people: {result.stderr}"
-        
+
         logger.info(f"People extraction completed: {result.stdout}")
         return result.stdout
     except Exception as e:
         logger.error(f"Exception during people extraction: {str(e)}")
-        return f"Exception during people extraction: {str(e)}"
+        raise
+
 
 def get_extraction_tasks():
     """
