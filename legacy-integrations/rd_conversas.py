@@ -716,7 +716,7 @@ def run_contact_by_phone(customer):
     CUSTOMERS_URL = f'https://api.megasac.tallos.com.br/v2/customers'
     CONTACTS_URL = f'{BASE_URL}/v2/contacts'
     BUCKET_NAME = customer['bucket_name']
-    START_PAGE = customer['start_page_by_contact_phone']
+    START_PAGE = int(customer['start_page_by_contact_phone'])
 
     HEADERS = {
         "Content-Type": "application/json",
