@@ -36,6 +36,67 @@ REPORTS_CONFIG = {
 }
 
 
+def clean_cpf(cpf_value):
+    """
+    Limpa e valida o valor do CPF.
+    """
+    if not cpf_value or cpf_value is None:
+        return ""
+
+    # Converter para string
+    cpf_str = str(cpf_value).strip()
+
+    # Se for string vazia, retornar vazio
+    if not cpf_str:
+        return ""
+
+    # Remover pontos e hífens
+    cpf_cleaned = cpf_str.replace(".", "").replace("-", "")
+
+    # Verificar se contém apenas números
+    if cpf_cleaned.isdigit():
+        return cpf_cleaned
+    else:
+        # Se contém outros caracteres, retornar vazio
+        logger.warning(f"CPF inválido encontrado: '{cpf_value}' - será deixado vazio")
+        return ""
+
+
+def clean_data_fields(data_list):
+    """
+    Limpa campos específicos dos dados, incluindo CPF.
+    """
+    if not isinstance(data_list, list):
+        return data_list
+
+    cleaned_data = []
+    cpf_issues_count = 0
+
+    for item in data_list:
+        if isinstance(item, dict):
+            # Criar cópia do item para não modificar o original
+            cleaned_item = item.copy()
+
+            # Limpar campo CPF se existir
+            if 'cpf' in cleaned_item:
+                original_cpf = cleaned_item['cpf']
+                cleaned_cpf = clean_cpf(original_cpf)
+
+                if original_cpf != cleaned_cpf and original_cpf:
+                    cpf_issues_count += 1
+
+                cleaned_item['cpf'] = cleaned_cpf
+
+            cleaned_data.append(cleaned_item)
+        else:
+            cleaned_data.append(item)
+
+    if cpf_issues_count > 0:
+        logger.info(f"🔧 {cpf_issues_count} CPFs foram limpos/corrigidos")
+
+    return cleaned_data
+
+
 def get_arguments():
     """Configura e retorna os argumentos da linha de comando."""
     return (ArgumentManager("Script para coletar dados da API AppFacilita")
@@ -74,7 +135,10 @@ def fetch_report_page(report_name, token, instance):
         else:
             items = [data] if data else []
 
-        logger.info(f"✓ Relatório {report_name}: {len(items)} registros obtidos")
+        # Aplicar limpeza dos dados, incluindo CPF
+        items = clean_data_fields(items)
+
+        logger.info(f"✓ Relatório {report_name}: {len(items)} registros obtidos e limpos")
 
         return {
             'items': items,
