@@ -3792,25 +3792,24 @@ def run_persons(customer):
 
         return result_df
 
-    def fix_hash_columns(df: pd.DataFrame) -> pd.DataFrame:
-        hash_cols = [col for col in df.columns if re.match(r'^[0-9a-f]{40}, col)]
+    def fix_hash_columns(df: pd.DataFrame, field_mapping: Dict) -> pd.DataFrame:
+        hash_cols = [col for col in df.columns if re.match(r'^[0-9a-f]{40}$', col)]
 
-                     if hash_cols:
-        cols_to_rename = {}
-        existing = set(df.columns)
+        if hash_cols:
+            cols_to_rename = {}
+            existing = set(df.columns)
 
-        for col in hash_cols:
-            if
-        col in field_mappings:
-        new_name = field_mappings[col]
-        if new_name in existing and new_name != col:
-            new_name = f"{new_name}_custom_{col[:6]}"
-        cols_to_rename[col] = new_name
-        else:
-        cols_to_rename[col] = f"campo_{col[:6]}"
+            for col in hash_cols:
+                if col in field_mapping:
+                    new_name = field_mapping[col]
+                    if new_name in existing and new_name != col:
+                        new_name = f"{new_name}_custom_{col[:6]}"
+                    cols_to_rename[col] = new_name
+                else:
+                    cols_to_rename[col] = f"campo_{col[:6]}"
 
-        if cols_to_rename:
-            df.rename(columns=cols_to_rename, inplace=True)
+            if cols_to_rename:
+                df.rename(columns=cols_to_rename, inplace=True)
 
         return df
 
