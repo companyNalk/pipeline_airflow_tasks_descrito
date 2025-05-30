@@ -106,8 +106,8 @@ def run(customer):
             async with session.get(url, params=params) as response:
                 if response.status != 200:
                     error_data = await response.json()
-                    print(f"[ERRO] Token inválido: {error_data}")
-                    return False
+                    msg = f"[ERRO] Token inválido: {error_data}"
+                    raise Exception(msg)
                 
                 user_data = await response.json()
                 print(f"[OK] Token válido para: {user_data.get('name', 'N/A')}")
@@ -125,7 +125,9 @@ def run(customer):
                         valid_accounts += 1
                     else:
                         error_data = await response.json()
-                        print(f"[ERRO] Sem acesso à conta {account_id}: {error_data}")
+                        msg = f"[ERRO] Sem acesso à conta {account_id}: {error_data}"
+                        print(msg)
+                        raise Exception(msg)
             
             # 3. Testar insights
             if valid_accounts > 0:
@@ -144,8 +146,9 @@ def run(customer):
                         print(f"[OK] Acesso a insights confirmado")
                     else:
                         error_data = await response.json()
-                        print(f"[ERRO] Sem acesso a insights: {error_data}")
-                        return False
+                        msg = f"[ERRO] Sem acesso a insights: {error_data}"
+                        print(msg)
+                        raise Exception(msg)
             
             print("="*60)
             if valid_accounts == len(self.account_ids):
