@@ -590,6 +590,7 @@ def run(customer):
             except Exception as e:
                 print(f"\nCritical error: {e}")
                 traceback.print_exc()
+                raise e
             finally:
                 await self.close_session()
                 self.cleanup_temp_files()
