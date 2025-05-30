@@ -1651,30 +1651,51 @@ def run(customer):
             processed.pop("custom_fields", None)
 
             # NOVA LÓGICA: Processar campos relacionais (objetos JSON)
-            for field_name in list(processed.keys()):
-                if field_name in relational_id_fields or field_name in relational_name_fields:
-                    field_value = processed[field_name]
+            # Lista de campos que devem ser convertidos de objeto para ID apenas
+            json_to_id_fields = [
+                'sdr_responsavel', 'closer_responsavel', 'creator_user_id',
+                'user_id', 'owner_id', 'person_id', 'org_id'
+            ]
 
+            for field_name in list(processed.keys()):
+                field_value = processed[field_name]
+
+                # Verificar se é um campo que deve ser convertido de JSON para ID
+                if field_name in json_to_id_fields and isinstance(field_value, dict):
+                    # Extrair o ID do objeto JSON
+                    field_id = field_value.get('id') or field_value.get('value')
+                    field_name_text = field_value.get('name', '')
+
+                    # Substituir o objeto JSON pelo ID apenas
+                    processed[field_name] = field_id
+
+                    # Criar campo separado para o nome se existir
+                    if field_name_text:
+                        if field_name == 'sdr_responsavel':
+                            processed['sdr_responsavel_nome'] = field_name_text
+                        elif field_name == 'closer_responsavel':
+                            processed['closer_responsavel_nome'] = field_name_text
+                        elif field_name in ['creator_user_id', 'user_id', 'owner_id']:
+                            processed['proprietario'] = field_name_text
+                        elif field_name == 'person_id':
+                            processed['pessoa_nome'] = field_name_text
+                        elif field_name == 'org_id':
+                            processed['organizacao_nome'] = field_name_text
+
+                # Processar outros campos relacionais que já estavam sendo tratados
+                elif field_name in relational_id_fields or field_name in relational_name_fields:
                     if isinstance(field_value, dict):
-                        # Extrair o ID (pode estar em 'id', 'value' ou ser o próprio valor)
                         field_id = field_value.get('id') or field_value.get('value')
                         field_name_text = field_value.get('name', '')
 
-                        # Se o campo deve ter ID apenas, substituir o objeto pelo ID
                         if field_name in relational_id_fields:
                             processed[field_name] = field_id
 
-                        # Se deve manter nome também, criar campo separado para nome
                         if field_name in relational_name_fields:
                             name_field = relational_name_fields[field_name]
                             processed[name_field] = field_name_text
-                            # Manter o ID no campo original ou criar campo _id
                             if field_name not in relational_id_fields:
                                 processed[f"{field_name}_id"] = field_id
-
-                    elif field_value is not None:
-                        # Se não é um dict mas existe, manter como está (já é um ID simples)
-                        processed[field_name] = field_value
 
             # Processar mapeamentos de valores padrão
             for field, value_map in std_value_maps.items():
@@ -1884,7 +1905,7 @@ def run(customer):
 
         return fix_channel_fields(enriched)
 
-    # # Função para processar leads
+    # Função para processar leads
     # def fetch_and_process_leads(field_mappings: Dict, dropdown_mappings: Dict) -> pd.DataFrame:
     #     print("\nProcessando leads...")
     #
@@ -2007,25 +2028,32 @@ def run(customer):
                 processed.pop('custom_fields', None)
 
             # CORRIGIR: Processar campos relacionais específicos de leads
-            if 'owner_id' in processed and isinstance(processed['owner_id'], dict):
-                processed['proprietario'] = processed['owner_id'].get('name', '')
-                processed['proprietario_id'] = processed['owner_id'].get('id', '')
-                processed.pop('owner_id', None)
+            # Lista de campos que devem ser convertidos de JSON para ID
+            json_to_id_fields = ['owner_id', 'person_id', 'organization_id', 'source_name', 'sdr_responsavel',
+                                 'closer_responsavel']
 
-            if 'person_id' in processed and isinstance(processed['person_id'], dict):
-                processed['pessoa_nome'] = processed['person_id'].get('name', '')
-                processed['pessoa_id'] = processed['person_id'].get('value', processed['person_id'].get('id', ''))
+            for field_name in list(processed.keys()):
+                if field_name in json_to_id_fields and isinstance(processed[field_name], dict):
+                    field_value = processed[field_name]
+                    field_id = field_value.get('id') or field_value.get('value')
+                    field_name_text = field_value.get('name', '')
 
-            if 'organization_id' in processed and isinstance(processed['organization_id'], dict):
-                processed['organizacao_nome'] = processed['organization_id'].get('name', '')
-                processed['organizacao_id'] = processed['organization_id'].get('value',
-                                                                               processed['organization_id'].get('id',
-                                                                                                                ''))
+                    # Substituir o objeto pelo ID
+                    processed[field_name] = field_id
 
-            if 'source_name' in processed and isinstance(processed['source_name'], dict):
-                processed['origem_nome'] = processed['source_name'].get('name', '')
-                processed['origem_id'] = processed['source_name'].get('id', '')
-                processed.pop('source_name', None)
+                    # Criar campos de nome separados
+                    if field_name == 'owner_id' and field_name_text:
+                        processed['proprietario'] = field_name_text
+                    elif field_name == 'person_id' and field_name_text:
+                        processed['pessoa_nome'] = field_name_text
+                    elif field_name == 'organization_id' and field_name_text:
+                        processed['organizacao_nome'] = field_name_text
+                    elif field_name == 'source_name' and field_name_text:
+                        processed['origem_nome'] = field_name_text
+                    elif field_name == 'sdr_responsavel' and field_name_text:
+                        processed['sdr_responsavel_nome'] = field_name_text
+                    elif field_name == 'closer_responsavel' and field_name_text:
+                        processed['closer_responsavel_nome'] = field_name_text
 
             # Processar campos de label/etiquetas
             label_fields = ['label_ids', 'label', 'labels']
@@ -2055,6 +2083,7 @@ def run(customer):
         print(f"Leads processados: {len(leads_df)} registros")
 
         return leads_df
+
 
     # Função para processar atividades
     def fetch_activities_parallel() -> pd.DataFrame:
@@ -2553,17 +2582,28 @@ def run_persons(customer):
             processed.update(custom_fields)
             processed.pop("custom_fields", None)
 
-            # CORRIGIR: Processar owner_id para extrair apenas ID
-            if 'owner_id' in processed and isinstance(processed['owner_id'], dict):
-                processed['proprietario'] = processed['owner_id'].get('name', '')
-                processed['proprietario_id'] = processed['owner_id'].get('id', '')
-                processed.pop('owner_id', None)
+            # CORRIGIR: Processar owner_id e org_id para extrair apenas ID
+            # Lista de campos que devem ser convertidos de JSON para ID
+            json_to_id_fields = ['owner_id', 'org_id', 'sdr_responsavel', 'closer_responsavel']
 
-            # Processar org_id para extrair apenas ID
-            if 'org_id' in processed and isinstance(processed['org_id'], dict):
-                processed['organizacao'] = processed['org_id'].get('name', '')
-                processed['organizacao_id'] = processed['org_id'].get('value', processed['org_id'].get('id', ''))
-                processed.pop('org_id', None)
+            for field_name in list(processed.keys()):
+                if field_name in json_to_id_fields and isinstance(processed[field_name], dict):
+                    field_value = processed[field_name]
+                    field_id = field_value.get('id') or field_value.get('value')
+                    field_name_text = field_value.get('name', '')
+
+                    # Substituir o objeto pelo ID
+                    processed[field_name] = field_id
+
+                    # Criar campos de nome separados
+                    if field_name == 'owner_id' and field_name_text:
+                        processed['proprietario'] = field_name_text
+                    elif field_name == 'org_id' and field_name_text:
+                        processed['organizacao'] = field_name_text
+                    elif field_name == 'sdr_responsavel' and field_name_text:
+                        processed['sdr_responsavel_nome'] = field_name_text
+                    elif field_name == 'closer_responsavel' and field_name_text:
+                        processed['closer_responsavel_nome'] = field_name_text
 
             # Aplicar mapeamentos de valores padrão
             for field, value_map in std_value_maps.items():
