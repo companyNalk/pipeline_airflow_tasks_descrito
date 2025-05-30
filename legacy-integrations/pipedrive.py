@@ -1546,59 +1546,6 @@ def run(customer):
 
         return custom_fields
 
-    # def process_entity(items: List[Dict], entity_type: str, field_mapping: Dict, dropdown_mapping: Dict) -> List[Dict]:
-    #     processed_items = []
-    #
-    #     std_value_maps = {
-    #         'status': {'open': 'aberto', 'won': 'ganho', 'lost': 'perdido', 'deleted': 'excluido'},
-    #         'visible_to': {'1': 'proprietario_do_item', '3': 'todos_os_usuarios', '7': 'toda_a_empresa'},
-    #         'is_archived': {'False': 'nao_arquivado', 'True': 'arquivado'},
-    #         'done': {'False': 'nao_concluido', 'True': 'concluido'},
-    #         'busy': {'False': 'nao_ocupado', 'True': 'ocupado'}
-    #     }
-    #     relation_fields = {'creator_user_id': 'criador', 'user_id': 'proprietario', 'owner_id': 'proprietario'}
-    #     all_values = dropdown_mapping.get('_all_values', {})
-    #
-    #     for item in items:
-    #         processed = item.copy()
-    #
-    #         for key, value in list(processed.items()):
-    #             if value is not None and str(value) in all_values:
-    #                 processed[key] = all_values[str(value)]
-    #
-    #         for field in ['person_id', 'org_id', 'person_name', 'org_name', 'pessoa_de_contato', 'organizacao']:
-    #             if field in processed:
-    #                 processed.pop(field, None)
-    #
-    #         custom_fields = process_custom_fields(processed, field_mapping, dropdown_mapping)
-    #         processed.update(custom_fields)
-    #         processed.pop("custom_fields", None)
-    #
-    #         for old_field, new_field in relation_fields.items():
-    #             if old_field in processed and processed[old_field] and isinstance(processed[old_field], dict):
-    #                 processed[new_field] = processed[old_field].get('name', '')
-    #                 processed.pop(old_field, None)
-    #
-    #         for field, value_map in std_value_maps.items():
-    #             if field in processed and processed[field] is not None:
-    #                 processed[field] = value_map.get(str(processed[field]), processed[field])
-    #
-    #         if entity_type == 'activity':
-    #             if 'location' in processed and isinstance(processed['location'], dict):
-    #                 for loc_key, loc_value in processed['location'].items():
-    #                     processed[f'location_{loc_key}'] = loc_value
-    #                 processed.pop('location', None)
-    #
-    #             for field_name, prefix in [('participants', 'participant_'), ('attendees', 'attendee_')]:
-    #                 if field_name in processed and isinstance(processed[field_name], list):
-    #                     for i, item in enumerate(processed[field_name][:5], 1):
-    #                         for k, v in item.items():
-    #                             processed[f'{prefix}{k}_{i}'] = v
-    #                     processed.pop(field_name, None)
-    #
-    #         processed_items.append(processed)
-    #
-    #     return processed_items
     def process_entity(items: List[Dict], entity_type: str, field_mapping: Dict, dropdown_mapping: Dict) -> List[Dict]:
         processed_items = []
 
@@ -1609,100 +1556,33 @@ def run(customer):
             'done': {'False': 'nao_concluido', 'True': 'concluido'},
             'busy': {'False': 'nao_ocupado', 'True': 'ocupado'}
         }
-
-        # Campos relacionais que devem ser convertidos para ID apenas
-        relational_id_fields = {
-            'creator_user_id': 'criador_id',
-            'user_id': 'proprietario_id',
-            'owner_id': 'proprietario_id',
-            'sdr_responsavel': 'sdr_responsavel_id',
-            'person_id': 'pessoa_id',
-            'org_id': 'organizacao_id'
-        }
-
-        # Campos relacionais que devem manter nome e criar campo ID separado
-        relational_name_fields = {
-            'creator_user_id': 'criador',
-            'user_id': 'proprietario',
-            'owner_id': 'proprietario',
-            'sdr_responsavel': 'sdr_responsavel_nome',
-            'person_id': 'pessoa_nome',
-            'org_id': 'organizacao_nome'
-        }
-
+        relation_fields = {'creator_user_id': 'criador', 'user_id': 'proprietario', 'owner_id': 'proprietario'}
         all_values = dropdown_mapping.get('_all_values', {})
 
         for item in items:
             processed = item.copy()
 
-            # Aplicar mapeamentos de valores para IDs simples
             for key, value in list(processed.items()):
                 if value is not None and str(value) in all_values:
                     processed[key] = all_values[str(value)]
 
-            # Remover campos desnecessários
             for field in ['person_id', 'org_id', 'person_name', 'org_name', 'pessoa_de_contato', 'organizacao']:
                 if field in processed:
                     processed.pop(field, None)
 
-            # Processar campos customizados
             custom_fields = process_custom_fields(processed, field_mapping, dropdown_mapping)
             processed.update(custom_fields)
             processed.pop("custom_fields", None)
 
-            # NOVA LÓGICA: Processar campos relacionais (objetos JSON)
-            # Lista de campos que devem ser convertidos de objeto para ID apenas
-            json_to_id_fields = [
-                'sdr_responsavel', 'closer_responsavel', 'creator_user_id',
-                'user_id', 'owner_id', 'person_id', 'org_id'
-            ]
+            for old_field, new_field in relation_fields.items():
+                if old_field in processed and processed[old_field] and isinstance(processed[old_field], dict):
+                    processed[new_field] = processed[old_field].get('name', '')
+                    processed.pop(old_field, None)
 
-            for field_name in list(processed.keys()):
-                field_value = processed[field_name]
-
-                # Verificar se é um campo que deve ser convertido de JSON para ID
-                if field_name in json_to_id_fields and isinstance(field_value, dict):
-                    # Extrair o ID do objeto JSON
-                    field_id = field_value.get('id') or field_value.get('value')
-                    field_name_text = field_value.get('name', '')
-
-                    # Substituir o objeto JSON pelo ID apenas
-                    processed[field_name] = field_id
-
-                    # Criar campo separado para o nome se existir
-                    if field_name_text:
-                        if field_name == 'sdr_responsavel':
-                            processed['sdr_responsavel_nome'] = field_name_text
-                        elif field_name == 'closer_responsavel':
-                            processed['closer_responsavel_nome'] = field_name_text
-                        elif field_name in ['creator_user_id', 'user_id', 'owner_id']:
-                            processed['proprietario'] = field_name_text
-                        elif field_name == 'person_id':
-                            processed['pessoa_nome'] = field_name_text
-                        elif field_name == 'org_id':
-                            processed['organizacao_nome'] = field_name_text
-
-                # Processar outros campos relacionais que já estavam sendo tratados
-                elif field_name in relational_id_fields or field_name in relational_name_fields:
-                    if isinstance(field_value, dict):
-                        field_id = field_value.get('id') or field_value.get('value')
-                        field_name_text = field_value.get('name', '')
-
-                        if field_name in relational_id_fields:
-                            processed[field_name] = field_id
-
-                        if field_name in relational_name_fields:
-                            name_field = relational_name_fields[field_name]
-                            processed[name_field] = field_name_text
-                            if field_name not in relational_id_fields:
-                                processed[f"{field_name}_id"] = field_id
-
-            # Processar mapeamentos de valores padrão
             for field, value_map in std_value_maps.items():
                 if field in processed and processed[field] is not None:
                     processed[field] = value_map.get(str(processed[field]), processed[field])
 
-            # Processamento específico para atividades
             if entity_type == 'activity':
                 if 'location' in processed and isinstance(processed['location'], dict):
                     for loc_key, loc_value in processed['location'].items():
@@ -1712,9 +1592,8 @@ def run(customer):
                 for field_name, prefix in [('participants', 'participant_'), ('attendees', 'attendee_')]:
                     if field_name in processed and isinstance(processed[field_name], list):
                         for i, item in enumerate(processed[field_name][:5], 1):
-                            if isinstance(item, dict):
-                                for k, v in item.items():
-                                    processed[f'{prefix}{k}_{i}'] = v
+                            for k, v in item.items():
+                                processed[f'{prefix}{k}_{i}'] = v
                         processed.pop(field_name, None)
 
             processed_items.append(processed)
@@ -1906,88 +1785,6 @@ def run(customer):
         return fix_channel_fields(enriched)
 
     # Função para processar leads
-    # def fetch_and_process_leads(field_mappings: Dict, dropdown_mappings: Dict) -> pd.DataFrame:
-    #     print("\nProcessando leads...")
-    #
-    #     leads_data = fetch_paginated_data('leads')
-    #
-    #     if not leads_data:
-    #         print("Nenhum lead encontrado!")
-    #         return pd.DataFrame()
-    #
-    #     print(f"{len(leads_data)} leads encontrados")
-    #
-    #     processed_leads = []
-    #     all_values = dropdown_mappings.get('_all_values', {})
-    #     lead_field_mapping = field_mappings.get('lead', {})
-    #     lead_dropdown_mapping = dropdown_mappings.get('lead', {})
-    #
-    #     for lead in leads_data:
-    #         processed = lead.copy()
-    #
-    #         for field_key, field_value in list(processed.items()):
-    #             if field_value is not None and str(field_value) in all_values:
-    #                 processed[field_key] = all_values[str(field_value)]
-    #
-    #             if field_key in lead_dropdown_mapping:
-    #                 value_map = lead_dropdown_mapping[field_key]
-    #                 if str(field_value) in value_map:
-    #                     processed[field_key] = value_map[str(field_value)]
-    #
-    #         if 'custom_fields' in processed:
-    #             custom_fields = process_custom_fields(
-    #                 processed,
-    #                 lead_field_mapping,
-    #                 lead_dropdown_mapping
-    #             )
-    #             processed.update(custom_fields)
-    #             processed.pop('custom_fields', None)
-    #
-    #         if 'owner_id' in processed and isinstance(processed['owner_id'], dict):
-    #             processed['proprietario'] = processed['owner_id'].get('name', '')
-    #             processed['proprietario_id'] = processed['owner_id'].get('id', '')
-    #             processed.pop('owner_id', None)
-    #
-    #         if 'person_id' in processed and isinstance(processed['person_id'], dict):
-    #             processed['pessoa_nome'] = processed['person_id'].get('name', '')
-    #             processed['pessoa_id_valor'] = processed['person_id'].get('value', '')
-    #             processed.pop('person_id', None)
-    #
-    #         if 'organization_id' in processed and isinstance(processed['organization_id'], dict):
-    #             processed['organizacao_nome'] = processed['organization_id'].get('name', '')
-    #             processed['organizacao_id_valor'] = processed['organization_id'].get('value', '')
-    #             processed.pop('organization_id', None)
-    #
-    #         if 'source_name' in processed and isinstance(processed['source_name'], dict):
-    #             processed['origem_nome'] = processed['source_name'].get('name', '')
-    #             processed.pop('source_name', None)
-    #
-    #         label_fields = ['label_ids', 'label', 'labels']
-    #         for label_field in label_fields:
-    #             if label_field in processed:
-    #                 if isinstance(processed[label_field], list):
-    #                     mapped_labels = []
-    #                     for label_id in processed[label_field]:
-    #                         if str(label_id) in all_values:
-    #                             mapped_labels.append(all_values[str(label_id)])
-    #                         else:
-    #                             mapped_labels.append(str(label_id))
-    #                     processed[label_field] = ','.join(mapped_labels)
-    #                 elif str(processed[label_field]) in all_values:
-    #                     processed[label_field] = all_values[str(processed[label_field])]
-    #
-    #         processed_leads.append(processed)
-    #
-    #     leads_df = pd.DataFrame(processed_leads)
-    #
-    #     leads_df = apply_mappings(leads_df, lead_field_mapping, lead_dropdown_mapping)
-    #     leads_df = fix_hash_columns(leads_df, lead_field_mapping)
-    #     leads_df = normalize_df(leads_df)
-    #     leads_df = fix_channel_fields(leads_df)
-    #
-    #     print(f"Leads processados: {len(leads_df)} registros")
-    #
-    #     return leads_df
     def fetch_and_process_leads(field_mappings: Dict, dropdown_mappings: Dict) -> pd.DataFrame:
         print("\nProcessando leads...")
 
@@ -2007,7 +1804,6 @@ def run(customer):
         for lead in leads_data:
             processed = lead.copy()
 
-            # Aplicar mapeamentos de valores
             for field_key, field_value in list(processed.items()):
                 if field_value is not None and str(field_value) in all_values:
                     processed[field_key] = all_values[str(field_value)]
@@ -2017,7 +1813,6 @@ def run(customer):
                     if str(field_value) in value_map:
                         processed[field_key] = value_map[str(field_value)]
 
-            # Processar campos customizados
             if 'custom_fields' in processed:
                 custom_fields = process_custom_fields(
                     processed,
@@ -2027,35 +1822,25 @@ def run(customer):
                 processed.update(custom_fields)
                 processed.pop('custom_fields', None)
 
-            # CORRIGIR: Processar campos relacionais específicos de leads
-            # Lista de campos que devem ser convertidos de JSON para ID
-            json_to_id_fields = ['owner_id', 'person_id', 'organization_id', 'source_name', 'sdr_responsavel',
-                                 'closer_responsavel']
+            if 'owner_id' in processed and isinstance(processed['owner_id'], dict):
+                processed['proprietario'] = processed['owner_id'].get('name', '')
+                processed['proprietario_id'] = processed['owner_id'].get('id', '')
+                processed.pop('owner_id', None)
 
-            for field_name in list(processed.keys()):
-                if field_name in json_to_id_fields and isinstance(processed[field_name], dict):
-                    field_value = processed[field_name]
-                    field_id = field_value.get('id') or field_value.get('value')
-                    field_name_text = field_value.get('name', '')
+            if 'person_id' in processed and isinstance(processed['person_id'], dict):
+                processed['pessoa_nome'] = processed['person_id'].get('name', '')
+                processed['pessoa_id_valor'] = processed['person_id'].get('value', '')
+                processed.pop('person_id', None)
 
-                    # Substituir o objeto pelo ID
-                    processed[field_name] = field_id
+            if 'organization_id' in processed and isinstance(processed['organization_id'], dict):
+                processed['organizacao_nome'] = processed['organization_id'].get('name', '')
+                processed['organizacao_id_valor'] = processed['organization_id'].get('value', '')
+                processed.pop('organization_id', None)
 
-                    # Criar campos de nome separados
-                    if field_name == 'owner_id' and field_name_text:
-                        processed['proprietario'] = field_name_text
-                    elif field_name == 'person_id' and field_name_text:
-                        processed['pessoa_nome'] = field_name_text
-                    elif field_name == 'organization_id' and field_name_text:
-                        processed['organizacao_nome'] = field_name_text
-                    elif field_name == 'source_name' and field_name_text:
-                        processed['origem_nome'] = field_name_text
-                    elif field_name == 'sdr_responsavel' and field_name_text:
-                        processed['sdr_responsavel_nome'] = field_name_text
-                    elif field_name == 'closer_responsavel' and field_name_text:
-                        processed['closer_responsavel_nome'] = field_name_text
+            if 'source_name' in processed and isinstance(processed['source_name'], dict):
+                processed['origem_nome'] = processed['source_name'].get('name', '')
+                processed.pop('source_name', None)
 
-            # Processar campos de label/etiquetas
             label_fields = ['label_ids', 'label', 'labels']
             for label_field in label_fields:
                 if label_field in processed:
@@ -2074,7 +1859,6 @@ def run(customer):
 
         leads_df = pd.DataFrame(processed_leads)
 
-        # Aplicar mapeamentos e normalizações
         leads_df = apply_mappings(leads_df, lead_field_mapping, lead_dropdown_mapping)
         leads_df = fix_hash_columns(leads_df, lead_field_mapping)
         leads_df = normalize_df(leads_df)
@@ -2083,7 +1867,6 @@ def run(customer):
         print(f"Leads processados: {len(leads_df)} registros")
 
         return leads_df
-
 
     # Função para processar atividades
     def fetch_activities_parallel() -> pd.DataFrame:
@@ -2494,123 +2277,36 @@ def run_persons(customer):
 
         return custom_fields
 
-    # def process_person(items: List[Dict]) -> List[Dict]:
-    #     processed_items = []
-    #
-    #     std_value_maps = {
-    #         'visible_to': {'1': 'proprietario_do_item', '3': 'todos_os_usuarios', '7': 'toda_a_empresa'},
-    #     }
-    #     relation_fields = {'owner_id': 'proprietario'}
-    #     all_values = dropdown_mappings.get('_all_values', {})
-    #
-    #     for item in items:
-    #         processed = item.copy()
-    #
-    #         for key, value in list(processed.items()):
-    #             if value is not None and str(value) in all_values:
-    #                 processed[key] = all_values[str(value)]
-    #
-    #         custom_fields = process_custom_fields_person(processed)
-    #         processed.update(custom_fields)
-    #         processed.pop("custom_fields", None)
-    #
-    #         for old_field, new_field in relation_fields.items():
-    #             if old_field in processed and processed[old_field] and isinstance(processed[old_field], dict):
-    #                 processed[new_field] = processed[old_field].get('name', '')
-    #                 processed[f'{new_field}_id'] = processed[old_field].get('id', '')
-    #                 processed.pop(old_field, None)
-    #
-    #         for field, value_map in std_value_maps.items():
-    #             if field in processed and processed[field] is not None:
-    #                 processed[field] = value_map.get(str(processed[field]), processed[field])
-    #
-    #         if 'email' in processed and isinstance(processed['email'], list):
-    #             for i, email in enumerate(processed['email'][:5], 1):
-    #                 if isinstance(email, dict):
-    #                     for k, v in email.items():
-    #                         processed[f'email_{k}_{i}'] = v
-    #             processed.pop('email', None)
-    #
-    #         if 'phone' in processed and isinstance(processed['phone'], list):
-    #             for i, phone in enumerate(processed['phone'][:5], 1):
-    #                 if isinstance(phone, dict):
-    #                     for k, v in phone.items():
-    #                         processed[f'phone_{k}_{i}'] = v
-    #             processed.pop('phone', None)
-    #
-    #         special_fields = ['emails', 'phones', 'im', 'postal_address']
-    #         for field in special_fields:
-    #             if field in processed and isinstance(processed[field], list):
-    #                 prefix = field[:-1] if field.endswith('s') else field
-    #                 for i, item in enumerate(processed[field][:5], 1):
-    #                     if isinstance(item, dict):
-    #                         for k, v in item.items():
-    #                             processed[f'{prefix}_{k}_{i}'] = v
-    #                 processed.pop(field, None)
-    #             elif field in processed and isinstance(processed[field], dict):
-    #                 for k, v in processed[field].items():
-    #                     processed[f'{field}_{k}'] = v
-    #                 processed.pop(field, None)
-    #
-    #         if 'org_id' in processed and isinstance(processed['org_id'], dict):
-    #             processed['organizacao'] = processed['org_id'].get('name', '')
-    #             processed['organizacao_id'] = processed['org_id'].get('value', processed['org_id'].get('id', ''))
-    #             processed.pop('org_id', None)
-    #
-    #         processed_items.append(processed)
-    #
-    #     return processed_items
     def process_person(items: List[Dict]) -> List[Dict]:
         processed_items = []
 
         std_value_maps = {
             'visible_to': {'1': 'proprietario_do_item', '3': 'todos_os_usuarios', '7': 'toda_a_empresa'},
         }
-
+        relation_fields = {'owner_id': 'proprietario'}
         all_values = dropdown_mappings.get('_all_values', {})
 
         for item in items:
             processed = item.copy()
 
-            # Aplicar mapeamentos de valores
             for key, value in list(processed.items()):
                 if value is not None and str(value) in all_values:
                     processed[key] = all_values[str(value)]
 
-            # Processar campos customizados
             custom_fields = process_custom_fields_person(processed)
             processed.update(custom_fields)
             processed.pop("custom_fields", None)
 
-            # CORRIGIR: Processar owner_id e org_id para extrair apenas ID
-            # Lista de campos que devem ser convertidos de JSON para ID
-            json_to_id_fields = ['owner_id', 'org_id', 'sdr_responsavel', 'closer_responsavel']
+            for old_field, new_field in relation_fields.items():
+                if old_field in processed and processed[old_field] and isinstance(processed[old_field], dict):
+                    processed[new_field] = processed[old_field].get('name', '')
+                    processed[f'{new_field}_id'] = processed[old_field].get('id', '')
+                    processed.pop(old_field, None)
 
-            for field_name in list(processed.keys()):
-                if field_name in json_to_id_fields and isinstance(processed[field_name], dict):
-                    field_value = processed[field_name]
-                    field_id = field_value.get('id') or field_value.get('value')
-                    field_name_text = field_value.get('name', '')
-
-                    # Substituir o objeto pelo ID
-                    processed[field_name] = field_id
-
-                    # Criar campos de nome separados
-                    if field_name == 'owner_id' and field_name_text:
-                        processed['proprietario'] = field_name_text
-                    elif field_name == 'org_id' and field_name_text:
-                        processed['organizacao'] = field_name_text
-                    elif field_name == 'sdr_responsavel' and field_name_text:
-                        processed['sdr_responsavel_nome'] = field_name_text
-                    elif field_name == 'closer_responsavel' and field_name_text:
-                        processed['closer_responsavel_nome'] = field_name_text
-
-            # Aplicar mapeamentos de valores padrão
             for field, value_map in std_value_maps.items():
                 if field in processed and processed[field] is not None:
                     processed[field] = value_map.get(str(processed[field]), processed[field])
 
-            # Processar arrays de email
             if 'email' in processed and isinstance(processed['email'], list):
                 for i, email in enumerate(processed['email'][:5], 1):
                     if isinstance(email, dict):
@@ -2618,7 +2314,6 @@ def run_persons(customer):
                             processed[f'email_{k}_{i}'] = v
                 processed.pop('email', None)
 
-            # Processar arrays de telefone
             if 'phone' in processed and isinstance(processed['phone'], list):
                 for i, phone in enumerate(processed['phone'][:5], 1):
                     if isinstance(phone, dict):
@@ -2626,7 +2321,6 @@ def run_persons(customer):
                             processed[f'phone_{k}_{i}'] = v
                 processed.pop('phone', None)
 
-            # Processar campos especiais (emails, phones, etc.)
             special_fields = ['emails', 'phones', 'im', 'postal_address']
             for field in special_fields:
                 if field in processed and isinstance(processed[field], list):
@@ -2640,6 +2334,11 @@ def run_persons(customer):
                     for k, v in processed[field].items():
                         processed[f'{field}_{k}'] = v
                     processed.pop(field, None)
+
+            if 'org_id' in processed and isinstance(processed['org_id'], dict):
+                processed['organizacao'] = processed['org_id'].get('name', '')
+                processed['organizacao_id'] = processed['org_id'].get('value', processed['org_id'].get('id', ''))
+                processed.pop('org_id', None)
 
             processed_items.append(processed)
 
