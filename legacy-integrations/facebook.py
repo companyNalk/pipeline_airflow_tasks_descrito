@@ -94,6 +94,83 @@ def run(customer):
                 await self.session.close()
                 self.session = None
 
+        async def validate_credentials(self) -> bool:
+            """
+            Valida as credenciais antes de iniciar a coleta
+            """
+            print("\n" + "="*60)
+            print("VALIDANDO CREDENCIAIS")
+            print("="*60)
+            
+            session = await self.get_session()
+            
+            # 1. Testar token básico
+            url = f"{self.base_url}/me"
+            params = {"access_token": self.access_token, "fields": "id,name"}
+            
+            try:
+                async with session.get(url, params=params) as response:
+                    if response.status != 200:
+                        error_data = await response.json()
+                        print(f"[ERRO] Token inválido: {error_data}")
+                        return False
+                    
+                    user_data = await response.json()
+                    print(f"[OK] Token válido para: {user_data.get('name', 'N/A')}")
+            except Exception as e:
+                print(f"[ERRO] Falha ao validar token: {e}")
+                return False
+            
+            # 2. Testar acesso às contas
+            valid_accounts = 0
+            for account_id in self.account_ids:
+                url = f"{self.base_url}/{account_id}"
+                params = {"access_token": self.access_token, "fields": "account_id,name"}
+                
+                try:
+                    async with session.get(url, params=params) as response:
+                        if response.status == 200:
+                            account_data = await response.json()
+                            print(f"[OK] Acesso à conta: {account_data.get('name', account_id)}")
+                            valid_accounts += 1
+                        else:
+                            error_data = await response.json()
+                            print(f"[ERRO] Sem acesso à conta {account_id}: {error_data}")
+                except Exception as e:
+                    print(f"[ERRO] Falha ao acessar conta {account_id}: {e}")
+            
+            # 3. Testar insights
+            if valid_accounts > 0:
+                test_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+                url = f"{self.base_url}/{self.account_ids[0]}/insights"
+                params = {
+                    "access_token": self.access_token,
+                    "fields": "spend,impressions",
+                    "time_range": json.dumps({"since": test_date, "until": test_date}),
+                    "level": "account",
+                    "limit": 1
+                }
+                
+                try:
+                    async with session.get(url, params=params) as response:
+                        if response.status == 200:
+                            print(f"[OK] Acesso a insights confirmado")
+                        else:
+                            error_data = await response.json()
+                            print(f"[ERRO] Sem acesso a insights: {error_data}")
+                            return False
+                except Exception as e:
+                    print(f"[ERRO] Falha ao testar insights: {e}")
+                    return False
+            
+            print("="*60)
+            if valid_accounts == len(self.account_ids):
+                print("[SUCESSO] Todas as validações passaram!")
+                return True
+            else:
+                print(f"[ERRO] Apenas {valid_accounts}/{len(self.account_ids)} contas válidas")
+                return False
+
         async def get_ad_details_with_demographics(self, ad_id: str, date_str: str) -> List[Dict]:
             """Get detailed metrics for ad_id broken down by age and gender"""
             session = await self.get_session()
@@ -477,6 +554,15 @@ def run(customer):
         async def run(self):
             """Execute collection process"""
             try:
+                # VALIDAÇÃO ANTES DE COMEÇAR
+                if not await self.validate_credentials():
+                    print("\n[ERRO CRITICO] Validação falhou. Interrompendo execução.")
+                    print("Verifique:")
+                    print("1. ACCESS_TOKEN está correto e não expirou")
+                    print("2. ACCOUNT_IDS estão corretos")
+                    print("3. Permissões do app incluem 'ads_read'")
+                    return
+
                 dates = self.get_dates_to_process()
                 if not dates:
                     print("\nAll dates already processed. Nothing to do!")
@@ -518,7 +604,7 @@ def run(customer):
 
     async def main():
         print("\n" + "=" * 60)
-        print("FACEBOOK ADS COLLECTOR - WITH FIXED HEADERS")
+        print("FACEBOOK ADS COLLECTOR - WITH CREDENTIAL VALIDATION")
         print("=" * 60)
         print(f"Accounts: {', '.join(API_ACCOUNT_IDS)}")
         print(f"Start Date: {HISTORICAL_START_DATE}")
