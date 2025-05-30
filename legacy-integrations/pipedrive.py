@@ -139,7 +139,7 @@ def run(customer):
                     json_value = df_processed.at[index, json_col]
                     json_data = {}
 
-                    # Tentar fazer parse do JSON se for string
+                    # Tentar fazer parse do JSON se for string ou dict
                     if pd.notna(json_value) and json_value is not None:
                         try:
                             # Se já for um dicionário, usar diretamente
@@ -147,14 +147,22 @@ def run(customer):
                                 json_data = json_value
                             # Se for string, tentar fazer parse
                             elif isinstance(json_value, str) and json_value.strip() and json_value != 'nan':
-                                # Remover possíveis aspas extras
                                 json_str = json_value.strip()
-                                if json_str.startswith("'") and json_str.endswith("'"):
-                                    json_str = json_str[1:-1]
-                                json_data = json.loads(json_str)
+
+                                # Se a string parece ser um dict Python (com aspas simples), converter para JSON válido
+                                if json_str.startswith('{') and json_str.endswith('}'):
+                                    try:
+                                        # Tentar interpretar como literal Python primeiro
+                                        import ast
+                                        json_data = ast.literal_eval(json_str)
+                                    except (ValueError, SyntaxError):
+                                        # Se falhar, tentar como JSON normal
+                                        json_data = json.loads(json_str)
+                                else:
+                                    json_data = json.loads(json_str)
                             else:
                                 json_data = {}
-                        except (json.JSONDecodeError, ValueError) as e:
+                        except (json.JSONDecodeError, ValueError, SyntaxError) as e:
                             print(
                                 f"Erro ao processar JSON na linha {index}, coluna {json_col}: {json_value} - Erro: {e}")
                             json_data = {}
