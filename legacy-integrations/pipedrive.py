@@ -127,9 +127,17 @@ def run(customer):
             if json_col in df_processed.columns:
                 print(f"Processando coluna JSON: {json_col}")
 
-                # Para cada linha, extrair as propriedades do JSON
-                for index, row in df_processed.iterrows():
-                    json_value = row[json_col]
+                # Primeiro, vamos criar todas as colunas possíveis com None
+                basic_properties = ['id', 'name', 'email', 'has_pic', 'pic_hash', 'active_flag', 'value']
+                for prop in basic_properties:
+                    new_column = f"{json_col}_{prop}"
+                    if new_column not in df_processed.columns:
+                        df_processed[new_column] = None
+
+                # Agora vamos processar cada linha
+                for index in df_processed.index:
+                    json_value = df_processed.at[index, json_col]
+                    json_data = {}
 
                     # Tentar fazer parse do JSON se for string
                     if pd.notna(json_value) and json_value is not None:
@@ -138,36 +146,35 @@ def run(customer):
                             if isinstance(json_value, dict):
                                 json_data = json_value
                             # Se for string, tentar fazer parse
-                            elif isinstance(json_value, str) and json_value.strip():
-                                json_data = json.loads(json_value)
+                            elif isinstance(json_value, str) and json_value.strip() and json_value != 'nan':
+                                # Remover possíveis aspas extras
+                                json_str = json_value.strip()
+                                if json_str.startswith("'") and json_str.endswith("'"):
+                                    json_str = json_str[1:-1]
+                                json_data = json.loads(json_str)
                             else:
                                 json_data = {}
-                        except (json.JSONDecodeError, ValueError):
-                            print(f"Erro ao processar JSON na linha {index}, coluna {json_col}: {json_value}")
+                        except (json.JSONDecodeError, ValueError) as e:
+                            print(
+                                f"Erro ao processar JSON na linha {index}, coluna {json_col}: {json_value} - Erro: {e}")
                             json_data = {}
-                    else:
-                        json_data = {}
 
-                    # Criar novas colunas para cada propriedade do JSON
+                    # Preencher as colunas com os valores do JSON
+                    for prop in basic_properties:
+                        new_column = f"{json_col}_{prop}"
+                        if json_data and prop in json_data:
+                            df_processed.at[index, new_column] = json_data[prop]
+                        else:
+                            df_processed.at[index, new_column] = None
+
+                    # Se houver propriedades extras no JSON, também criar colunas para elas
                     if json_data:
                         for key, value in json_data.items():
-                            new_column = f"{json_col}_{key}"
-
-                            # Inicializar a coluna se não existir
-                            if new_column not in df_processed.columns:
-                                df_processed[new_column] = None
-
-                            # Definir o valor
-                            df_processed.at[index, new_column] = value
-                    else:
-                        # Se não há JSON válido, garantir que as colunas básicas existam com valores None
-                        basic_properties = ['id', 'name', 'email', 'has_pic', 'pic_hash', 'active_flag', 'value']
-                        for prop in basic_properties:
-                            new_column = f"{json_col}_{prop}"
-                            if new_column not in df_processed.columns:
-                                df_processed[new_column] = None
-                            if pd.isna(df_processed.at[index, new_column]):
-                                df_processed.at[index, new_column] = None
+                            if key not in basic_properties:
+                                new_column = f"{json_col}_{key}"
+                                if new_column not in df_processed.columns:
+                                    df_processed[new_column] = None
+                                df_processed.at[index, new_column] = value
 
                 # Remover a coluna JSON original
                 df_processed = df_processed.drop(columns=[json_col])
