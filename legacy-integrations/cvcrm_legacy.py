@@ -1168,10 +1168,10 @@ def get_extraction_tasks():
             'task_id': 'run_corretores',
             'python_callable': run_corretores,
         },
-        {
-            'task_id': 'run_historico_situacoes',
-            'python_callable': run_historico_situacoes,
-        },
+        # {
+        #     'task_id': 'run_historico_situacoes',
+        #     'python_callable': run_historico_situacoes,
+        # },
         {
             'task_id': 'run_lead',
             'python_callable': run_lead,
