@@ -108,18 +108,14 @@ def run(customer):
             url = f"{self.base_url}/me"
             params = {"access_token": self.access_token, "fields": "id,name"}
             
-            try:
-                async with session.get(url, params=params) as response:
-                    if response.status != 200:
-                        error_data = await response.json()
-                        print(f"[ERRO] Token inválido: {error_data}")
-                        return False
-                    
-                    user_data = await response.json()
-                    print(f"[OK] Token válido para: {user_data.get('name', 'N/A')}")
-            except Exception as e:
-                print(f"[ERRO] Falha ao validar token: {e}")
-                return False
+            async with session.get(url, params=params) as response:
+                if response.status != 200:
+                    error_data = await response.json()
+                    print(f"[ERRO] Token inválido: {error_data}")
+                    return False
+                
+                user_data = await response.json()
+                print(f"[OK] Token válido para: {user_data.get('name', 'N/A')}")
             
             # 2. Testar acesso às contas
             valid_accounts = 0
@@ -127,17 +123,14 @@ def run(customer):
                 url = f"{self.base_url}/{account_id}"
                 params = {"access_token": self.access_token, "fields": "account_id,name"}
                 
-                try:
-                    async with session.get(url, params=params) as response:
-                        if response.status == 200:
-                            account_data = await response.json()
-                            print(f"[OK] Acesso à conta: {account_data.get('name', account_id)}")
-                            valid_accounts += 1
-                        else:
-                            error_data = await response.json()
-                            print(f"[ERRO] Sem acesso à conta {account_id}: {error_data}")
-                except Exception as e:
-                    print(f"[ERRO] Falha ao acessar conta {account_id}: {e}")
+                async with session.get(url, params=params) as response:
+                    if response.status == 200:
+                        account_data = await response.json()
+                        print(f"[OK] Acesso à conta: {account_data.get('name', account_id)}")
+                        valid_accounts += 1
+                    else:
+                        error_data = await response.json()
+                        print(f"[ERRO] Sem acesso à conta {account_id}: {error_data}")
             
             # 3. Testar insights
             if valid_accounts > 0:
@@ -151,17 +144,13 @@ def run(customer):
                     "limit": 1
                 }
                 
-                try:
-                    async with session.get(url, params=params) as response:
-                        if response.status == 200:
-                            print(f"[OK] Acesso a insights confirmado")
-                        else:
-                            error_data = await response.json()
-                            print(f"[ERRO] Sem acesso a insights: {error_data}")
-                            return False
-                except Exception as e:
-                    print(f"[ERRO] Falha ao testar insights: {e}")
-                    return False
+                async with session.get(url, params=params) as response:
+                    if response.status == 200:
+                        print(f"[OK] Acesso a insights confirmado")
+                    else:
+                        error_data = await response.json()
+                        print(f"[ERRO] Sem acesso a insights: {error_data}")
+                        return False
             
             print("="*60)
             if valid_accounts == len(self.account_ids):
