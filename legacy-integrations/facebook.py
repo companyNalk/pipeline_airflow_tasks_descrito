@@ -460,7 +460,7 @@ def run(customer):
                 return False
             
             combined_df['conta_bm'] = CONTA_BM
-            combined_df['date'] = pd.to_datetime(combined_df['date']).dt.date
+            combined_df['date'] = pd.to_datetime(combined_df['date'])
             print(f"Uploading combined data to ClickHouse ({len(combined_df)} rows)")
             
             # Create a client with the provided connection parameters
