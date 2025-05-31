@@ -471,8 +471,45 @@ def run(customer):
                 
                 client = self.clickhouse_client
                 
-                # Generate CREATE TABLE query
-                create_table_query = clickhouse.get_create_table_query(combined_df, database, table_name)
+                create_table_query = f"""
+                CREATE TABLE {database}.facebook_ads_gold
+                (
+                    `date` Date,
+                    `account_name` String,
+                    `account_id` String,
+                    `ad_id` String,
+                    `ad_name` String,
+                    `adset_name` String,
+                    `campaign` String,
+                    `clicks` Int64,
+                    `ctr` Float64,
+                    `frequency` Float64,
+                    `impressions` Int64,
+                    `objective` String,
+                    `reach` Int64,
+                    `totalcost` Float64,
+                    `age` String,
+                    `gender` String,
+                    `actions_lead` Int64,
+                    `actions_offsite_conversion_fb_pixel_lead` Int64,
+                    `actions_onsite_conversion_lead_grouped` Int64,
+                    `actions_onsite_conversion_messaging_conversation_started_7d` Int64,
+                    `actions_post_engagement` Int64,
+                    `actions_post_reaction` Int64,
+                    `cost_per_action_type_lead` Float64,
+                    `cost_per_action_type_offsite_conversion_fb_pixel_lead` Float64,
+                    `cost_per_action_type_onsite_conversion_lead_grouped` Float64,
+                    `cost_per_action_type_onsite_conversion_messaging_conversation_started_7d` Float64,
+                    `cost_per_action_type_post_engagement` Float64,
+                    `cost_per_action_type_post_reaction` Float64,
+                    `instagram_permalink_url` String,
+                    `link` String,
+                    `conta_bm` String
+                )
+                ENGINE = MergeTree
+                ORDER BY tuple()
+                SETTINGS index_granularity = 8192;
+                """
                 # Execute CREATE TABLE query
                 client.command(create_table_query)
                 print(f"Created or verified table: {database}.{table_name}")
