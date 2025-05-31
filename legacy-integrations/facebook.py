@@ -451,13 +451,13 @@ def run(customer):
             """Upload all collected data to ClickHouse in a single operation"""
             if not self.all_data_frames:
                 print("WARNING: No data to upload to ClickHouse")
-                return
+                return False
             
             # Combine all DataFrames into one
             combined_df = pd.concat(self.all_data_frames, ignore_index=True)
             if combined_df.empty:
                 print("WARNING: Combined DataFrame is empty, nothing to upload")
-                return
+                return False
             
             combined_df['conta_bm'] = CONTA_BM
             combined_df['date'] = pd.to_datetime(combined_df['date']).dt.date
@@ -481,12 +481,14 @@ def run(customer):
                 result = clickhouse.insert_df_to_clickhouse(combined_df, database, table_name, client)
                 if result:
                     print(f"Successfully uploaded {len(combined_df)} records to ClickHouse table {database}.{table_name}")
+                    return True
                 else:
                     print(f"Failed to upload data to ClickHouse")
-            
+                    return False
             except Exception as e:
                 print(f"Error uploading to ClickHouse: {e}")
                 traceback.print_exc()
+                raise e
 
         def is_date_processed(self, date_str: str) -> bool:
             """Check if date is already processed by checking ClickHouse"""
@@ -579,7 +581,7 @@ def run(customer):
                         self.all_data_frames.append(df)
 
                 # Upload all collected data at once
-                self.upload_all_data_to_clickhouse()
+                return self.upload_all_data_to_clickhouse()
 
                 total_elapsed = time.time() - total_start_time
                 print(f"\nCollection Complete!")
