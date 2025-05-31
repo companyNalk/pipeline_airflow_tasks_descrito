@@ -452,7 +452,7 @@ def run(customer):
             
             # Combine all DataFrames into one
             combined_df = pd.concat(self.all_data_frames, ignore_index=True)
-            combined_df['date'] = pd.to_datetime(combined_df['date']).dt.date
+            combined_df['date'] = pd.to_datetime(combined_df['date'])
             combined_df['conta_bm'] = conta_bm
             if combined_df.empty:
                 print("WARNING: Combined DataFrame is empty, nothing to upload")
