@@ -62,7 +62,7 @@ def get_data(customer, endpoint):
 
         # If no specific URL is provided, use the base URL
         if not page_url:
-            url = f"{API_BASE_URL}/{ROUTER}"
+            url = f"{API_BASE_URL}/{ROUTER}?per_page=100"
         else:
             url = page_url
 
