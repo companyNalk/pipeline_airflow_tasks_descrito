@@ -15,8 +15,6 @@ from google.cloud import storage
 
 def run_qualification(customer):
     # Configurações Globais
-    print(f"API TOKEN: {customer['api_token']}")
-
     ENDPOINT = 'qualificacoes'
     api_token = customer['api_token']
     base_url = f"{customer['base_url']}/{ENDPOINT}"
