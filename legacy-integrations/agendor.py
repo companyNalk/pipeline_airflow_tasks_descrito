@@ -14,6 +14,7 @@ def get_data(customer, endpoint):
     from queue import Queue, Empty
     from threading import Lock
     from urllib.parse import urlparse, parse_qs
+    import re
 
     import pandas as pd
     import requests
@@ -235,6 +236,15 @@ def get_data(customer, endpoint):
         logger.info(f"Coleta de dados finalizada. Total: {len(all_data)} registros.")
         return all_data
 
+    def clean_whatsapp_number(value):
+        """
+        Cleans WhatsApp phone numbers by keeping only digits
+        """
+        if pd.isna(value) or value is None:
+            return None
+        # Convert to string and keep only digits
+        return re.sub(r'[^\d]', '', str(value))
+
     def convert_json_to_csv(data, output_file=None, csv_separator=";"):
         """
         Converts JSON data of any depth to a normalized DataFrame,
@@ -308,6 +318,11 @@ def get_data(customer, endpoint):
         # Convert to DataFrame
         logger.info("Convertendo registros json/csv para DataFrame...")
         df = pd.DataFrame(flattened_records)
+
+        # Clean contact_whatsapp column if it exists
+        if 'contact_whatsapp' in df.columns:
+            logger.info("Limpando números de WhatsApp...")
+            df['contact_whatsapp'] = df['contact_whatsapp'].apply(clean_whatsapp_number)
 
         # Save to file if path is provided
         if output_file:
