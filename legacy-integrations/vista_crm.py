@@ -251,6 +251,7 @@ def extract_customers(customer):
             except Exception as e:
                 logger.error(f"Erro ao salvar arquivo: {str(e)}")
                 print("ERRO | CLIENTES | falha ao salvar")
+                raise
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para a tabela de clientes"""
@@ -427,36 +428,10 @@ def extract_customers(customer):
 
                 # Salva os dados coletados
                 self.save_to_gcs(clientes_df)
-
-                # Salva também localmente para backup
-                if not clientes_df.empty:
-                    # CSV com timestamp
-                    csv_filename = f"clientes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                    clientes_df.to_csv(csv_filename, sep=';', index=False, encoding='utf-8-sig')
-                    print(f"BACKUP CSV | {csv_filename} | {len(clientes_df)} registros")
-
-                    # Excel para análise mais fácil
-                    excel_filename = f"clientes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                    clientes_df.to_excel(excel_filename, index=False, engine='openpyxl')
-                    print(f"BACKUP EXCEL | {excel_filename} | {len(clientes_df)} registros")
-
-                    # Arquivo simplificado com campos principais para análise rápida
-                    campos_principais = []
-                    for col in clientes_df.columns:
-                        if any(term in col.lower() for term in
-                               ['nome', 'codigo', 'cpf', 'cnpj', 'email', 'fone', 'celular', 'cidade', 'uf', 'status',
-                                'tipo']):
-                            campos_principais.append(col)
-
-                    if campos_principais:
-                        df_resumo = clientes_df[campos_principais]
-                        resumo_filename = f"clientes_resumo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                        df_resumo.to_excel(resumo_filename, index=False, engine='openpyxl')
-                        print(f"RESUMO EXCEL | {resumo_filename} | {len(campos_principais)} campos principais")
-
             except Exception as e:
                 logger.error(f"Erro durante a execução: {str(e)}")
                 print(f"ERRO | Execução geral | {str(e)}")
+                raise
             finally:
                 # Exibe resumo
                 self.print_summary()
@@ -801,6 +776,7 @@ def extract_realtor(customer):
             except Exception as e:
                 logger.error(f"Erro ao salvar arquivo: {str(e)}")
                 print("ERRO | CORRETORES | falha ao salvar")
+                raise
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para a tabela de corretores"""
@@ -1045,37 +1021,13 @@ def extract_realtor(customer):
 
                     # Salva os dados coletados
                     self.save_to_gcs(corretores_df)
-
-                    # Salva também localmente para backup
-                    # CSV com timestamp
-                    csv_filename = f"corretores_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                    corretores_df.to_csv(csv_filename, sep=';', index=False, encoding='utf-8-sig')
-                    print(f"BACKUP CSV | {csv_filename} | {len(corretores_df)} registros")
-
-                    # Excel para análise mais fácil
-                    excel_filename = f"corretores_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                    corretores_df.to_excel(excel_filename, index=False, engine='openpyxl')
-                    print(f"BACKUP EXCEL | {excel_filename} | {len(corretores_df)} registros")
-
-                    # Arquivo simplificado com dados principais para análise rápida
-                    campos_essenciais = []
-                    for col in corretores_df.columns:
-                        if any(term in col.lower() for term in
-                               ['nome', 'codigo', 'creci', 'email', 'fone', 'celular', 'status', 'tipo', 'equipe',
-                                'supervisor']):
-                            campos_essenciais.append(col)
-
-                    if campos_essenciais:
-                        df_essencial = corretores_df[campos_essenciais]
-                        essencial_filename = f"corretores_essencial_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                        df_essencial.to_excel(essencial_filename, index=False, engine='openpyxl')
-                        print(f"ESSENCIAL EXCEL | {essencial_filename} | {len(campos_essenciais)} campos principais")
                 else:
                     print("NENHUM DADO COLETADO | Verifique os logs para mais detalhes")
 
             except Exception as e:
                 logger.error(f"Erro durante a execução: {str(e)}")
                 print(f"ERRO | Execução geral | {str(e)}")
+                raise
             finally:
                 # Exibe resumo
                 self.print_summary()
@@ -1349,6 +1301,7 @@ def extract_rental_funnel(customer):
             except Exception as e:
                 logger.error(f"Erro ao salvar arquivo: {str(e)}")
                 print("ERRO | FUNIL_LOCACAO | falha ao salvar")
+                raise
 
         def get_api_url(self, codigo_pipe: str = CODIGO_PIPE_LOCACAO) -> str:
             """Retorna a URL da API para o funil de locação"""
@@ -1489,21 +1442,10 @@ def extract_rental_funnel(customer):
 
                 # Salva os dados coletados
                 self.save_to_gcs(funil_df)
-
-                # Salva também localmente para backup
-                if not funil_df.empty:
-                    local_filename = f"funil_locacao_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                    funil_df.to_csv(local_filename, sep=';', index=False, encoding='utf-8-sig')
-                    print(f"BACKUP LOCAL | {local_filename} | {len(funil_df)} registros")
-
-                    # Salva também uma versão Excel para análise mais fácil
-                    excel_filename = f"funil_locacao_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                    funil_df.to_excel(excel_filename, index=False, engine='openpyxl')
-                    print(f"BACKUP EXCEL | {excel_filename} | {len(funil_df)} registros")
-
             except Exception as e:
                 logger.error(f"Erro durante a execução: {str(e)}")
                 print(f"ERRO | Execução geral | {str(e)}")
+                raise
             finally:
                 # Exibe resumo
                 self.print_summary()
@@ -1775,6 +1717,7 @@ def extract_sales_funnel(customer):
             except Exception as e:
                 logger.error(f"Erro ao salvar arquivo: {str(e)}")
                 print("ERRO | FUNIL_VENDAS | falha ao salvar")
+                raise
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para o funil de vendas"""
@@ -2223,6 +2166,7 @@ def extract_real_state(customer):
             except Exception as e:
                 logger.error(f"Erro ao salvar arquivo: {str(e)}")
                 print("ERRO | IMÓVEIS | falha ao salvar")
+                raise
 
         def generate_imovel_report(self, df: pd.DataFrame):
             """Gera um relatório específico sobre os dados de imóveis coletados"""
@@ -2383,36 +2327,10 @@ def extract_real_state(customer):
 
                 # Salva os dados coletados
                 self.save_to_gcs(imoveis_df)
-
-                # Salva também localmente para backup
-                if not imoveis_df.empty:
-                    # CSV com timestamp
-                    csv_filename = f"imoveis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                    imoveis_df.to_csv(csv_filename, sep=';', index=False, encoding='utf-8-sig')
-                    print(f"BACKUP CSV | {csv_filename} | {len(imoveis_df)} registros")
-
-                    # Excel para análise mais fácil
-                    excel_filename = f"imoveis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                    imoveis_df.to_excel(excel_filename, index=False, engine='openpyxl')
-                    print(f"BACKUP EXCEL | {excel_filename} | {len(imoveis_df)} registros")
-
-                    # Arquivo simplificado com campos principais para análise rápida
-                    campos_principais = []
-                    for col in imoveis_df.columns:
-                        if any(term in col.lower() for term in
-                               ['codigo', 'matricula', 'title', 'tipo', 'valor', 'situacao', 'status', 'uf', 'regiao',
-                                'empreendimento', 'nome_corretor', 'nome_agencia']):
-                            campos_principais.append(col)
-
-                    if campos_principais:
-                        df_resumo = imoveis_df[campos_principais]
-                        resumo_filename = f"imoveis_resumo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-                        df_resumo.to_excel(resumo_filename, index=False, engine='openpyxl')
-                        print(f"RESUMO EXCEL | {resumo_filename} | {len(campos_principais)} campos principais")
-
             except Exception as e:
                 logger.error(f"Erro durante a execução: {str(e)}")
                 print(f"ERRO | Execução geral | {str(e)}")
+                raise
             finally:
                 # Exibe resumo
                 self.print_summary()
