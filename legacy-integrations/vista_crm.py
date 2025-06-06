@@ -2033,22 +2033,7 @@ def extract_real_state(customer):
         def get_page_data(self, page: int) -> Tuple[List[Dict], bool]:
             """Obtém os dados de uma página específica - Retorna: (dados, tem_erro)"""
             try:
-                payload = {
-                    "fields": [
-                        "DataCadastro", "DataAtualizacao", "CodigoEmpreendimento", "Matricula", "Title", "Construtora",
-                        "Incorporadora",
-                        "Empreendimento", "NomeCondominio", "Proprietario", "AdministradoraCondominio", "Regiao", "UF",
-                        "TipoImovel",
-                        "CategoriaImovel", "Finalidade", "ValorLocacao", "ValorVenda", "Agenciador", "CorretorNome",
-                        "Situacao", "Status",
-                        {"Agencia": ['Codigo', 'Agencia', 'Nome']},
-                        {"Corretor": ['Nome', 'Equipe']}
-                    ],
-                    "paginacao": {
-                        "pagina": page,
-                        "quantidade": RECORDS_PER_PAGE
-                    }
-                }
+                payload = dict(customer['payload_endpoint_imoveis'])
 
                 url = f"{BASE_URL}/imoveis/listar?key={TOKEN}&empresa={EMPRESA}&showtotal=1&pesquisa={json.dumps(payload)}"
 
@@ -2374,20 +2359,20 @@ def get_extraction_tasks():
             'task_id': 'extract_customers',
             'python_callable': extract_customers
         },
-        {
-            'task_id': 'extract_realtor',
-            'python_callable': extract_realtor
-        },
-        {
-            'task_id': 'extract_rental_funnel',
-            'python_callable': extract_rental_funnel
-        },
-        {
-            'task_id': 'extract_sales_funnel',
-            'python_callable': extract_sales_funnel
-        },
-        {
-            'task_id': 'extract_real_state',
-            'python_callable': extract_real_state
-        }
+        # {
+        #     'task_id': 'extract_realtor',
+        #     'python_callable': extract_realtor
+        # },
+        # {
+        #     'task_id': 'extract_rental_funnel',
+        #     'python_callable': extract_rental_funnel
+        # },
+        # {
+        #     'task_id': 'extract_sales_funnel',
+        #     'python_callable': extract_sales_funnel
+        # },
+        # {
+        #     'task_id': 'extract_real_state',
+        #     'python_callable': extract_real_state
+        # }
     ]
