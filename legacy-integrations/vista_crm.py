@@ -27,6 +27,7 @@ def extract_customers(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
+    PAYLOAD_ENDPOINT_CLIENTES = dict(customer['payload_endpoint_clientes'])
     FOLDER = "tabela_clientes"
     FILENAME = "clientes.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -108,6 +109,9 @@ def extract_customers(customer):
                         return {"error": f"Falha após {MAX_RETRIES} tentativas", "url": url}
                 else:
                     logger.error(f"Erro na requisição. Status: {response.status_code}")
+                    if response.status_code == 401:
+                        print('ERRO NA AUTENTICACAO/MONTAGEM DA URL DINAMICA')
+                        raise
                     if retries < MAX_RETRIES:
                         time.sleep((2 ** retries) + random.uniform(0, 1))
                         return self.make_request(url, retries + 1)
@@ -255,30 +259,7 @@ def extract_customers(customer):
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para a tabela de clientes"""
-            pesquisa = json.dumps({
-                "fields": [
-                    "DataCadastro", "RG", "RGEmissor", "CPFCNPJ", "DataNascimento", "Nacionalidade",
-                    "Profissao", "EstadoCivil", "Celular", "Banco", "Agencia", "Conta",
-                    "EnderecoResidencial", "BairroResidencial", "CidadeResidencial", "UFResidencial",
-                    "CEPResidencial", "PaisResidencial", "FoneResidencial", "FaxResidencial",
-                    "EmailResidencial", "NomeConjuge", "RGConjuge", "RGEmissorConjuge", "CPFConjuge",
-                    "NascimentoConjuge", "NacionalidadeConjuge", "ProfissaoConjuge", "CelularConjuge",
-                    "FonePrincipal", "EnderecoComercial", "BairroComercial", "CidadeComercial",
-                    "UFComercial", "CEPComercial", "PaisComercial", "FoneComercial", "FaxComercial",
-                    "EmailComercial", "Observacoes", "EnderecoComplemento", "MailingList", "Nome",
-                    "Autorizado", "Cliente", "Fiador", "Proprietario", "TipoPessoa",
-                    "EnderecoCorrespondencia", "Codigo", "Ramal", "EnderecoNumero", "EmailConjuge",
-                    "Naturalidade", "Status", "Sexo", "AniversarioDia", "AniversarioMes", "Investidor",
-                    "Interesse", "VeiculoCaptacao", "UsuarioWeb", "SenhaWeb", "Bloco", "ClienteFavorito",
-                    "Potencial", "ClienteImportado", "CampanhaImportacao", "DataImportacao",
-                    "ProprietarioRestrito", "RGDataExpedicao", "CorretorResponsvel", "FoneExterior",
-                    "FerramentaCaptacao", "FotoCliente", "Foto", "CodigoAgencia", "Corretor",
-                    "CreditoSituacao", "CreditoMensagem", "CODIGO_CREDPAGO", "EmailOffice",
-                    "PossuiAnexo", "AnexoCodigoFinalidade", "FacebookID",
-                    {"CorretorCliente": ["Nome"]}
-                ],
-                "paginacao": {"pagina": 1, "quantidade": RECORDS_PER_PAGE}
-            })
+            pesquisa = json.dumps(PAYLOAD_ENDPOINT_CLIENTES)
             return f"{BASE_URL}/clientes/listar?key={TOKEN}&empresa={EMPRESA}&pesquisa={pesquisa}"
 
         def generate_cliente_report(self, df: pd.DataFrame):
@@ -564,6 +545,9 @@ def extract_realtor(customer):
                         return {"error": f"Falha após {MAX_RETRIES} tentativas", "url": url}
                 else:
                     logger.error(f"Erro na requisição. Status: {response.status_code}")
+                    if response.status_code == 401:
+                        print('ERRO NA AUTENTICACAO/MONTAGEM DA URL DINAMICA')
+                        raise
                     if retries < MAX_RETRIES:
                         time.sleep((2 ** retries) + random.uniform(0, 1))
                         return self.make_request(url, retries + 1)
@@ -1081,6 +1065,7 @@ def extract_rental_funnel(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
+    ENDPOINT_FUNIL_LOCACAO = dict(customer['endpoint_funil_locacao'])
     FOLDER = "funil_locacao"
     FILENAME = "funil_locacao.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -1162,6 +1147,9 @@ def extract_rental_funnel(customer):
                         return {"error": f"Falha após {MAX_RETRIES} tentativas", "url": url}
                 else:
                     logger.error(f"Erro na requisição. Status: {response.status_code}")
+                    if response.status_code == 401:
+                        print('ERRO NA AUTENTICACAO/MONTAGEM DA URL DINAMICA')
+                        raise
                     if retries < MAX_RETRIES:
                         time.sleep((2 ** retries) + random.uniform(0, 1))
                         return self.make_request(url, retries + 1)
@@ -1305,17 +1293,7 @@ def extract_rental_funnel(customer):
 
         def get_api_url(self, codigo_pipe: str = CODIGO_PIPE_LOCACAO) -> str:
             """Retorna a URL da API para o funil de locação"""
-            pesquisa = json.dumps({
-                "fields": [
-                    "Codigo", "NomePipe", "UltimaAtualizacao", "NomeNegocio", "Status",
-                    "DataInicial", "DataFinal", "ValorNegocio", "PrevisaoFechamento",
-                    "VeiculoCaptacao", "CodigoMotivoPerda", "MotivoPerda", "ObservacaoPerda",
-                    "CodigoPipe", "EtapaAtual", "NomeEtapa", "CodigoCliente", "NomeCliente",
-                    "FotoCliente", "CodigoImovel", "StatusAtividades"
-                ],
-                "paginacao": {"pagina": 1, "quantidade": RECORDS_PER_PAGE}
-            })
-            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={codigo_pipe}&empresa={EMPRESA}&pesquisa={pesquisa}"
+            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={codigo_pipe}&empresa={EMPRESA}&pesquisa={ENDPOINT_FUNIL_LOCACAO}"
 
         def collect_related_locacao_pipelines(self) -> pd.DataFrame:
             """Coleta dados de pipelines relacionados à locação"""
@@ -1498,6 +1476,7 @@ def extract_sales_funnel(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
+    ENDPOINT_FUNIL_VENDAS = dict(customer['endpoint_funil_vendas'])
     FOLDER = "funil_vendas"
     FILENAME = "funil_vendas.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -1578,6 +1557,9 @@ def extract_sales_funnel(customer):
                         return {"error": f"Falha após {MAX_RETRIES} tentativas", "url": url}
                 else:
                     logger.error(f"Erro na requisição. Status: {response.status_code}")
+                    if response.status_code == 401:
+                        print('ERRO NA AUTENTICACAO/MONTAGEM DA URL DINAMICA')
+                        raise
                     if retries < MAX_RETRIES:
                         time.sleep((2 ** retries) + random.uniform(0, 1))
                         return self.make_request(url, retries + 1)
@@ -1721,17 +1703,7 @@ def extract_sales_funnel(customer):
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para o funil de vendas"""
-            pesquisa = json.dumps({
-                "fields": [
-                    "Codigo", "NomePipe", "UltimaAtualizacao", "NomeNegocio", "Status",
-                    "DataInicial", "DataFinal", "ValorNegocio", "PrevisaoFechamento",
-                    "VeiculoCaptacao", "CodigoMotivoPerda", "MotivoPerda", "ObservacaoPerda",
-                    "CodigoPipe", "EtapaAtual", "NomeEtapa", "CodigoCliente", "NomeCliente",
-                    "FotoCliente", "CodigoImovel", "StatusAtividades"
-                ],
-                "paginacao": {"pagina": 1, "quantidade": RECORDS_PER_PAGE}
-            })
-            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe=1&empresa={EMPRESA}&pesquisa={pesquisa}"
+            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe=1&empresa={EMPRESA}&pesquisa={ENDPOINT_FUNIL_VENDAS}"
 
         def collect_all_pipelines_data(self) -> pd.DataFrame:
             """Coleta dados de todos os pipelines disponíveis"""
@@ -1746,18 +1718,7 @@ def extract_sales_funnel(customer):
 
             for pipe_code in pipeline_codes:
                 try:
-                    pesquisa = json.dumps({
-                        "fields": [
-                            "Codigo", "NomePipe", "UltimaAtualizacao", "NomeNegocio", "Status",
-                            "DataInicial", "DataFinal", "ValorNegocio", "PrevisaoFechamento",
-                            "VeiculoCaptacao", "CodigoMotivoPerda", "MotivoPerda", "ObservacaoPerda",
-                            "CodigoPipe", "EtapaAtual", "NomeEtapa", "CodigoCliente", "NomeCliente",
-                            "FotoCliente", "CodigoImovel", "StatusAtividades"
-                        ],
-                        "paginacao": {"pagina": 1, "quantidade": RECORDS_PER_PAGE}
-                    })
-
-                    url = f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={pipe_code}&empresa={EMPRESA}&pesquisa={pesquisa}"
+                    url = f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={pipe_code}&empresa={EMPRESA}&pesquisa={ENDPOINT_FUNIL_VENDAS}"
 
                     print(f"Testando pipeline {pipe_code}...")
                     pipeline_data = self.collect_funil_vendas_with_pagination(url)
@@ -1857,6 +1818,7 @@ def extract_real_state(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
+    PAYLOAD_ENDPOINT_IMOVEIS = dict(customer['payload_endpoint_imoveis'])
     FOLDER = "tabela_imoveis"
     FILENAME = "imoveis.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -1975,6 +1937,9 @@ def extract_real_state(customer):
                         return {"error": f"Falha após {MAX_RETRIES} tentativas", "url": url}
                 else:
                     logger.error(f"Erro na requisição. Status: {response.status_code}")
+                    if response.status_code == 401:
+                        print('ERRO NA AUTENTICACAO/MONTAGEM DA URL DINAMICA')
+                        raise
                     if retries < MAX_RETRIES:
                         time.sleep((2 ** retries) + random.uniform(0, 1))
                         return self.make_request(url, retries + 1)
@@ -2033,23 +1998,7 @@ def extract_real_state(customer):
         def get_page_data(self, page: int) -> Tuple[List[Dict], bool]:
             """Obtém os dados de uma página específica - Retorna: (dados, tem_erro)"""
             try:
-                # payload = dict(customer['payload_endpoint_imoveis'])
-                payload = {
-                  "fields": [
-                    "Codigo",
-                    "Categoria",
-                    "Bairro",
-                    "Cidade",
-                    "ValorVenda",
-                    "ValorLocacao"
-                  ],
-                  "paginacao": {
-                    "pagina": page,
-                    "quantidade": RECORDS_PER_PAGE
-                  }
-                }
-
-                url = f"{BASE_URL}/imoveis/listar?key={TOKEN}&empresa={EMPRESA}&showtotal=1&pesquisa={json.dumps(payload)}"
+                url = f"{BASE_URL}/imoveis/listar?key={TOKEN}&empresa={EMPRESA}&showtotal=1&pesquisa={json.dumps(PAYLOAD_ENDPOINT_IMOVEIS)}"
 
                 # Criar um ID único para a requisição
                 req_id = f"imoveis_{page}"
