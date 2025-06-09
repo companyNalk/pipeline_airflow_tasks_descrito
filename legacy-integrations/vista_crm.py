@@ -43,6 +43,10 @@ def extract_customers(customer):
     )
     logger = logging.getLogger('clientes_collector')
 
+    if not PAYLOAD_ENDPOINT_CLIENTES or PAYLOAD_ENDPOINT_CLIENTES.strip() == '':
+        logger.info('CLIENTE NAO UTILIZA ESTE ENDPOINT.')
+        return
+
     class ClientesCollector:
         """Classe para coleta de dados da Tabela de Clientes da API VistaHost"""
 
@@ -1083,6 +1087,10 @@ def extract_rental_funnel(customer):
     )
     logger = logging.getLogger('funil_locacao_collector')
 
+    if not ENDPOINT_FUNIL_LOCACAO or ENDPOINT_FUNIL_LOCACAO.strip() == '':
+        logger.info('CLIENTE NAO UTILIZA ESTE ENDPOINT.')
+        return
+
     class FunilLocacaoCollector:
         """Classe para coleta de dados do Funil de Locação da API VistaHost"""
 
@@ -1493,6 +1501,10 @@ def extract_sales_funnel(customer):
     )
     logger = logging.getLogger('funil_vendas_collector')
 
+    if not ENDPOINT_FUNIL_VENDAS or ENDPOINT_FUNIL_VENDAS.strip() == '':
+        logger.info('CLIENTE NAO UTILIZA ESTE ENDPOINT.')
+        return
+
     class FunilVendasCollector:
         """Classe para coleta de dados do Funil de Vendas da API VistaHost"""
 
@@ -1819,7 +1831,7 @@ def extract_real_state(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
-    PAYLOAD_ENDPOINT_IMOVEIS = customer['payload_endpoint_imoveis']
+    PAYLOAD_ENDPOINT_FUNIL_LOCACAO = customer['payload_endpoint_funil_locacao']
     FOLDER = "tabela_imoveis"
     FILENAME = "imoveis.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -1834,6 +1846,10 @@ def extract_real_state(customer):
         handlers=[logging.StreamHandler(), logging.FileHandler('imoveis_collector.log')]
     )
     logger = logging.getLogger('imoveis_collector')
+
+    if not PAYLOAD_ENDPOINT_FUNIL_LOCACAO or PAYLOAD_ENDPOINT_FUNIL_LOCACAO.strip() == '':
+        logger.info('CLIENTE NAO UTILIZA ESTE ENDPOINT.')
+        return
 
     class ImoveisCollector:
         """Classe para coleta de dados da Tabela de Imóveis da API VistaHost"""
@@ -1999,7 +2015,9 @@ def extract_real_state(customer):
         def get_page_data(self, page: int) -> Tuple[List[Dict], bool]:
             """Obtém os dados de uma página específica - Retorna: (dados, tem_erro)"""
             try:
-                url = f"{BASE_URL}/imoveis/listar?key={TOKEN}&empresa={EMPRESA}&showtotal=1&pesquisa={json.dumps(PAYLOAD_ENDPOINT_IMOVEIS)}"
+                pesquisa = PAYLOAD_ENDPOINT_FUNIL_LOCACAO.replace('RECORDS_PER_PAGE', str(RECORDS_PER_PAGE))
+
+                url = f"{BASE_URL}/imoveis/listar?key={TOKEN}&empresa={EMPRESA}&showtotal=1&pesquisa={pesquisa}"
 
                 # Criar um ID único para a requisição
                 req_id = f"imoveis_{page}"
@@ -2323,20 +2341,20 @@ def get_extraction_tasks():
             'task_id': 'extract_customers',
             'python_callable': extract_customers
         },
-        # {
-        #     'task_id': 'extract_realtor',
-        #     'python_callable': extract_realtor
-        # },
-        # {
-        #     'task_id': 'extract_rental_funnel',
-        #     'python_callable': extract_rental_funnel
-        # },
-        # {
-        #     'task_id': 'extract_sales_funnel',
-        #     'python_callable': extract_sales_funnel
-        # },
-        # {
-        #     'task_id': 'extract_real_state',
-        #     'python_callable': extract_real_state
-        # }
+        {
+            'task_id': 'extract_realtor',
+            'python_callable': extract_realtor
+        },
+        {
+            'task_id': 'extract_rental_funnel',
+            'python_callable': extract_rental_funnel
+        },
+        {
+            'task_id': 'extract_sales_funnel',
+            'python_callable': extract_sales_funnel
+        },
+        {
+            'task_id': 'extract_real_state',
+            'python_callable': extract_real_state
+        }
     ]
