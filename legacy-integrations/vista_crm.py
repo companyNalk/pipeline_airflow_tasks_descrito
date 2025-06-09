@@ -27,7 +27,7 @@ def extract_customers(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
-    PAYLOAD_ENDPOINT_CLIENTES = dict(customer['payload_endpoint_clientes'])
+    PAYLOAD_ENDPOINT_CLIENTES = customer['payload_endpoint_clientes']
     FOLDER = "tabela_clientes"
     FILENAME = "clientes.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
