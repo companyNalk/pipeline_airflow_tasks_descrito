@@ -259,8 +259,7 @@ def extract_customers(customer):
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para a tabela de clientes"""
-            pesquisa = json.dumps(PAYLOAD_ENDPOINT_CLIENTES)
-            return f"{BASE_URL}/clientes/listar?key={TOKEN}&empresa={EMPRESA}&pesquisa={pesquisa}"
+            return f"{BASE_URL}/clientes/listar?key={TOKEN}&empresa={EMPRESA}&pesquisa={PAYLOAD_ENDPOINT_CLIENTES}"
 
         def generate_cliente_report(self, df: pd.DataFrame):
             """Gera um relatório específico sobre os dados de clientes coletados"""
