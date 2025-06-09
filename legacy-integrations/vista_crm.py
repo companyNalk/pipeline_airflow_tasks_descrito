@@ -1302,9 +1302,9 @@ def extract_rental_funnel(customer):
 
         def get_api_url(self, codigo_pipe: str = CODIGO_PIPE_LOCACAO) -> str:
             """Retorna a URL da API para o funil de locação"""
+            pesquisa = PAYLOAD_ENDPOINT_FUNIL_LOCACAO.replace('RECORDS_PER_PAGE', str(RECORDS_PER_PAGE))
 
-
-            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={codigo_pipe}&empresa={EMPRESA}&pesquisa={PAYLOAD_ENDPOINT_FUNIL_LOCACAO}"
+            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={codigo_pipe}&empresa={EMPRESA}&pesquisa={pesquisa}"
 
         def collect_related_locacao_pipelines(self) -> pd.DataFrame:
             """Coleta dados de pipelines relacionados à locação"""
@@ -1718,7 +1718,9 @@ def extract_sales_funnel(customer):
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para o funil de vendas"""
-            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe=1&empresa={EMPRESA}&pesquisa={PAYLOAD_ENDPOINT_FUNIL_VENDAS}"
+            pesquisa = PAYLOAD_ENDPOINT_FUNIL_VENDAS.replace('RECORDS_PER_PAGE', str(RECORDS_PER_PAGE))
+
+            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe=1&empresa={EMPRESA}&pesquisa={pesquisa}"
 
         def collect_all_pipelines_data(self) -> pd.DataFrame:
             """Coleta dados de todos os pipelines disponíveis"""
