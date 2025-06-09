@@ -259,7 +259,7 @@ def extract_customers(customer):
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para a tabela de clientes"""
-            return f"{BASE_URL}/clientes/listar?key={TOKEN}&empresa={EMPRESA}&pesquisa={PAYLOAD_ENDPOINT_CLIENTES}"
+            return f"{BASE_URL}/clientes/listar?key={TOKEN}&empresa={EMPRESA}&pesquisa={json.dumps(PAYLOAD_ENDPOINT_CLIENTES)}"
 
         def generate_cliente_report(self, df: pd.DataFrame):
             """Gera um relatório específico sobre os dados de clientes coletados"""
@@ -1064,7 +1064,7 @@ def extract_rental_funnel(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
-    ENDPOINT_FUNIL_LOCACAO = dict(customer['endpoint_funil_locacao'])
+    ENDPOINT_FUNIL_LOCACAO = customer['endpoint_funil_locacao']
     FOLDER = "funil_locacao"
     FILENAME = "funil_locacao.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -1475,7 +1475,7 @@ def extract_sales_funnel(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
-    ENDPOINT_FUNIL_VENDAS = dict(customer['endpoint_funil_vendas'])
+    ENDPOINT_FUNIL_VENDAS = customer['endpoint_funil_vendas']
     FOLDER = "funil_vendas"
     FILENAME = "funil_vendas.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -1817,7 +1817,7 @@ def extract_real_state(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
-    PAYLOAD_ENDPOINT_IMOVEIS = dict(customer['payload_endpoint_imoveis'])
+    PAYLOAD_ENDPOINT_IMOVEIS = customer['payload_endpoint_imoveis']
     FOLDER = "tabela_imoveis"
     FILENAME = "imoveis.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -2321,20 +2321,20 @@ def get_extraction_tasks():
             'task_id': 'extract_customers',
             'python_callable': extract_customers
         },
-        {
-            'task_id': 'extract_realtor',
-            'python_callable': extract_realtor
-        },
-        {
-            'task_id': 'extract_rental_funnel',
-            'python_callable': extract_rental_funnel
-        },
-        {
-            'task_id': 'extract_sales_funnel',
-            'python_callable': extract_sales_funnel
-        },
-        {
-            'task_id': 'extract_real_state',
-            'python_callable': extract_real_state
-        }
+        # {
+        #     'task_id': 'extract_realtor',
+        #     'python_callable': extract_realtor
+        # },
+        # {
+        #     'task_id': 'extract_rental_funnel',
+        #     'python_callable': extract_rental_funnel
+        # },
+        # {
+        #     'task_id': 'extract_sales_funnel',
+        #     'python_callable': extract_sales_funnel
+        # },
+        # {
+        #     'task_id': 'extract_real_state',
+        #     'python_callable': extract_real_state
+        # }
     ]
