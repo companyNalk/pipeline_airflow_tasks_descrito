@@ -1070,7 +1070,7 @@ def extract_rental_funnel(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
-    ENDPOINT_FUNIL_LOCACAO = customer['endpoint_funil_locacao']
+    PAYLOAD_ENDPOINT_FUNIL_LOCACAO = customer['payload_endpoint_funil_locacao']
     FOLDER = "funil_locacao"
     FILENAME = "funil_locacao.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -1087,7 +1087,7 @@ def extract_rental_funnel(customer):
     )
     logger = logging.getLogger('funil_locacao_collector')
 
-    if not ENDPOINT_FUNIL_LOCACAO or ENDPOINT_FUNIL_LOCACAO.strip() == '':
+    if not PAYLOAD_ENDPOINT_FUNIL_LOCACAO or PAYLOAD_ENDPOINT_FUNIL_LOCACAO.strip() == '':
         logger.info('CLIENTE NAO UTILIZA ESTE ENDPOINT.')
         return
 
@@ -1302,7 +1302,9 @@ def extract_rental_funnel(customer):
 
         def get_api_url(self, codigo_pipe: str = CODIGO_PIPE_LOCACAO) -> str:
             """Retorna a URL da API para o funil de locação"""
-            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={codigo_pipe}&empresa={EMPRESA}&pesquisa={ENDPOINT_FUNIL_LOCACAO}"
+
+
+            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={codigo_pipe}&empresa={EMPRESA}&pesquisa={PAYLOAD_ENDPOINT_FUNIL_LOCACAO}"
 
         def collect_related_locacao_pipelines(self) -> pd.DataFrame:
             """Coleta dados de pipelines relacionados à locação"""
@@ -1485,7 +1487,7 @@ def extract_sales_funnel(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
-    ENDPOINT_FUNIL_VENDAS = customer['endpoint_funil_vendas']
+    PAYLOAD_ENDPOINT_FUNIL_VENDAS = customer['payload_endpoint_funil_vendas']
     FOLDER = "funil_vendas"
     FILENAME = "funil_vendas.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -1501,7 +1503,7 @@ def extract_sales_funnel(customer):
     )
     logger = logging.getLogger('funil_vendas_collector')
 
-    if not ENDPOINT_FUNIL_VENDAS or ENDPOINT_FUNIL_VENDAS.strip() == '':
+    if not PAYLOAD_ENDPOINT_FUNIL_VENDAS or PAYLOAD_ENDPOINT_FUNIL_VENDAS.strip() == '':
         logger.info('CLIENTE NAO UTILIZA ESTE ENDPOINT.')
         return
 
@@ -1716,7 +1718,7 @@ def extract_sales_funnel(customer):
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para o funil de vendas"""
-            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe=1&empresa={EMPRESA}&pesquisa={ENDPOINT_FUNIL_VENDAS}"
+            return f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe=1&empresa={EMPRESA}&pesquisa={PAYLOAD_ENDPOINT_FUNIL_VENDAS}"
 
         def collect_all_pipelines_data(self) -> pd.DataFrame:
             """Coleta dados de todos os pipelines disponíveis"""
@@ -1731,7 +1733,7 @@ def extract_sales_funnel(customer):
 
             for pipe_code in pipeline_codes:
                 try:
-                    url = f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={pipe_code}&empresa={EMPRESA}&pesquisa={ENDPOINT_FUNIL_VENDAS}"
+                    url = f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={pipe_code}&empresa={EMPRESA}&pesquisa={PAYLOAD_ENDPOINT_FUNIL_VENDAS}"
 
                     print(f"Testando pipeline {pipe_code}...")
                     pipeline_data = self.collect_funil_vendas_with_pagination(url)
@@ -1831,7 +1833,7 @@ def extract_real_state(customer):
     TOKEN = customer['api_token']
     EMPRESA = customer['empresa']
     BUCKET_NAME = customer['bucket_name']
-    PAYLOAD_ENDPOINT_FUNIL_LOCACAO = customer['payload_endpoint_funil_locacao']
+    PAYLOAD_ENDPOINT_IMOVEIS = customer['payload_endpoint_imoveis']
     FOLDER = "tabela_imoveis"
     FILENAME = "imoveis.csv"
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
@@ -1847,7 +1849,7 @@ def extract_real_state(customer):
     )
     logger = logging.getLogger('imoveis_collector')
 
-    if not PAYLOAD_ENDPOINT_FUNIL_LOCACAO or PAYLOAD_ENDPOINT_FUNIL_LOCACAO.strip() == '':
+    if not PAYLOAD_ENDPOINT_IMOVEIS or PAYLOAD_ENDPOINT_IMOVEIS.strip() == '':
         logger.info('CLIENTE NAO UTILIZA ESTE ENDPOINT.')
         return
 
@@ -2015,7 +2017,7 @@ def extract_real_state(customer):
         def get_page_data(self, page: int) -> Tuple[List[Dict], bool]:
             """Obtém os dados de uma página específica - Retorna: (dados, tem_erro)"""
             try:
-                pesquisa = PAYLOAD_ENDPOINT_FUNIL_LOCACAO.replace('RECORDS_PER_PAGE', str(RECORDS_PER_PAGE))
+                pesquisa = PAYLOAD_ENDPOINT_IMOVEIS.replace('RECORDS_PER_PAGE', str(RECORDS_PER_PAGE))
 
                 url = f"{BASE_URL}/imoveis/listar?key={TOKEN}&empresa={EMPRESA}&showtotal=1&pesquisa={pesquisa}"
 
