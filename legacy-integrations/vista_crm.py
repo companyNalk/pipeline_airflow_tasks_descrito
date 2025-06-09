@@ -2019,7 +2019,7 @@ def extract_real_state(customer):
         def get_page_data(self, page: int) -> Tuple[List[Dict], bool]:
             """Obtém os dados de uma página específica - Retorna: (dados, tem_erro)"""
             try:
-                pesquisa = PAYLOAD_ENDPOINT_IMOVEIS.replace('RECORDS_PER_PAGE', str(RECORDS_PER_PAGE))
+                pesquisa = PAYLOAD_ENDPOINT_IMOVEIS.replace('page', str(page)).replace('RECORDS_PER_PAGE', str(RECORDS_PER_PAGE))
 
                 url = f"{BASE_URL}/imoveis/listar?key={TOKEN}&empresa={EMPRESA}&showtotal=1&pesquisa={pesquisa}"
 
@@ -2341,18 +2341,18 @@ def get_extraction_tasks():
         list: List of task configurations
     """
     return [
-        {
-            'task_id': 'extract_customers',
-            'python_callable': extract_customers
-        },
-        {
-            'task_id': 'extract_realtor',
-            'python_callable': extract_realtor
-        },
-        {
-            'task_id': 'extract_rental_funnel',
-            'python_callable': extract_rental_funnel
-        },
+        # {
+        #     'task_id': 'extract_customers',
+        #     'python_callable': extract_customers
+        # },
+        # {
+        #     'task_id': 'extract_realtor',
+        #     'python_callable': extract_realtor
+        # },
+        # {
+        #     'task_id': 'extract_rental_funnel',
+        #     'python_callable': extract_rental_funnel
+        # },
         {
             'task_id': 'extract_sales_funnel',
             'python_callable': extract_sales_funnel
