@@ -259,56 +259,7 @@ def extract_customers(customer):
 
         def get_api_url(self) -> str:
             """Retorna a URL da API para a tabela de clientes"""
-            # print(json.dumps(PAYLOAD_ENDPOINT_CLIENTES))
-
-            # pesquisa = json.dumps({
-            # "fields": [
-            #     "DataCadastro", "RG", "RGEmissor", "CPFCNPJ", "DataNascimento", "Nacionalidade",
-            #     "Profissao", "EstadoCivil", "Celular", "Banco", "Agencia", "Conta",
-            #     "EnderecoResidencial", "BairroResidencial", "CidadeResidencial", "UFResidencial",
-            #     "CEPResidencial", "PaisResidencial", "FoneResidencial", "FaxResidencial",
-            #     "EmailResidencial", "NomeConjuge", "RGConjuge", "RGEmissorConjuge", "CPFConjuge",
-            #     "NascimentoConjuge", "NacionalidadeConjuge", "ProfissaoConjuge", "CelularConjuge",
-            #     "FonePrincipal", "EnderecoComercial", "BairroComercial", "CidadeComercial",
-            #     "UFComercial", "CEPComercial", "PaisComercial", "FoneComercial", "FaxComercial",
-            #     "EmailComercial", "Observacoes", "EnderecoComplemento", "MailingList", "Nome",
-            #     "Autorizado", "Cliente", "Fiador", "Proprietario", "TipoPessoa",
-            #     "EnderecoCorrespondencia", "Codigo", "Ramal", "EnderecoNumero", "EmailConjuge",
-            #     "Naturalidade", "Status", "Sexo", "AniversarioDia", "AniversarioMes", "Investidor",
-            #     "Interesse", "VeiculoCaptacao", "UsuarioWeb", "SenhaWeb", "Bloco", "ClienteFavorito",
-            #     "Potencial", "ClienteImportado", "CampanhaImportacao", "DataImportacao",
-            #     "ProprietarioRestrito", "RGDataExpedicao", "CorretorResponsvel", "FoneExterior",
-            #     "FerramentaCaptacao", "FotoCliente", "Foto", "CodigoAgencia", "Corretor",
-            #     "CreditoSituacao", "CreditoMensagem", "CODIGO_CREDPAGO", "EmailOffice",
-            #     "PossuiAnexo", "AnexoCodigoFinalidade", "FacebookID",
-            #     {"CorretorCliente": ["Nome"]}
-            # ],
-            # "paginacao": {"pagina": 1, "quantidade": RECORDS_PER_PAGE}
-            # })
-            pesquisa = json.dumps(PAYLOAD_ENDPOINT_CLIENTES)
-
-            # Converter para dict se for string
-            if isinstance(pesquisa, str):
-                payload_dict = json.loads(pesquisa)
-            else:
-                payload_dict = pesquisa.copy()
-
-            # Garantir tipos corretos
-            if 'paginacao' in payload_dict:
-                # Substituir RECORDS_PER_PAGE
-                if payload_dict['paginacao']['quantidade'] == 'RECORDS_PER_PAGE':
-                    payload_dict['paginacao']['quantidade'] = RECORDS_PER_PAGE
-
-                # Garantir que pagina seja int
-                payload_dict['paginacao']['pagina'] = int(payload_dict['paginacao']['pagina'])
-
-                # Garantir que quantidade seja int
-                payload_dict['paginacao']['quantidade'] = int(payload_dict['paginacao']['quantidade'])
-
-            PAYLOAD_ENDPOINT_CLIENTES = payload_dict
-
-            print(json.dumps(PAYLOAD_ENDPOINT_CLIENTES))
-            pesquisa = json.dumps(PAYLOAD_ENDPOINT_CLIENTES)
+            pesquisa = PAYLOAD_ENDPOINT_CLIENTES.replace('RECORDS_PER_PAGE', str(RECORDS_PER_PAGE))
 
             return f"{BASE_URL}/clientes/listar?key={TOKEN}&empresa={EMPRESA}&pesquisa={pesquisa}"
 
