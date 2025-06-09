@@ -2369,10 +2369,10 @@ def get_extraction_tasks():
         list: List of task configurations
     """
     return [
-        {
-            'task_id': 'extract_customers',
-            'python_callable': extract_customers
-        },
+        # {
+        #     'task_id': 'extract_customers',
+        #     'python_callable': extract_customers
+        # },
         # {
         #     'task_id': 'extract_realtor',
         #     'python_callable': extract_realtor
@@ -2385,8 +2385,8 @@ def get_extraction_tasks():
         #     'task_id': 'extract_sales_funnel',
         #     'python_callable': extract_sales_funnel
         # },
-        # {
-        #     'task_id': 'extract_real_state',
-        #     'python_callable': extract_real_state
-        # }
+        {
+            'task_id': 'extract_real_state',
+            'python_callable': extract_real_state
+        }
     ]
