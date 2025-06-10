@@ -2359,8 +2359,8 @@ def get_extraction_tasks():
             'task_id': 'extract_sales_funnel',
             'python_callable': extract_sales_funnel
         },
-        # {
-        #     'task_id': 'extract_real_state',
-        #     'python_callable': extract_real_state
-        # }
+        {
+            'task_id': 'extract_real_state',
+            'python_callable': extract_real_state
+        }
     ]
