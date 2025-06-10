@@ -1735,7 +1735,9 @@ def extract_sales_funnel(customer):
 
             for pipe_code in pipeline_codes:
                 try:
-                    url = f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={pipe_code}&empresa={EMPRESA}&pesquisa={PAYLOAD_ENDPOINT_FUNIL_VENDAS}"
+                    pesquisa = PAYLOAD_ENDPOINT_FUNIL_VENDAS.replace('RECORDS_PER_PAGE', str(RECORDS_PER_PAGE))
+
+                    url = f"{BASE_URL}/negocios/listar?key={TOKEN}&codigo_pipe={pipe_code}&empresa={EMPRESA}&pesquisa={pesquisa}"
 
                     print(f"Testando pipeline {pipe_code}...")
                     pipeline_data = self.collect_funil_vendas_with_pagination(url)
@@ -2357,8 +2359,8 @@ def get_extraction_tasks():
             'task_id': 'extract_sales_funnel',
             'python_callable': extract_sales_funnel
         },
-        {
-            'task_id': 'extract_real_state',
-            'python_callable': extract_real_state
-        }
+        # {
+        #     'task_id': 'extract_real_state',
+        #     'python_callable': extract_real_state
+        # }
     ]
