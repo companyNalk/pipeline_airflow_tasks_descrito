@@ -25,11 +25,6 @@ LIMIT_PER_PAGE = 100
 def get_arguments():
     return (ArgumentManager("Script HubSpot - Coleta com Campos Configuráveis")
             .add("ACCESS_TOKEN", "Token de acesso para autenticação", required=True)
-            .add("FIELDS_CONTACTS", "Token de acesso para autenticação", required=True)
-            .add("FIELDS_DEALS", "Token de acesso para autenticação", required=True)
-            .add("FIELDS_OWNERS", "Token de acesso para autenticação", required=True)
-            .add("FIELDS_PIPELINES", "Token de acesso para autenticação", required=True)
-            .add("FIELDS_PROPERTIES", "Token de acesso para autenticação", required=True)
             .parse())
 
 
@@ -47,6 +42,7 @@ def parse_env_list(env_var_name, default='[]'):
         return parsed_list
 
     except (ValueError, SyntaxError):
+        logger.warning(f"⚠️ Erro ao fazer parse de {env_var_name}, usando lista vazia (todos os campos)")
         return []
 
 
@@ -58,24 +54,24 @@ FIELDS_PROPERTIES = parse_env_list('FIELDS_PROPERTIES')
 
 ENDPOINT_FIELD_CONFIG = {
     "hubspot_contacts": {
-        "mode": "specific",
+        "mode": "specific" if FIELDS_CONTACTS else "all",
         "fields": FIELDS_CONTACTS
     },
     "hubspot_deals": {
-        "mode": "all",
-        "fields": args.FIELDS_DEALS
+        "mode": "specific" if FIELDS_DEALS else "all",
+        "fields": FIELDS_DEALS
     },
     "hubspot_owners": {
-        "mode": "all",
-        "fields": args.FIELDS_OWNERS
+        "mode": "specific" if FIELDS_OWNERS else "all",
+        "fields": FIELDS_OWNERS
     },
     "hubspot_pipelines": {
-        "mode": "all",
-        "fields": args.FIELDS_PIPELINES
+        "mode": "specific" if FIELDS_PIPELINES else "all",
+        "fields": FIELDS_PIPELINES
     },
     "hubspot_properties": {
-        "mode": "all",
-        "fields": args.FIELDS_PROPERTIES
+        "mode": "specific" if FIELDS_PROPERTIES else "all",
+        "fields": FIELDS_PROPERTIES
     }
 }
 
@@ -94,6 +90,7 @@ ENDPOINT_PARAMS = {
     "hubspot_pipelines": {"object_type": "deals"},
     "hubspot_properties": {"object_type": "contacts"}
 }
+
 
 def init_hubspot_client(access_token):
     logger.info("🔑 Inicializando cliente HubSpot")
@@ -138,13 +135,14 @@ def get_endpoint_properties(client, endpoint_name, object_type):
             for field in specified_fields:
                 if field in available_properties:
                     existing_fields.append(field)
-                    logger.info(f"✅ Campo encontrado: {field}")
+                    logger.debug(f"✅ Campo encontrado: {field}")
                 else:
                     missing_fields.append(field)
                     logger.warning(f"⚠️ Campo NÃO encontrado: {field}")
 
             if missing_fields:
-                logger.warning(f"⚠️ {len(missing_fields)} campos não encontrados: {', '.join(missing_fields)}")
+                logger.warning(
+                    f"⚠️ {len(missing_fields)} campos não encontrados: {', '.join(missing_fields[:10])}{'...' if len(missing_fields) > 10 else ''}")
 
             logger.info(f"🎯 {len(existing_fields)} campos válidos serão coletados")
             return existing_fields
@@ -194,8 +192,9 @@ def process_deals_batch(client, property_groups, limit, after=None):
                 api_response = fetch_deals_page(client, properties, limit, current_after)
                 deals = api_response.results
 
-                has_more = api_response.paging is not None
-                current_after = api_response.paging.next.after if has_more else None
+                if group_index == 0:
+                    has_more = api_response.paging is not None
+                    current_after = api_response.paging.next.after if has_more else None
 
                 for deal in deals:
                     deal_id = deal.id
@@ -310,8 +309,7 @@ async def fetch_contacts_page_with_properties(access_token, properties, after=No
     return None
 
 
-async def process_contacts_with_config(client, access_token, endpoint_name, log_details=False, after=None,
-                                       max_contacts=None):
+async def process_contacts_with_config(client, access_token, endpoint_name, log_details=False, after=None, max_contacts=None):
     logger.info(f"🔄 Iniciando coleta configurada para {endpoint_name} a partir de: {after or 'início'}")
 
     target_properties = get_endpoint_properties(client, endpoint_name, "contacts")
@@ -336,7 +334,6 @@ async def process_contacts_with_config(client, access_token, endpoint_name, log_
                 break
 
             batch_start_time = time.time()
-
             contact_objects = {}
 
             for group_index, properties in enumerate(property_groups):
@@ -360,7 +357,6 @@ async def process_contacts_with_config(client, access_token, endpoint_name, log_
                     continue
 
                 consecutive_errors = 0
-
                 contacts = data['results']
 
                 for contact in contacts:
@@ -436,7 +432,8 @@ def process_contacts_endpoint(client, access_token, endpoint_name="hubspot_conta
         config = ENDPOINT_FIELD_CONFIG.get(endpoint_name, {})
         logger.info(f"🎯 Configuração: modo='{config.get('mode', 'all')}'")
         if config.get('mode') == 'specific':
-            logger.info(f"🎯 Campos específicos: {', '.join(config.get('fields', []))}")
+            fields = config.get('fields', [])
+            logger.info(f"🎯 Campos específicos: {', '.join(fields[:5])}{'...' if len(fields) > 5 else ''}")
 
         endpoint_start = time.time()
 
@@ -453,7 +450,6 @@ def process_contacts_endpoint(client, access_token, endpoint_name="hubspot_conta
         processed_data = Utils.process_and_save_data(raw_data, endpoint_name)
 
         endpoint_duration = time.time() - endpoint_start
-
         total_properties = len(raw_data[0].keys()) if raw_data else 0
 
         stats = {
@@ -679,14 +675,16 @@ def main():
 
     try:
         access_token = args.ACCESS_TOKEN
-        log_details = getattr(args, 'LOG_PROPERTIES', 'false')
-        if log_details is not None:
+        log_details = getattr(args, 'LOG_PROPERTIES', False)
+        if isinstance(log_details, str):
             log_details = log_details.lower() == 'true'
-        else:
-            log_details = False
-        endpoints_filter = args.ENDPOINTS.split(',') if hasattr(args, 'ENDPOINTS') and args.ENDPOINTS else None
+
+        endpoints_filter = getattr(args, 'ENDPOINTS', None)
+        if endpoints_filter:
+            endpoints_filter = endpoints_filter.split(',')
+
         max_parallel_str = getattr(args, 'MAX_PARALLEL', None)
-        max_parallel = int(max_parallel_str) if max_parallel_str is not None else MAX_WORKERS
+        max_parallel = int(max_parallel_str) if max_parallel_str else MAX_WORKERS
 
         hubspot_client = init_hubspot_client(access_token)
 
@@ -732,6 +730,15 @@ def main():
                 elif endpoint_name == "hubspot_properties":
                     object_type = ENDPOINT_PARAMS[endpoint_name].get("object_type", "contacts")
                     _, stats = process_properties_endpoint(hubspot_client, endpoint_name, object_type)
+
+                else:
+                    logger.error(f"❌ Endpoint desconhecido: {endpoint_name}")
+                    stats = {
+                        "registros": 0,
+                        "status": "Falha: Endpoint desconhecido",
+                        "tempo": 0,
+                        "total_properties": 0
+                    }
 
                 logger.info(f"✅ Processamento paralelo do endpoint {endpoint_name} concluído com sucesso")
                 return endpoint_name, stats
