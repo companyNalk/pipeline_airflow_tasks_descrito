@@ -227,7 +227,7 @@ def fetch_with_id(http_client, template, id_value, headers, no_pagination=False)
             else:
                 # Se for um único objeto
                 items = [result]
-                logger.info(f"✅ Resposta é objeto único, convertendo para lista")
+                logger.info("✅ Resposta é objeto único, convertendo para lista")
 
             # Adicionar ID do pai a cada item
             for item in items:
@@ -435,7 +435,7 @@ def preprocess_teams_data(raw_data):
     if not raw_data or not isinstance(raw_data, list):
         return raw_data
 
-    logger.info(f"🔧 Pré-processando dados de teams para expandir members")
+    logger.info("🔧 Pré-processando dados de teams para expandir members")
 
     # Primeiro, limpar quebras de linha de todos os campos de forma robusta
     cleaned_data = clean_text_fields(raw_data)
