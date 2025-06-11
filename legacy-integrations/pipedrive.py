@@ -979,20 +979,29 @@ def run_persons(customer):
                     print(f"Erro na requisição para {url}: {e}")
                     return {"data": []}
 
-    def upload_to_storage(dataframe: pd.DataFrame, filename: str) -> bool:
+    def upload_to_storage(dataframe: pd.DataFrame, folder: str, filename: str) -> bool:
         if dataframe.empty:
             return False
 
         try:
             dataframe.columns = [normalize_column_name(col) for col in dataframe.columns]
             dataframe = dataframe.loc[:, ~dataframe.columns.duplicated()]
-            dataframe = dataframe.replace('None', None)
+
+            dataframe = dataframe.replace(['None', 'nan', 'NaN', 'null', 'NULL'], '')
+
+            text_columns = [col for col in dataframe.columns if any(keyword in col.lower() for keyword in ['nome', 'endereco', 'rua', 'street', 'address', 'description', 'descricao'])]
+
+            for col in text_columns:
+                if col in dataframe.columns:
+                    dataframe[col] = dataframe[col].fillna('').astype(str)
+                    dataframe[col] = dataframe[col].replace(['nan', 'None', 'null'], '')
 
             bucket = storage_client.bucket(BUCKET_NAME)
-            blob = bucket.blob(f"{FOLDER}/{filename}")
+            blob = bucket.blob(f"{folder}/{filename}")
             csv_data = dataframe.to_csv(index=False, sep=';', encoding='utf-8-sig', na_rep='')
+
             blob.upload_from_string(csv_data, content_type="text/csv")
-            print(f"Upload: {len(dataframe)} registros em {FOLDER}/{filename}")
+            print(f"Upload: {len(dataframe)} registros em {folder}/{filename}")
             return True
         except Exception as e:
             print(f"Erro no upload de {filename}: {e}")
