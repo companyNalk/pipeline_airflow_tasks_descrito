@@ -1,0 +1,101 @@
+DEALS (centro do sistema)
+{
+  "id": 123,
+  "person_id": 456,        // → persons
+  "org_id": 789,           // → organizations
+  "pipeline_id": 1,        // → pipelines
+  "stage_id": 5,           // → stages
+  "user_id": 101           // → users
+}
+
+PERSONS (contatos)
+{
+  "id": 456,
+  "org_id": 789,           // → organizations
+  "owner_id": 101          // → users
+}
+
+ORGANIZATIONS (empresas)
+json{
+  "id": 789,
+  "owner_id": 101          // → users
+}
+
+ACTIVITIES (tarefas/compromissos)
+json{
+  "id": 999,
+  "deal_id": 123,          // → deals
+  "person_id": 456,        // → persons
+  "org_id": 789,           // → organizations
+  "user_id": 101           // → users
+}
+
+FASE 1:
+    01. GET /api/v1/organizationFields?limit=500&api_token=XXXXXX
+    02. GET /api/v1/dealFields?limit=500&api_token=XXXXXX
+    03. GET /api/v1/personFields?limit=500&api_token=XXXXXX
+    04. GET /api/v1/activityFields?limit=500&api_token=XXXXXX
+    05. GET /api/v1/productFields?limit=500&api_token=XXXXXX
+    06. GET /api/v1/leadFields?limit=500&api_token=XXXXXX
+    07. GET /api/v2/pipelines?limit=500&api_token=XXXXXX
+    08. GET /api/v2/stages?limit=500&api_token=XXXXXX
+
+FASE 2:
+    09. GET /api/v2/organizations?limit=500&api_token=XXXXXX
+    10. GET /api/v2/persons?limit=500&api_token=XXXXXX
+
+    11. GET /api/v2/products?limit=500&api_token=XXXXXX
+    12. GET /api/v2/users?limit=500&api_token=XXXXXX
+
+FASE 3:
+    13. GET /api/v2/deals?limit=500&api_token=XXXXXX
+    14. GET /api/v2/activities?limit=500&api_token=XXXXXX
+    15. GET /api/v1/leads?limit=500&api_token=XXXXXX
+
+CUSTOM_FIELDS
+    custom_fields
+
+LIGACOES
+    TABELAS PRINCIPAIS E SUAS PKs:
+    organizations.csv    → PK: id
+    persons.csv         → PK: id
+    products.csv        → PK: id
+    deals.csv           → PK: id
+    activities.csv      → PK: id
+    leads.csv           → PK: id
+    pipelines.csv       → PK: id
+    stages.csv          → PK: id
+    RELACIONAMENTOS (FKs):
+
+    🏢 PERSONS → ORGANIZATIONS
+    persons.csv:
+    - id (PK)
+    - org_id (FK → organizations.id)
+
+    💼 DEALS → MÚLTIPLAS ENTIDADES
+    deals.csv:
+    - id (PK)
+    - org_id (FK → organizations.id)
+    - person_id (FK → persons.id)
+    - pipeline_id (FK → pipelines.id)
+    - stage_id (FK → stages.id)
+    - user_id (FK → users se existir)
+
+    📋 ACTIVITIES → MÚLTIPLAS ENTIDADES
+    activities.csv:
+    - id (PK)
+    - deal_id (FK → deals.id)
+    - org_id (FK → organizations.id)
+    - person_id (FK → persons.id)
+    - user_id (FK → users se existir)
+
+    🎯 LEADS → ENTIDADES
+    leads.csv:
+    - id (PK)
+    - org_id (FK → organizations.id)
+    - person_id (FK → persons.id)
+
+    🔄 STAGES → PIPELINES
+    stages.csv:
+    - id (PK)
+    - pipeline_id (FK → pipelines.id)
