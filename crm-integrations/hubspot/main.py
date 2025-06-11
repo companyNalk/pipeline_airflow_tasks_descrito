@@ -103,7 +103,63 @@ def init_hubspot_client(access_token):
         raise
 
 
+def get_deal_stage_properties():
+    """Retorna todos os campos relacionados a deal stage que devem ser coletados"""
+    return [
+        'dealstage',
+        'hs_deal_stage_id'
+        'pipeline',
+        'hs_pipeline',
+        'hs_pipeline_stage',
+        'dealname',
+        'amount',
+        'closedate',
+        'createdate'
+    ]
+
+
+def create_stage_mapping(client):
+    """Cria mapeamento de stage IDs para labels usando a API de pipelines"""
+    logger.info("🗺️ Criando mapeamento de deal stages...")
+    stage_mapping = {}
+
+    try:
+        # Buscar todos os pipelines de deals
+        pipelines_response = client.crm.pipelines.pipelines_api.get_all("deals")
+
+        for pipeline in pipelines_response.results:
+            pipeline_id = pipeline.id
+            pipeline_name = pipeline.label
+
+            logger.info(f"📋 Processando pipeline: {pipeline_name} (ID: {pipeline_id})")
+
+            # Para cada pipeline, buscar seus stages
+            if hasattr(pipeline, 'stages') and pipeline.stages:
+                for stage in pipeline.stages:
+                    stage_id = stage.id
+                    stage_label = stage.label
+
+                    stage_mapping[stage_id] = {
+                        'label': stage_label,
+                        'pipeline_id': pipeline_id,
+                        'pipeline_name': pipeline_name,
+                        'display_order': getattr(stage, 'display_order', 0),
+                        'is_closed': stage.metadata.get('isClosed', False) if hasattr(stage, 'metadata') else False,
+                        'probability': stage.metadata.get('probability', 0) if hasattr(stage, 'metadata') else 0
+                    }
+
+                    logger.debug(f"   ✅ Stage mapeado: {stage_label} (ID: {stage_id})")
+
+        logger.info(f"✅ Mapeamento criado: {len(stage_mapping)} stages de {len(pipelines_response.results)} pipelines")
+        return stage_mapping
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao criar mapeamento de stages: {str(e)}")
+        return {}
+
+
 def get_endpoint_properties(client, endpoint_name, object_type):
+    """Obter propriedades com adição automática de campos essenciais para deals"""
     config = ENDPOINT_FIELD_CONFIG.get(endpoint_name, {"mode": "all", "fields": []})
 
     logger.info(f"🔍 Configuração para {endpoint_name}: modo='{config['mode']}'")
@@ -116,6 +172,19 @@ def get_endpoint_properties(client, endpoint_name, object_type):
             all_properties = [prop.name for prop in response.results]
             duration = time.time() - start_time
             logger.info(f"✅ {len(all_properties)} propriedades obtidas em {duration:.2f}s")
+
+            # Para deals, garantir que campos essenciais de stage estão incluídos
+            if endpoint_name == "hubspot_deals":
+                essential_fields = get_deal_stage_properties()
+                added_fields = []
+                for field in essential_fields:
+                    if field not in all_properties:
+                        all_properties.append(field)
+                        added_fields.append(field)
+
+                if added_fields:
+                    logger.info(f"➕ Campos essenciais de deal stage adicionados: {', '.join(added_fields)}")
+
             return all_properties
         except Exception as e:
             logger.error(f"❌ Erro ao buscar propriedades: {str(e)}")
@@ -124,6 +193,14 @@ def get_endpoint_properties(client, endpoint_name, object_type):
     elif config["mode"] == "specific":
         specified_fields = config["fields"]
         logger.info(f"🎯 Usando {len(specified_fields)} campos específicos")
+
+        # Para deals, garantir que campos essenciais estão incluídos
+        if endpoint_name == "hubspot_deals":
+            essential_fields = get_deal_stage_properties()
+            for field in essential_fields:
+                if field not in specified_fields:
+                    specified_fields.append(field)
+                    logger.info(f"➕ Campo essencial adicionado: {field}")
 
         try:
             response = client.crm.properties.core_api.get_all(object_type)
@@ -225,18 +302,245 @@ def process_deals_batch(client, property_groups, limit, after=None):
     return all_items
 
 
-def process_deals_endpoint(client, endpoint_name="hubspot_deals", limit=LIMIT_PER_PAGE):
+def enrich_deals_with_stage_info(deals_data, stage_mapping):
+    """Enriquece dados de deals com informações legíveis de stage"""
+    logger.info("🔧 Enriquecendo dados com informações de deal stage...")
+
+    enriched_deals = []
+    deals_with_stage = 0
+    deals_without_stage = 0
+    stage_field_stats = {
+        'dealstage': 0,
+        'hs_deal_stage_id': 0,
+        'hs_pipeline_stage': 0,
+        'pipeline': 0
+    }
+
+    for deal in deals_data:
+        enriched_deal = deal.copy()
+
+        # Tentar diferentes campos para encontrar o stage ID
+        stage_id = None
+        stage_source = None
+
+        # Prioridade: hs_deal_stage_id > dealstage > hs_pipeline_stage
+        if deal.get('hs_deal_stage_id') and deal.get('hs_deal_stage_id').strip():
+            stage_id = deal.get('hs_deal_stage_id').strip()
+            stage_source = 'hs_deal_stage_id'
+            stage_field_stats['hs_deal_stage_id'] += 1
+        elif deal.get('dealstage') and deal.get('dealstage').strip():
+            stage_id = deal.get('dealstage').strip()
+            stage_source = 'dealstage'
+            stage_field_stats['dealstage'] += 1
+        elif deal.get('hs_pipeline_stage') and deal.get('hs_pipeline_stage').strip():
+            stage_id = deal.get('hs_pipeline_stage').strip()
+            stage_source = 'hs_pipeline_stage'
+            stage_field_stats['hs_pipeline_stage'] += 1
+
+        # Contar pipeline
+        if deal.get('pipeline'):
+            stage_field_stats['pipeline'] += 1
+
+        # Enriquecer com informações do stage
+        if stage_id and stage_id in stage_mapping:
+            stage_info = stage_mapping[stage_id]
+            enriched_deal.update({
+                'dealstage_label': stage_info['label'],
+                'dealstage_id': stage_id,
+                'dealstage_source': stage_source,
+                'pipeline_name': stage_info['pipeline_name'],
+                'pipeline_id': stage_info['pipeline_id'],
+                'stage_display_order': stage_info['display_order'],
+                'stage_is_closed': stage_info['is_closed'],
+                'stage_probability': stage_info['probability']
+            })
+            deals_with_stage += 1
+
+            # Garantir que dealstage tenha valor (priorizar label legível)
+            if not enriched_deal.get('dealstage') or enriched_deal.get('dealstage').strip() == '':
+                enriched_deal['dealstage'] = stage_info['label']
+        else:
+            # Valores padrão quando não encontrado
+            enriched_deal.update({
+                'dealstage_label': 'Unknown Stage',
+                'dealstage_id': stage_id or 'No Stage',
+                'dealstage_source': stage_source or 'No Source',
+                'pipeline_name': 'Unknown Pipeline',
+                'pipeline_id': 'Unknown',
+                'stage_display_order': 0,
+                'stage_is_closed': False,
+                'stage_probability': 0
+            })
+            deals_without_stage += 1
+
+            if stage_id:
+                logger.warning(f"⚠️ Deal {deal.get('hs_object_id', 'N/A')}: Stage ID '{stage_id}' não encontrado no mapeamento")
+
+            # Se dealstage estiver vazio, tentar usar o que encontramos
+            if not enriched_deal.get('dealstage') or enriched_deal.get('dealstage').strip() == '':
+                if stage_id:
+                    enriched_deal['dealstage'] = stage_id
+                else:
+                    enriched_deal['dealstage'] = 'No Stage'
+
+        enriched_deals.append(enriched_deal)
+
+    # Relatório de enriquecimento
+    total_deals = len(deals_data)
+    logger.info(f"📊 ENRIQUECIMENTO COMPLETO:")
+    logger.info(f"   • Total de deals: {total_deals}")
+    logger.info(f"   • Deals com stage identificado: {deals_with_stage} ({deals_with_stage / total_deals * 100:.1f}%)")
+    logger.info(f"   • Deals sem stage: {deals_without_stage} ({deals_without_stage / total_deals * 100:.1f}%)")
+    logger.info(f"   • Fontes de stage utilizadas:")
+    for field, count in stage_field_stats.items():
+        if count > 0:
+            logger.info(f"     - {field}: {count} deals ({count / total_deals * 100:.1f}%)")
+
+    return enriched_deals
+
+
+def analyze_dealstage_data_quality(deals_data):
+    """Analisa a qualidade dos dados de deal stage"""
+
+    total_deals = len(deals_data)
+    deals_with_stage = 0
+    deals_with_label = 0
+    unique_stages = set()
+
+    stage_distribution = {}
+    original_vs_enriched = {'original_empty': 0, 'enriched_filled': 0}
+
+    for deal in deals_data:
+        # Verificar se tem algum stage ID
+        has_stage = bool(deal.get('dealstage_id') and deal.get('dealstage_id') != 'No Stage')
+        if has_stage:
+            deals_with_stage += 1
+
+        # Verificar se tem label
+        if deal.get('dealstage_label') and deal.get('dealstage_label') != 'Unknown Stage':
+            deals_with_label += 1
+
+            # Distribuição de stages
+            stage_label = deal.get('dealstage_label')
+            stage_distribution[stage_label] = stage_distribution.get(stage_label, 0) + 1
+
+        # Coletar stages únicos
+        stage_id = deal.get('dealstage_id')
+        if stage_id and stage_id != 'No Stage':
+            unique_stages.add(stage_id)
+
+        # Analisar campo dealstage original vs enriquecido
+        original_dealstage = deal.get('dealstage', '').strip()
+        if not original_dealstage:
+            original_vs_enriched['original_empty'] += 1
+            if deal.get('dealstage_label') != 'Unknown Stage':
+                original_vs_enriched['enriched_filled'] += 1
+
+    # Relatório de qualidade
+    logger.info(f"\n📊 ANÁLISE DE QUALIDADE - DEAL STAGES")
+    logger.info(f"   • Total de deals: {total_deals}")
+    logger.info(f"   • Deals com stage ID identificado: {deals_with_stage} ({deals_with_stage / total_deals * 100:.1f}%)")
+    logger.info(f"   • Deals com stage label: {deals_with_label} ({deals_with_label / total_deals * 100:.1f}%)")
+    logger.info(f"   • Stages únicos encontrados: {len(unique_stages)}")
+    logger.info(f"   • Campo 'dealstage' originalmente vazio: {original_vs_enriched['original_empty']}")
+    logger.info(f"   • Enriquecimento bem-sucedido: {original_vs_enriched['enriched_filled']}")
+
+    # Top 5 stages mais comuns
+    if stage_distribution:
+        top_stages = sorted(stage_distribution.items(), key=lambda x: x[1], reverse=True)[:5]
+        logger.info(f"   • Top 5 stages:")
+        for stage, count in top_stages:
+            logger.info(f"     - {stage}: {count} deals")
+
+    # Alertas e recomendações
+    if deals_with_stage < total_deals * 0.8:
+        logger.warning(f"⚠️ ALERTA: Menos de 80% dos deals têm stage identificado!")
+        logger.warning(f"💡 DICA: Verifique se os pipelines estão configurados corretamente no HubSpot")
+
+    if original_vs_enriched['enriched_filled'] > 0:
+        logger.info(f"✅ SUCESSO: {original_vs_enriched['enriched_filled']} deals com dealstage vazio foram enriquecidos!")
+
+
+def debug_dealstage_fields(client, deal_id=None):
+    """Função de debug para investigar campos de dealstage em um deal específico"""
+
+    if not deal_id:
+        # Buscar primeiro deal disponível
+        try:
+            response = client.crm.deals.basic_api.get_page(limit=1)
+            if response.results:
+                deal_id = response.results[0].id
+            else:
+                logger.error("❌ Nenhum deal encontrado para debug")
+                return
+        except Exception as e:
+            logger.error(f"❌ Erro ao buscar deal para debug: {e}")
+            return
+
+    logger.info(f"🔍 DEBUG: Investigando campos de dealstage no deal {deal_id}")
+
     try:
-        logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()}\n{'=' * 50}")
+        # Buscar deal com todos os campos relacionados a stage
+        stage_fields = get_deal_stage_properties()
+
+        deal = client.crm.deals.basic_api.get_by_id(
+            deal_id=deal_id,
+            properties=stage_fields
+        )
+
+        logger.info(f"📋 Campos de stage encontrados no deal {deal_id}:")
+        for field in stage_fields:
+            value = deal.properties.get(field, 'CAMPO_NAO_ENCONTRADO')
+            logger.info(f"   • {field}: '{value}'")
+
+        # Buscar mapeamento de stages
+        stage_mapping = create_stage_mapping(client)
+
+        # Tentar identificar o stage atual
+        stage_id = (deal.properties.get('hs_deal_stage_id') or
+                    deal.properties.get('dealstage') or
+                    deal.properties.get('hs_pipeline_stage'))
+
+        if stage_id and stage_id in stage_mapping:
+            stage_info = stage_mapping[stage_id]
+            logger.info(f"✅ Stage identificado: '{stage_info['label']}' (ID: {stage_id})")
+            logger.info(f"   • Pipeline: {stage_info['pipeline_name']}")
+            logger.info(f"   • Ordem: {stage_info['display_order']}")
+            logger.info(f"   • Probabilidade: {stage_info['probability']}")
+        else:
+            logger.warning(f"⚠️ Stage não identificado. ID encontrado: '{stage_id}'")
+
+    except Exception as e:
+        logger.error(f"❌ Erro no debug: {e}")
+
+
+def process_deals_endpoint(client, endpoint_name="hubspot_deals", limit=LIMIT_PER_PAGE):
+    """Versão corrigida que resolve problemas com dealstage"""
+    try:
+        logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()} (VERSÃO CORRIGIDA)\n{'=' * 50}")
 
         endpoint_start = time.time()
 
+        # PASSO 1: Criar mapeamento de stages
+        stage_mapping = create_stage_mapping(client)
+
+        # PASSO 2: Obter propriedades (já inclui campos essenciais automaticamente)
         all_properties = get_endpoint_properties(client, endpoint_name, "deals")
         property_groups = create_property_groups(all_properties, MAX_PROPERTIES_PER_REQUEST)
+
+        # PASSO 3: Coletar dados de deals
+        logger.info("📊 Coletando dados de deals...")
         raw_data = process_deals_batch(client, property_groups, limit)
 
-        logger.info(f"💾 Processando e salvando {len(raw_data)} registros para {endpoint_name}")
-        processed_data = Utils.process_and_save_data(raw_data, endpoint_name)
+        # PASSO 4: Enriquecer dados com informações de stage
+        enriched_data = enrich_deals_with_stage_info(raw_data, stage_mapping)
+
+        # PASSO 5: Análise de qualidade dos dados
+        analyze_dealstage_data_quality(enriched_data)
+
+        # PASSO 6: Processar e salvar
+        logger.info(f"💾 Processando e salvando {len(enriched_data)} registros para {endpoint_name}")
+        processed_data = Utils.process_and_save_data(enriched_data, endpoint_name)
 
         endpoint_duration = time.time() - endpoint_start
 
@@ -244,10 +548,12 @@ def process_deals_endpoint(client, endpoint_name="hubspot_deals", limit=LIMIT_PE
             "registros": len(processed_data),
             "status": "Sucesso",
             "tempo": endpoint_duration,
-            "total_properties": len(all_properties)
+            "total_properties": len(all_properties),
+            "stages_mapeados": len(stage_mapping)
         }
 
         logger.info(f"✅ {endpoint_name}: {len(processed_data)} registros em {endpoint_duration:.2f}s")
+        logger.info(f"🗺️ Stages mapeados: {len(stage_mapping)}")
 
         return processed_data, stats
 
@@ -258,7 +564,8 @@ def process_deals_endpoint(client, endpoint_name="hubspot_deals", limit=LIMIT_PE
             "registros": 0,
             "status": f"Falha: {type(e).__name__}: {str(e)}",
             "tempo": 0,
-            "total_properties": 0
+            "total_properties": 0,
+            "stages_mapeados": 0
         }
 
         return [], stats
@@ -337,8 +644,7 @@ async def process_contacts_with_config(client, access_token, endpoint_name, log_
             contact_objects = {}
 
             for group_index, properties in enumerate(property_groups):
-                logger.info(
-                    f"🔄 Buscando grupo {group_index + 1}/{len(property_groups)} com {len(properties)} propriedades")
+                logger.info(f"🔄 Buscando grupo {group_index + 1}/{len(property_groups)} com {len(properties)} propriedades")
 
                 data = await fetch_contacts_page_with_properties(access_token, properties, current_after, session)
 
@@ -418,8 +724,7 @@ async def process_contacts_with_config(client, access_token, endpoint_name, log_
 
     logger.info(f"📊 RESUMO: {len(processed_contacts)} contatos processados")
     if utm_found_count > 0:
-        logger.info(
-            f"🎯 UTM: {utm_found_count} contatos com dados UTM ({utm_found_count / len(processed_contacts) * 100:.1f}%)")
+        logger.info(f"🎯 UTM: {utm_found_count} contatos com dados UTM ({utm_found_count / len(processed_contacts) * 100:.1f}%)")
 
     return processed_contacts, current_after
 
@@ -460,8 +765,7 @@ def process_contacts_endpoint(client, access_token, endpoint_name="hubspot_conta
             "total_properties": total_properties
         }
 
-        logger.info(
-            f"✅ {endpoint_name}: {len(processed_data)} registros com {total_properties} propriedades em {endpoint_duration:.2f}s")
+        logger.info(f"✅ {endpoint_name}: {len(processed_data)} registros com {total_properties} propriedades em {endpoint_duration:.2f}s")
 
         return processed_data, stats
 
@@ -555,15 +859,12 @@ def get_all_pipelines(client, object_type="deals"):
                         "pipeline_id": pipeline_id,
                         "pipeline_name": pipeline_name,
                         "pipeline_stage_created_at": stage.created_at if hasattr(stage, 'created_at') else 'N/A',
-                        "pipeline_stage_display_order": stage.display_order if hasattr(stage,
-                                                                                       'display_order') else 'N/A',
+                        "pipeline_stage_display_order": stage.display_order if hasattr(stage, 'display_order') else 'N/A',
                         "pipeline_stage_id": stage.id if hasattr(stage, 'id') else 'N/A',
                         "pipeline_stage_is_archived": stage.archived if hasattr(stage, 'archived') else 'N/A',
-                        "pipeline_stage_is_closed": stage.metadata.get("closed", "N/A") if hasattr(stage,
-                                                                                                   'metadata') else 'N/A',
+                        "pipeline_stage_is_closed": stage.metadata.get("closed", "N/A") if hasattr(stage, 'metadata') else 'N/A',
                         "pipeline_stage_name": stage.label if hasattr(stage, 'label') else 'N/A',
-                        "pipeline_stage_probability": stage.metadata.get("probability", "N/A") if hasattr(stage,
-                                                                                                          'metadata') else 'N/A',
+                        "pipeline_stage_probability": stage.metadata.get("probability", "N/A") if hasattr(stage, 'metadata') else 'N/A',
                         "pipeline_stage_updated_at": stage.updated_at if hasattr(stage, 'updated_at') else 'N/A',
                         "date": current_date
                     }
@@ -694,15 +995,14 @@ def main():
                 endpoints_to_process[endpoint_name] = ENDPOINTS[endpoint_name]
 
         logger.info(f"🔍 Endpoints a processar: {', '.join(endpoints_to_process.keys())}")
-        logger.info(f"🎯 MODO: Coleta configurável por endpoint")
+        logger.info(f"🎯 MODO: Coleta configurável por endpoint com correção de DealStage")
 
         for endpoint_name in endpoints_to_process.keys():
             config = ENDPOINT_FIELD_CONFIG.get(endpoint_name, {})
             mode = config.get('mode', 'all')
             if mode == 'specific':
                 fields = config.get('fields', [])
-                logger.info(
-                    f"📋 {endpoint_name}: {len(fields)} campos específicos ({', '.join(fields[:5])}{'...' if len(fields) > 5 else ''})")
+                logger.info(f"📋 {endpoint_name}: {len(fields)} campos específicos ({', '.join(fields[:5])}{'...' if len(fields) > 5 else ''})")
             else:
                 logger.info(f"📋 {endpoint_name}: TODAS as propriedades")
 
@@ -715,6 +1015,7 @@ def main():
                 logger.info(f"🔄 Iniciando processamento paralelo do endpoint: {endpoint_name}")
 
                 if endpoint_name == "hubspot_deals":
+                    # Usar a versão corrigida para deals
                     _, stats = process_deals_endpoint(hubspot_client, endpoint_name)
 
                 elif endpoint_name == "hubspot_contacts":
@@ -765,10 +1066,11 @@ def main():
                 endpoint_name, stats = future.result()
                 endpoint_stats[endpoint_name] = stats
 
+                stages_info = f" | {stats.get('stages_mapeados', 0)} stages mapeados" if 'stages_mapeados' in stats else ""
                 logger.info(f"📊 {endpoint_name}: {stats['registros']} registros "
-                            f"com {stats.get('total_properties', 0)} propriedades em {stats['tempo']:.2f}s")
+                            f"com {stats.get('total_properties', 0)} propriedades em {stats['tempo']:.2f}s{stages_info}")
 
-        logger.info(f"\n{'=' * 60}\n🎯 RESUMO FINAL - COLETA CONFIGURÁVEL\n{'=' * 60}")
+        logger.info(f"\n{'=' * 60}\n🎯 RESUMO FINAL - COLETA CONFIGURÁVEL COM CORREÇÃO DEALSTAGE\n{'=' * 60}")
 
         total_records = sum(stats['registros'] for stats in endpoint_stats.values())
         total_properties = sum(stats.get('total_properties', 0) for stats in endpoint_stats.values())
@@ -780,6 +1082,8 @@ def main():
             logger.info(f"📈 {endpoint_name} {mode_info}:")
             logger.info(f"   - Registros: {stats['registros']}")
             logger.info(f"   - Propriedades coletadas: {stats.get('total_properties', 0)}")
+            if 'stages_mapeados' in stats:
+                logger.info(f"   - Stages mapeados: {stats['stages_mapeados']}")
             logger.info(f"   - Status: {stats['status']}")
 
         logger.info(f"\n🎯 RESUMO GERAL:")
@@ -793,7 +1097,11 @@ def main():
             failed_endpoints = [name for name, stats in endpoint_stats.items() if 'Falha' in stats['status']]
             raise Exception(f"Falhas nos endpoints: {failed_endpoints}")
 
-        logger.info("✅ SUCESSO: Coleta configurável concluída!")
+        logger.info("✅ SUCESSO: Coleta configurável com correção DealStage concluída!")
+
+        # Oferecer função de debug se houver interesse
+        if 'hubspot_deals' in endpoints_to_process:
+            logger.info("💡 DICA: Para debug de um deal específico, use: debug_dealstage_fields(client, 'DEAL_ID')")
 
     except Exception as e:
         logger.exception(f"❌ ERRO CRÍTICO NA EXECUÇÃO: {e}")
