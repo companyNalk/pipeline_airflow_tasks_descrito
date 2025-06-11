@@ -470,9 +470,9 @@ def run(customer):
                 table_name = self.clickhouse_params.get('table_name', 'raw_facebook_ads')
                 
                 client = self.clickhouse_client
-                
+                client.command(f"DROP TABLE IF EXISTS {database}.facebook_ads_gold")
                 create_table_query = f"""
-                CREATE TABLE {database}.facebook_ads_gold
+                CREATE TABLE IF NOT EXISTS {database}.facebook_ads_gold
                 (
                     `date` Date,
                     `account_name` String,
