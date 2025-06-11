@@ -81,10 +81,10 @@ ENDPOINT_FIELD_CONFIG = {
 
 ENDPOINTS = {
     "hubspot_contacts": "contacts",
-    # "hubspot_deals": "deals",
-    # "hubspot_owners": "owners",
-    # "hubspot_pipelines": "pipelines",
-    # "hubspot_properties": "properties"
+    "hubspot_deals": "deals",
+    "hubspot_owners": "owners",
+    "hubspot_pipelines": "pipelines",
+    "hubspot_properties": "properties"
 }
 
 ENDPOINT_PARAMS = {
@@ -94,13 +94,6 @@ ENDPOINT_PARAMS = {
     "hubspot_pipelines": {"object_type": "deals"},
     "hubspot_properties": {"object_type": "contacts"}
 }
-
-
-def get_arguments():
-    return (ArgumentManager("Script HubSpot - Coleta com Campos Configuráveis")
-            .add("ACCESS_TOKEN", "Token de acesso para autenticação", required=True)
-            .parse())
-
 
 def init_hubspot_client(access_token):
     logger.info("🔑 Inicializando cliente HubSpot")
@@ -685,8 +678,6 @@ def main():
     global_start_time = ReportGenerator.init_report(logger)
 
     try:
-        args = get_arguments()
-
         access_token = args.ACCESS_TOKEN
         log_details = getattr(args, 'LOG_PROPERTIES', 'false')
         if log_details is not None:
