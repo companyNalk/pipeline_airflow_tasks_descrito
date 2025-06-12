@@ -11,11 +11,11 @@ logger = AppInitializer.initialize()
 
 RATE_LIMIT = 5
 ENDPOINTS = {
-    # "deals": "api/3/deals",
+    "deals": "api/3/deals",
     "deal_groups": "api/3/dealGroups",
     "deal_stages": "api/3/dealStages",
     "deal_custom_field_meta": "api/3/dealCustomFieldMeta",
-    # "deal_custom_field_data": "api/3/dealCustomFieldData"
+    "deal_custom_field_data": "api/3/dealCustomFieldData"
 }
 
 
