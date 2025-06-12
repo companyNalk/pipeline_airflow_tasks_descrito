@@ -5,6 +5,7 @@ import re
 import shutil
 import time
 import unicodedata
+import uuid
 from typing import Dict, Any, List, Callable
 
 import pandas as pd
@@ -247,6 +248,24 @@ class Utils:
         return processed_data
 
     @staticmethod
+    def _process_and_convert_id_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Verifica as colunas que possuem 'id' ou '_id' no nome e, caso todos os valores sejam float,
+        vazios ou nulos, converte esses valores para inteiros.
+        """
+        for col in df.columns:
+            if 'id' in col.lower():  # Verifica se o nome da coluna contém 'id' ou '_id'
+                # Verificar se todos os valores são float ou nulos
+                if df[col].isnull().all() or (df[col].apply(lambda x: isinstance(x, float)).all()):
+                    # Se for UUID, mantenha como string
+                    if df[col].apply(lambda x: isinstance(x, uuid.UUID) if pd.notnull(x) else False).any():
+                        continue
+                    # Caso contrário, converta para inteiro
+                    df[col] = df[col].fillna(0).astype('Int64')  # Usando 'Int64' para suportar nulos
+                    logging.info(f"Coluna {col} convertida para inteiros")
+        return df
+
+    @staticmethod
     def process_and_save_data(raw_data: List[Dict], endpoint_name: str) -> List[Dict]:
         """
         Processa dados brutos e salva o resultado como CSV.
@@ -279,6 +298,9 @@ class Utils:
             df = Utils._convert_columns_to_nullable_int(df)
             df = Utils._normalize_column_names(df)
             df = Utils._remove_empty_columns(df)
+
+            # Verificar e converter colunas de ID
+            df = Utils._process_and_convert_id_columns(df)
 
             # Salvar localmente
             Utils._save_local_dataframe(df, endpoint_name)
