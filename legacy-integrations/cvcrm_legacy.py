@@ -124,9 +124,8 @@ def run_leads(customer):
 
         # Handle retry failure
         if not success:
-            print(
-                f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados coletados.")
-            break
+            print(f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados coletados.")
+            raise
 
         # Increment page if we need to continue
         if continuar_paginacao:
@@ -254,8 +253,8 @@ def run_vendas(customer):
 
         # Se saiu do loop de retry sem sucesso, interrompe o processamento
         if not success:
-            print(
-                f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            print(f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            raise
 
         # Avançar para a próxima página
         pagina_atual += 1
@@ -393,8 +392,8 @@ def run_reservas(customer):
 
         # Se saiu do loop de retry sem sucesso, interrompe o processamento
         if not success:
-            print(
-                f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            print(f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            raise
 
         # Avançar para a próxima página
         pagina_atual += 1
@@ -532,8 +531,8 @@ def run_precadastros(customer):
 
         # Se saiu do loop de retry sem sucesso, interrompe o processamento
         if not success:
-            print(
-                f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            print(f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            raise
 
         # Avançar para a próxima página
         pagina_atual += 1
@@ -671,8 +670,8 @@ def run_corretores(customer):
 
         # Se saiu do loop de retry sem sucesso, interrompe o processamento
         if not success:
-            print(
-                f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            print(f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            raise
 
         # Avançar para a próxima página
         pagina_atual += 1
@@ -869,9 +868,8 @@ def run_historico_situacoes(customer):
 
         # Se saiu do loop de retry sem sucesso, interrompe o processamento
         if not success:
-            print(
-                f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
-            break
+            print(f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados já coletados.")
+            raise
 
         # Verificar se todas as páginas foram processadas ou se não há mais dados
         if ultima_pagina is not None and pagina_atual >= ultima_pagina:
