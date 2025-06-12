@@ -102,7 +102,7 @@ def run_leads(customer):
             except HTTPError as e:
                 if e.response.status_code == 429:
                     retry_count += 1
-                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
                     print(
                         f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                     time.sleep(wait_time)
@@ -111,7 +111,7 @@ def run_leads(customer):
                     raise
             except RequestException as e:
                 retry_count += 1
-                wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                wait_time = (4 ** retry_count) + random.uniform(0, 1)
                 print(
                     f"Erro de rede na página {pagina_atual}. Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                 time.sleep(wait_time)
@@ -238,7 +238,7 @@ def run_vendas(customer):
                 if e.response.status_code == 429:
                     retry_count += 1
                     # Backoff exponencial com jitter (variação aleatória)
-                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
                     print(
                         f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                     time.sleep(wait_time)
@@ -377,7 +377,7 @@ def run_reservas(customer):
                 if e.response.status_code == 429:
                     retry_count += 1
                     # Backoff exponencial com jitter (variação aleatória)
-                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
                     print(
                         f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                     time.sleep(wait_time)
@@ -516,7 +516,7 @@ def run_precadastros(customer):
                 if e.response.status_code == 429:
                     retry_count += 1
                     # Backoff exponencial com jitter (variação aleatória)
-                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
                     print(
                         f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                     time.sleep(wait_time)
@@ -655,7 +655,7 @@ def run_corretores(customer):
                 if e.response.status_code == 429:
                     retry_count += 1
                     # Backoff exponencial com jitter (variação aleatória)
-                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
                     print(
                         f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                     time.sleep(wait_time)
@@ -835,7 +835,7 @@ def run_historico_situacoes(customer):
                 if e.response.status_code == 429:
                     retry_count += 1
                     # Backoff exponencial com jitter (variação aleatória)
-                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
                     print(
                         f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                     time.sleep(wait_time)
@@ -858,7 +858,7 @@ def run_historico_situacoes(customer):
                 else:
                     print(f"Erro ao decodificar JSON na página {pagina_atual}: {e}")
                     retry_count += 1
-                    wait_time = (2 ** retry_count) + random.uniform(0, 1)
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
                     print(f"Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
                     time.sleep(wait_time)
             except Exception as e:
