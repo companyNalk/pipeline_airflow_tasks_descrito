@@ -6,7 +6,6 @@ import shutil
 import time
 import unicodedata
 
-import pandas as pd
 import requests
 
 from commons.app_inicializer import AppInitializer
@@ -147,7 +146,7 @@ def flatten_json_to_csv():
         # 1. Verificar se existe versão convertida (prioridade máxima)
         converted_file = os.path.join(CONVERTED_DIR, f"{base_name}_converted.json")
 
-        # 2. Verificar se existe versão normalizada 
+        # 2. Verificar se existe versão normalizada
         normalized_file = os.path.join(NORMALIZED_DIR, f"{base_name}_normalized.json")
 
         # 3. Usar a melhor versão disponível
@@ -384,7 +383,7 @@ def convert_lead_keys_to_field_names():
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(leads, f, indent=2, ensure_ascii=False)
 
-    logger.info(f"✅ Conversão concluída:")
+    logger.info("✅ Conversão concluída:")
     logger.info(f"   • {converted_count} leads convertidos")
     logger.info(f"   • {total_conversions} campos SHA-1 substituídos")
     logger.info(f"   • Arquivo salvo: {output_path}")
