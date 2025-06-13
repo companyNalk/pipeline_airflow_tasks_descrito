@@ -694,7 +694,7 @@ def main():
                 endpoints_to_process[endpoint_name] = ENDPOINTS[endpoint_name]
 
         logger.info(f"🔍 Endpoints a processar: {', '.join(endpoints_to_process.keys())}")
-        logger.info(f"🎯 MODO: Coleta configurável por endpoint")
+        logger.info("🎯 MODO: Coleta configurável por endpoint")
 
         for endpoint_name in endpoints_to_process.keys():
             config = ENDPOINT_FIELD_CONFIG.get(endpoint_name, {})
@@ -782,7 +782,7 @@ def main():
             logger.info(f"   - Propriedades coletadas: {stats.get('total_properties', 0)}")
             logger.info(f"   - Status: {stats['status']}")
 
-        logger.info(f"\n🎯 RESUMO GERAL:")
+        logger.info("\n🎯 RESUMO GERAL:")
         logger.info(f"   - Total de registros: {total_records}")
         logger.info(f"   - Total de campos coletados: {total_properties}")
         logger.info(f"   - Endpoints processados: {len(endpoint_stats)}")

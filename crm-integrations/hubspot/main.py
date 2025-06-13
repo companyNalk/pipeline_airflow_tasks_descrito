@@ -387,11 +387,11 @@ def enrich_deals_with_stage_info(deals_data, stage_mapping):
 
     # Relatório de enriquecimento
     total_deals = len(deals_data)
-    logger.info(f"📊 ENRIQUECIMENTO COMPLETO:")
+    logger.info("📊 ENRIQUECIMENTO COMPLETO:")
     logger.info(f"   • Total de deals: {total_deals}")
     logger.info(f"   • Deals com stage identificado: {deals_with_stage} ({deals_with_stage / total_deals * 100:.1f}%)")
     logger.info(f"   • Deals sem stage: {deals_without_stage} ({deals_without_stage / total_deals * 100:.1f}%)")
-    logger.info(f"   • Fontes de stage utilizadas:")
+    logger.info("   • Fontes de stage utilizadas:")
     for field, count in stage_field_stats.items():
         if count > 0:
             logger.info(f"     - {field}: {count} deals ({count / total_deals * 100:.1f}%)")
@@ -437,7 +437,7 @@ def analyze_dealstage_data_quality(deals_data):
                 original_vs_enriched['enriched_filled'] += 1
 
     # Relatório de qualidade
-    logger.info(f"\n📊 ANÁLISE DE QUALIDADE - DEAL STAGES")
+    logger.info("\n📊 ANÁLISE DE QUALIDADE - DEAL STAGES")
     logger.info(f"   • Total de deals: {total_deals}")
     logger.info(f"   • Deals com stage ID identificado: {deals_with_stage} ({deals_with_stage / total_deals * 100:.1f}%)")
     logger.info(f"   • Deals com stage label: {deals_with_label} ({deals_with_label / total_deals * 100:.1f}%)")
@@ -448,14 +448,14 @@ def analyze_dealstage_data_quality(deals_data):
     # Top 5 stages mais comuns
     if stage_distribution:
         top_stages = sorted(stage_distribution.items(), key=lambda x: x[1], reverse=True)[:5]
-        logger.info(f"   • Top 5 stages:")
+        logger.info("   • Top 5 stages:")
         for stage, count in top_stages:
             logger.info(f"     - {stage}: {count} deals")
 
     # Alertas e recomendações
     if deals_with_stage < total_deals * 0.8:
-        logger.warning(f"⚠️ ALERTA: Menos de 80% dos deals têm stage identificado!")
-        logger.warning(f"💡 DICA: Verifique se os pipelines estão configurados corretamente no HubSpot")
+        logger.warning("⚠️ ALERTA: Menos de 80% dos deals têm stage identificado!")
+        logger.warning("💡 DICA: Verifique se os pipelines estão configurados corretamente no HubSpot")
 
     if original_vs_enriched['enriched_filled'] > 0:
         logger.info(f"✅ SUCESSO: {original_vs_enriched['enriched_filled']} deals com dealstage vazio foram enriquecidos!")
@@ -497,9 +497,7 @@ def debug_dealstage_fields(client, deal_id=None):
         stage_mapping = create_stage_mapping(client)
 
         # Tentar identificar o stage atual
-        stage_id = (deal.properties.get('hs_deal_stage_id') or
-                    deal.properties.get('dealstage') or
-                    deal.properties.get('hs_pipeline_stage'))
+        stage_id = (deal.properties.get('hs_deal_stage_id') or deal.properties.get('dealstage') or deal.properties.get('hs_pipeline_stage'))
 
         if stage_id and stage_id in stage_mapping:
             stage_info = stage_mapping[stage_id]
@@ -995,7 +993,7 @@ def main():
                 endpoints_to_process[endpoint_name] = ENDPOINTS[endpoint_name]
 
         logger.info(f"🔍 Endpoints a processar: {', '.join(endpoints_to_process.keys())}")
-        logger.info(f"🎯 MODO: Coleta configurável por endpoint com correção de DealStage")
+        logger.info("🎯 MODO: Coleta configurável por endpoint com correção de DealStage")
 
         for endpoint_name in endpoints_to_process.keys():
             config = ENDPOINT_FIELD_CONFIG.get(endpoint_name, {})
@@ -1086,7 +1084,7 @@ def main():
                 logger.info(f"   - Stages mapeados: {stats['stages_mapeados']}")
             logger.info(f"   - Status: {stats['status']}")
 
-        logger.info(f"\n🎯 RESUMO GERAL:")
+        logger.info("\n🎯 RESUMO GERAL:")
         logger.info(f"   - Total de registros: {total_records}")
         logger.info(f"   - Total de campos coletados: {total_properties}")
         logger.info(f"   - Endpoints processados: {len(endpoint_stats)}")
