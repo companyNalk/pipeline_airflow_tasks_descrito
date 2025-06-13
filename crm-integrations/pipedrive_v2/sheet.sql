@@ -2,7 +2,7 @@
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.activities
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/activities/activities.csv']);
@@ -11,7 +11,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.activity_fields
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/activity_fields/activity_fields.csv']);
@@ -20,7 +20,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.deals
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/deals/deals.csv']);
@@ -29,7 +29,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.deal_fields
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/deal_fields/deal_fields.csv']);
@@ -38,7 +38,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.leads
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/leads/leads.csv']);
@@ -47,7 +47,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.lead_fields
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/lead_fields/lead_fields.csv']);
@@ -56,7 +56,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.organizations
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/organizations/organizations.csv']);
@@ -65,7 +65,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.organization_fields
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/organization_fields/organization_fields.csv']);
@@ -74,7 +74,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.persons
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/persons/persons.csv']);
@@ -83,7 +83,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.person_field
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/person_field/person_field.csv']);
@@ -92,7 +92,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.pipelines
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/pipelines/pipelines.csv']);
@@ -101,7 +101,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.products
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/products/products.csv']);
@@ -110,7 +110,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.product_fields
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/product_fields/product_fields.csv']);
@@ -119,7 +119,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.stages
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/stages/stages.csv']);
@@ -128,7 +128,7 @@ OPTIONS (
 CREATE OR REPLACE EXTERNAL TABLE {project_id}.pipedrive_v2.users
 OPTIONS (
   format = 'CSV',
-  field_delimiter=',',
+  field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/users/users.csv']);

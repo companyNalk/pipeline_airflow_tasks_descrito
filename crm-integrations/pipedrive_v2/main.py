@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 
 from commons.app_inicializer import AppInitializer
+from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
 
 logger = AppInitializer.initialize()
@@ -80,49 +81,49 @@ def clean_text_data(value):
     return value
 
 
-def flatten_dict(d, parent_key='', sep='_'):
-    """Achata dicionário recursivamente, incluindo listas"""
-    items = []
-
-    if isinstance(d, dict):
-        for k, v in d.items():
-            new_key = f"{parent_key}{sep}{k}" if parent_key else k
-
-            if isinstance(v, dict):
-                items.extend(flatten_dict(v, new_key, sep=sep).items())
-            elif isinstance(v, list):
-                # Para listas, criar uma coluna para cada índice com número no final
-                for i, item in enumerate(v):
-                    list_key = f"{new_key}_{i}"
-                    if isinstance(item, (dict, list)):
-                        items.extend(flatten_dict(item, list_key, sep=sep).items())
-                    else:
-                        # Limpar texto antes de adicionar
-                        clean_item = clean_text_data(item)
-                        items.append((list_key, clean_item))
-                # Também salvar o tamanho da lista
-                items.append((f"{new_key}_length", len(v)))
-            else:
-                # Limpar texto antes de adicionar
-                clean_value = clean_text_data(v)
-                items.append((new_key, clean_value))
-    elif isinstance(d, list):
-        # Se o item raiz for uma lista
-        for i, item in enumerate(d):
-            list_key = f"{parent_key}_{i}" if parent_key else str(i)
-            if isinstance(item, (dict, list)):
-                items.extend(flatten_dict(item, list_key, sep=sep).items())
-            else:
-                # Limpar texto antes de adicionar
-                clean_item = clean_text_data(item)
-                items.append((list_key, clean_item))
-        items.append((f"{parent_key}_length" if parent_key else "length", len(d)))
-    else:
-        # Limpar texto antes de adicionar
-        clean_value = clean_text_data(d)
-        items.append((parent_key, clean_value))
-
-    return dict(items)
+# def flatten_dict(d, parent_key='', sep='_'):
+#     """Achata dicionário recursivamente, incluindo listas"""
+#     items = []
+#
+#     if isinstance(d, dict):
+#         for k, v in d.items():
+#             new_key = f"{parent_key}{sep}{k}" if parent_key else k
+#
+#             if isinstance(v, dict):
+#                 items.extend(flatten_dict(v, new_key, sep=sep).items())
+#             elif isinstance(v, list):
+#                 # Para listas, criar uma coluna para cada índice com número no final
+#                 for i, item in enumerate(v):
+#                     list_key = f"{new_key}_{i}"
+#                     if isinstance(item, (dict, list)):
+#                         items.extend(flatten_dict(item, list_key, sep=sep).items())
+#                     else:
+#                         # Limpar texto antes de adicionar
+#                         clean_item = clean_text_data(item)
+#                         items.append((list_key, clean_item))
+#                 # Também salvar o tamanho da lista
+#                 items.append((f"{new_key}_length", len(v)))
+#             else:
+#                 # Limpar texto antes de adicionar
+#                 clean_value = clean_text_data(v)
+#                 items.append((new_key, clean_value))
+#     elif isinstance(d, list):
+#         # Se o item raiz for uma lista
+#         for i, item in enumerate(d):
+#             list_key = f"{parent_key}_{i}" if parent_key else str(i)
+#             if isinstance(item, (dict, list)):
+#                 items.extend(flatten_dict(item, list_key, sep=sep).items())
+#             else:
+#                 # Limpar texto antes de adicionar
+#                 clean_item = clean_text_data(item)
+#                 items.append((list_key, clean_item))
+#         items.append((f"{parent_key}_length" if parent_key else "length", len(d)))
+#     else:
+#         # Limpar texto antes de adicionar
+#         clean_value = clean_text_data(d)
+#         items.append((parent_key, clean_value))
+#
+#     return dict(items)
 
 
 def flatten_json_to_csv():
@@ -140,7 +141,7 @@ def flatten_json_to_csv():
     for original_file in original_files:
         filename = os.path.basename(original_file)
         base_name = filename.replace('.json', '')
-        csv_name = f"{base_name}.csv"
+        # csv_name = f"{base_name}.csv"
 
         # ORDEM: original_data → normalized → converted
         # 1. Verificar se existe versão convertida (prioridade máxima)
@@ -176,23 +177,24 @@ def flatten_json_to_csv():
                 continue
 
             # Achatar cada registro completamente
-            flattened_records = []
-            for record in records:
-                flattened = flatten_dict(record)
-                flattened_records.append(flattened)
+            # flattened_records = []
+            # for record in records:
+                # flattened = flatten_dict(record)
+                # flattened_records.append(flattened)
 
-            # Converter para DataFrame
-            df = pd.DataFrame(flattened_records)
-
-            # Criar pasta para o CSV (ex: deals/ para deals.csv)
-            csv_folder = os.path.join(CSV_DIR, base_name)
-            os.makedirs(csv_folder, exist_ok=True)
-
-            # Salvar CSV dentro da pasta específica
-            csv_path = os.path.join(csv_folder, csv_name)
-            df.to_csv(csv_path, index=False, encoding='utf-8')
-
-            logger.info(f"✅ {base_name}/{csv_name} salvo: {len(df)} linhas x {len(df.columns)} colunas")
+            # # Converter para DataFrame
+            # df = pd.DataFrame(flattened_records)
+            #
+            # # Criar pasta para o CSV (ex: deals/ para deals.csv)
+            # csv_folder = os.path.join(CSV_DIR, base_name)
+            # os.makedirs(csv_folder, exist_ok=True)
+            #
+            # # Salvar CSV dentro da pasta específica
+            # csv_path = os.path.join(csv_folder, csv_name)
+            # df.to_csv(csv_path, index=False, encoding='utf-8')
+            #
+            # logger.info(f"✅ {base_name}/{csv_name} salvo: {len(df)} linhas x {len(df.columns)} colunas")
+            Utils.process_and_save_data(records, base_name)
 
         except Exception as e:
             logger.error(f"❌ Erro ao converter {filename}: {e}")
@@ -554,12 +556,12 @@ def main():
         collect_pipelines,
         collect_stages,
         collect_organizations,
-        collect_persons,
-        collect_products,
-        collect_users,
-        collect_deals,
-        collect_activities,
-        collect_leads
+        # collect_persons,
+        # collect_products,
+        # collect_users,
+        # collect_deals,
+        # collect_activities,
+        # collect_leads
     ]
 
     results = []
