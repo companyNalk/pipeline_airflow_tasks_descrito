@@ -268,7 +268,7 @@ def run_leads(customer):
         # Função para converter timestamps Unix para datas legíveis
         def convert_timestamp_to_date(timestamp):
             if isinstance(timestamp, int) or (isinstance(timestamp, str) and timestamp.isdigit()):
-                return datetime.fromtimestamp(int(timestamp), timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                return datetime.fromtimestamp(int(timestamp), timezone.utc).strftime('%d/%m/%Y %H:%M:%S')
             return timestamp
 
         # Função para desaninhamento dos embeddeds
@@ -428,7 +428,7 @@ def run_unsorted_leads(customer):
         # Função para converter timestamps
         def convert_timestamp_to_date(timestamp):
             if isinstance(timestamp, int) or (isinstance(timestamp, str) and timestamp.isdigit()):
-                return datetime.fromtimestamp(int(timestamp), timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                return datetime.fromtimestamp(int(timestamp), timezone.utc).strftime('%d/%m/%Y %H:%M:%S')
             return timestamp
 
         # Função para coletar leads não classificados
