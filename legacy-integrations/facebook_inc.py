@@ -3,7 +3,6 @@ Facebook Ads module for data extraction functions.
 This module contains functions specific to the Facebook Ads integration.
 """
 
-import os
 import tempfile
 import shutil
 from pathlib import Path
@@ -11,7 +10,6 @@ from core import clickhouse
 
 
 def run(customer):
-    import os
     import pathlib
     import json
     import time
@@ -19,8 +17,6 @@ def run(customer):
     import aiohttp
     import pandas as pd
     import uuid
-    import secrets
-    import string
     from datetime import datetime, timedelta
     from typing import List, Dict
     import traceback
@@ -42,7 +38,7 @@ def run(customer):
         'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
         'campaign_name', 'clicks', 'cost_per_action_type', 'ctr',
         'date_start', 'date_stop', 'frequency', 'impressions',
-        'objective', 'reach', 'spend', 'actions'
+        'objective', 'reach', 'spend', 'actions', 'object_url'
     ]
 
     ACTION_FIELDS = [
@@ -63,7 +59,7 @@ def run(customer):
         'cost_per_action_type_onsite_conversion_lead_grouped',
         'cost_per_action_type_onsite_conversion_messaging_conversation_started_7d',
         'cost_per_action_type_post_engagement', 'cost_per_action_type_post_reaction',
-        'instagram_permalink_url', 'link'
+        'instagram_permalink_url', 'link', 'object_url'
     ]
 
     class FacebookAdsCollector:
@@ -336,7 +332,8 @@ def run(customer):
                     "age": item.get("age"),
                     "gender": item.get("gender"),
                     "instagram_permalink_url": None,
-                    "link": None
+                    "link": None,
+                    "object_url": item.get("object_url")
                 }
 
                 # Extract actions
@@ -368,7 +365,8 @@ def run(customer):
                     "campaign": "first",
                     "objective": "first",
                     "instagram_permalink_url": "first",
-                    "link": "first"
+                    "link": "first",
+                    "object_url": "first"
                 }
 
                 # Add aggregation rules for action fields

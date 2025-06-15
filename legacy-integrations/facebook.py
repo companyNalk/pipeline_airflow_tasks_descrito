@@ -3,7 +3,6 @@ Facebook Ads module for data extraction functions.
 This module contains functions specific to the Facebook Ads integration.
 """
 
-import os
 import tempfile
 import shutil
 from pathlib import Path
@@ -17,11 +16,8 @@ def run(customer):
     import traceback
     from datetime import datetime, timedelta
     from typing import List, Dict
-    import os
     import pathlib
     import uuid
-    import secrets
-    import string
 
     import aiohttp
     import pandas as pd
@@ -47,7 +43,7 @@ def run(customer):
         'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
         'campaign_name', 'clicks', 'cost_per_action_type', 'ctr',
         'date_start', 'date_stop', 'frequency', 'impressions',
-        'objective', 'reach', 'spend', 'actions'
+        'objective', 'reach', 'spend', 'actions', 'object_url'
     ]
 
     ACTION_FIELDS = [
@@ -68,7 +64,7 @@ def run(customer):
         'cost_per_action_type_onsite_conversion_lead_grouped',
         'cost_per_action_type_onsite_conversion_messaging_conversation_started_7d',
         'cost_per_action_type_post_engagement', 'cost_per_action_type_post_reaction',
-        'instagram_permalink_url', 'link'
+        'instagram_permalink_url', 'link', 'object_url'
     ]
 
     class FacebookAdsCollector:
@@ -101,28 +97,28 @@ def run(customer):
             print("\n" + "="*60)
             print("VALIDANDO CREDENCIAIS")
             print("="*60)
-            
+
             session = await self.get_session()
-            
+
             # 1. Testar token básico
             url = f"{self.base_url}/me"
             params = {"access_token": self.access_token, "fields": "id,name"}
-            
+
             async with session.get(url, params=params) as response:
                 if response.status != 200:
                     error_data = await response.json()
                     msg = f"[ERRO] Token inválido: {error_data}"
                     raise Exception(msg)
-                
+
                 user_data = await response.json()
                 print(f"[OK] Token válido para: {user_data.get('name', 'N/A')}")
-            
+
             # 2. Testar acesso às contas
             valid_accounts = 0
             for account_id in self.account_ids:
                 url = f"{self.base_url}/{account_id}"
                 params = {"access_token": self.access_token, "fields": "account_id,name"}
-                
+
                 async with session.get(url, params=params) as response:
                     if response.status == 200:
                         account_data = await response.json()
@@ -133,7 +129,7 @@ def run(customer):
                         msg = f"[ERRO] Sem acesso à conta {account_id}: {error_data}"
                         print(msg)
                         raise Exception(msg)
-            
+
             # 3. Testar insights
             if valid_accounts > 0:
                 test_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
@@ -145,7 +141,7 @@ def run(customer):
                     "level": "account",
                     "limit": 1
                 }
-                
+
                 async with session.get(url, params=params) as response:
                     if response.status == 200:
                         print(f"[OK] Acesso a insights confirmado")
@@ -154,7 +150,7 @@ def run(customer):
                         msg = f"[ERRO] Sem acesso a insights: {error_data}"
                         print(msg)
                         raise Exception(msg)
-            
+
             print("="*60)
             if valid_accounts == len(self.account_ids):
                 print("[SUCESSO] Todas as validações passaram!")
@@ -339,7 +335,8 @@ def run(customer):
                     "age": item.get("age"),
                     "gender": item.get("gender"),
                     "instagram_permalink_url": None,
-                    "link": None
+                    "link": None,
+                    "object_url": item.get("object_url")
                 }
 
                 # Extract actions
@@ -371,7 +368,8 @@ def run(customer):
                     "campaign": "first",
                     "objective": "first",
                     "instagram_permalink_url": "first",
-                    "link": "first"
+                    "link": "first",
+                    "object_url": "first"
                 }
 
                 # Add aggregation rules for action fields
@@ -439,36 +437,36 @@ def run(customer):
             # Use facebook_ads_{date} format for filename
             filename = f"facebook_ads_{date_str}.csv"
             filepath = self.temp_dir / filename
-            
+
             print(f"Saving to temporary file: {filepath}")
             df.to_csv(filepath, index=False)
             self.processed_files.append(filepath)
             print(f"Successfully saved {len(df)} records to {filepath}")
-            
+
             return str(filepath)
-        
+
         def upload_all_data_to_clickhouse(self):
             """Upload all collected data to ClickHouse in a single operation"""
             if not self.all_data_frames:
                 print("WARNING: No data to upload to ClickHouse")
                 return False
-            
+
             # Combine all DataFrames into one
             combined_df = pd.concat(self.all_data_frames, ignore_index=True)
             if combined_df.empty:
                 print("WARNING: Combined DataFrame is empty, nothing to upload")
                 return False
-            
+
             combined_df['conta_bm'] = CONTA_BM
             combined_df['date'] = pd.to_datetime(combined_df['date'])
             print(f"Uploading combined data to ClickHouse ({len(combined_df)} rows)")
-            
+
             # Create a client with the provided connection parameters
             try:
                 # Get database name from connection params or use default
                 database = self.clickhouse_params.get('database', 'default')
                 table_name = self.clickhouse_params.get('table_name', 'raw_facebook_ads')
-                
+
                 client = self.clickhouse_client
                 client.command(f"DROP TABLE IF EXISTS {database}.facebook_ads_gold")
                 create_table_query = f"""
@@ -504,6 +502,7 @@ def run(customer):
                     `cost_per_action_type_post_reaction` Float64,
                     `instagram_permalink_url` String,
                     `link` String,
+                    `object_url` String,
                     `conta_bm` String
                 )
                 ENGINE = MergeTree
@@ -513,7 +512,7 @@ def run(customer):
                 # Execute CREATE TABLE query
                 client.command(create_table_query)
                 print(f"Created or verified table: {database}.{table_name}")
-                
+
                 # Insert data
                 result = clickhouse.insert_df_to_clickhouse(combined_df, database, table_name, client)
                 if result:
@@ -532,21 +531,21 @@ def run(customer):
             try:
                 database = self.clickhouse_params.get('database', 'default')
                 table_name = self.clickhouse_params.get('table_name', 'raw_facebook_ads')
-                
+
                 client = self.clickhouse_client
 
                 # Check if table exists
                 check_table_query = f"EXISTS TABLE {database}.{table_name}"
                 table_exists = client.command(check_table_query)
-                
+
                 if not table_exists:
                     return False
-                
+
                 # Check if data for this date exists
                 check_query = f"SELECT count() FROM {database}.{table_name} WHERE date = '{date_str}' and conta_bm='{CONTA_BM}'"
                 result = client.query(check_query)
                 count = result.result_rows[0][0]
-                
+
                 return count > 0
             except Exception as e:
                 print(f"Error checking if date is processed: {e}")
@@ -570,7 +569,7 @@ def run(customer):
                 current += timedelta(days=1)
 
             return dates
-        
+
         def cleanup_temp_files(self):
             """Clean up temporary files and directory"""
             print(f"Cleaning up temporary files...")
@@ -609,10 +608,10 @@ def run(customer):
                 for i, date_str in enumerate(dates, 1):
                     print(f"\nProcessing ({i}/{len(dates)}): {date_str}")
                     df = await self.process_date(date_str)
-                    
+
                     # Save to temp file for reference
                     await self.save_to_temp_file(df, date_str)
-                    
+
                     # Add to the list of DataFrames for combined upload
                     if not df.empty:
                         self.all_data_frames.append(df)
