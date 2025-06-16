@@ -33,7 +33,7 @@ def run(customer):
     print('CONTA_BM', CONTA_BM)
 
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
-    
+
     # Create a temporary directory for storing files
     TEMP_DIR = Path(tempfile.gettempdir()) / f"facebook_ads_{uuid.uuid4().hex}"
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -43,7 +43,7 @@ def run(customer):
         'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
         'campaign_name', 'clicks', 'cost_per_action_type', 'ctr',
         'date_start', 'date_stop', 'frequency', 'impressions',
-        'objective', 'reach', 'spend', 'actions', 'object_url'
+        'objective', 'reach', 'spend', 'actions'
     ]
 
     ACTION_FIELDS = [
@@ -51,7 +51,6 @@ def run(customer):
         'onsite_conversion.messaging_conversation_started_7d', 'post_engagement', 'post_reaction'
     ]
 
-    # FIXED HEADER - Garantir que todos os arquivos tenham exatamente o mesmo header
     FIXED_COLUMNS = [
         'date', 'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
         'campaign', 'clicks', 'ctr', 'frequency', 'impressions', 'objective',
@@ -79,6 +78,9 @@ def run(customer):
             self.processed_files = []
             self.all_data_frames = []  # Store all DataFrames for combined upload
             self.clickhouse_client = clickhouse.get_client()
+
+            # Cache para URLs dos criativos (evita buscar o mesmo ad_id múltiplas vezes)
+            self.creative_urls_cache = {}
 
         async def get_session(self):
             if not self.session:
@@ -130,21 +132,33 @@ def run(customer):
                         print(msg)
                         raise Exception(msg)
 
-            # 3. Testar insights
+            # 3. Testar insights (SEM object_url)
             if valid_accounts > 0:
                 test_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
                 url = f"{self.base_url}/{self.account_ids[0]}/insights"
                 params = {
                     "access_token": self.access_token,
-                    "fields": "spend,impressions",
+                    "fields": "spend,impressions,ad_id",  # Campos válidos
                     "time_range": json.dumps({"since": test_date, "until": test_date}),
-                    "level": "account",
+                    "level": "ad",
                     "limit": 1
                 }
 
                 async with session.get(url, params=params) as response:
                     if response.status == 200:
                         print(f"[OK] Acesso a insights confirmado")
+                        data = await response.json()
+                        test_ads = data.get("data", [])
+
+                        # 4. Testar busca de criativos se houver anúncios
+                        if test_ads:
+                            test_ad_id = test_ads[0].get("ad_id")
+                            if test_ad_id:
+                                creative_url = await self.get_ad_creative_urls(test_ad_id)
+                                if creative_url:
+                                    print(f"[OK] Acesso a criativos confirmado: {creative_url}")
+                                else:
+                                    print(f"[INFO] Nenhuma URL encontrada no criativo de teste")
                     else:
                         error_data = await response.json()
                         msg = f"[ERRO] Sem acesso a insights: {error_data}"
@@ -159,13 +173,70 @@ def run(customer):
                 print(f"[ERRO] Apenas {valid_accounts}/{len(self.account_ids)} contas válidas")
                 return False
 
+        async def get_ad_creative_urls(self, ad_id: str) -> Dict[str, str]:
+            """
+            Busca URLs dos criativos do anúncio
+            Retorna um dict com: {'link': '...', 'instagram_permalink_url': '...', 'object_url': '...'}
+            """
+            if ad_id in self.creative_urls_cache:
+                return self.creative_urls_cache[ad_id]
+
+            session = await self.get_session()
+            url = f"{self.base_url}/{ad_id}"
+            params = {
+                "access_token": self.access_token,
+                "fields": "creative{object_story_spec,call_to_action,instagram_permalink_url}"
+            }
+
+            result = {
+                'link': None,
+                'instagram_permalink_url': None,
+                'object_url': None
+            }
+
+            try:
+                async with self.semaphore:
+                    async with session.get(url, params=params) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            creative = data.get("creative", {})
+
+                            # 1. Instagram permalink
+                            result['instagram_permalink_url'] = creative.get("instagram_permalink_url")
+
+                            # 2. Object story spec (para link)
+                            object_story = creative.get("object_story_spec", {})
+                            link_data = object_story.get("link_data", {})
+                            if link_data.get("link"):
+                                result['link'] = link_data.get("link")
+                                result['object_url'] = link_data.get("link")  # object_url = link principal
+
+                            # 3. Call to action (alternativa)
+                            if not result['link']:
+                                cta = creative.get("call_to_action", {})
+                                cta_value = cta.get("value", {})
+                                if cta_value.get("link"):
+                                    result['link'] = cta_value.get("link")
+                                    result['object_url'] = cta_value.get("link")
+
+                        elif response.status == 429:
+                            await asyncio.sleep(int(response.headers.get("Retry-After", "60")))
+                            return await self.get_ad_creative_urls(ad_id)
+
+            except Exception as e:
+                print(f"    └─ Erro ao buscar creative do ad {ad_id}: {e}")
+
+            # Cache do resultado
+            self.creative_urls_cache[ad_id] = result
+            return result
+
         async def get_ad_details_with_demographics(self, ad_id: str, date_str: str) -> List[Dict]:
             """Get detailed metrics for ad_id broken down by age and gender"""
             session = await self.get_session()
             url = f"{self.base_url}/{ad_id}/insights"
             params = {
                 "access_token": self.access_token,
-                "fields": ",".join(FIELDS),
+                "fields": ",".join(FIELDS),  # SEM object_url
                 "time_range": json.dumps({"since": date_str, "until": date_str}),
                 "level": "ad",
                 "breakdowns": "age,gender",
@@ -298,13 +369,13 @@ def run(customer):
             print(f"Processing aggregation for {date_str}")
             print(f"Total raw rows to process: {len(all_data)}")
 
-            df = self.transform_data(all_data, date_str)
+            df = await self.transform_data(all_data, date_str)
             print(f"Final aggregated rows: {len(df)}")
             print(f"{'=' * 60}")
 
             return df
 
-        def transform_data(self, data: List[Dict], date_str: str) -> pd.DataFrame:
+        async def transform_data(self, data: List[Dict], date_str: str) -> pd.DataFrame:
             """Transform raw data to normalized DataFrame with fixed columns"""
             if not data:
                 print("WARNING: No data to process")
@@ -313,15 +384,31 @@ def run(customer):
 
             print(f"  ├─ Transforming {len(data)} raw rows")
 
-            # First, transform all raw data
+            # Coletar todos os ad_ids únicos para buscar URLs dos criativos
+            unique_ad_ids = list(set(item.get("ad_id") for item in data if item.get("ad_id")))
+            print(f"  ├─ Fetching creative URLs for {len(unique_ad_ids)} unique ads...")
+
+            # Buscar URLs dos criativos em paralelo
+            creative_tasks = [self.get_ad_creative_urls(ad_id) for ad_id in unique_ad_ids]
+            creative_results = await asyncio.gather(*creative_tasks)
+
+            # Criar mapeamento ad_id -> URLs
+            ad_urls_map = dict(zip(unique_ad_ids, creative_results))
+
+            # Transform all raw data
             rows = []
             for item in data:
+                ad_id = item.get("ad_id")
+
+                # Obter URLs do mapeamento
+                ad_urls = ad_urls_map.get(ad_id, {})
+
                 # Base data
                 row = {
                     "date": date_str,
                     "account_name": item.get("account_name"),
                     "account_id": item.get("account_id"),
-                    "ad_id": item.get("ad_id"),
+                    "ad_id": ad_id,
                     "ad_name": item.get("ad_name"),
                     "adset_name": item.get("adset_name"),
                     "campaign": item.get("campaign_name"),
@@ -334,9 +421,10 @@ def run(customer):
                     "totalcost": float(item.get("spend", 0)) if item.get("spend") else 0,
                     "age": item.get("age"),
                     "gender": item.get("gender"),
-                    "instagram_permalink_url": None,
-                    "link": None,
-                    "object_url": item.get("object_url")
+                    # URLs dos criativos
+                    "instagram_permalink_url": ad_urls.get("instagram_permalink_url"),
+                    "link": ad_urls.get("link"),
+                    "object_url": ad_urls.get("object_url")
                 }
 
                 # Extract actions
@@ -617,13 +705,15 @@ def run(customer):
                         self.all_data_frames.append(df)
 
                 # Upload all collected data at once
-                return self.upload_all_data_to_clickhouse()
+                result = self.upload_all_data_to_clickhouse()
 
                 total_elapsed = time.time() - total_start_time
                 print(f"\nCollection Complete!")
                 print(f"Total execution time: {total_elapsed:.2f} seconds")
                 print(f"Average time per date: {total_elapsed / len(dates):.2f} seconds")
                 print("=" * 40)
+
+                return result
 
             except Exception as e:
                 print(f"\nCritical error: {e}")
@@ -635,10 +725,11 @@ def run(customer):
 
     async def main():
         print("\n" + "=" * 60)
-        print("FACEBOOK ADS COLLECTOR - WITH CREDENTIAL VALIDATION")
+        print("FACEBOOK ADS COLLECTOR - VERSÃO CORRIGIDA (SEM object_url nos insights)")
         print("=" * 60)
         print(f"Accounts: {', '.join(API_ACCOUNT_IDS)}")
         print(f"Start Date: {HISTORICAL_START_DATE}")
+        print("URLs dos criativos serão buscadas separadamente!")
         print("=" * 60)
 
         collector = FacebookAdsCollector(
