@@ -119,7 +119,8 @@ def run(customer):
                 resultados.append(categoria)
 
             logger.info(f"Página {pagina}: +{len(categorias)} categorias. Total: {len(resultados)}")
-            if pagina >= dados.get('total_de_paginas', 1): break
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
             pagina += 1
 
         if not resultados:
@@ -127,11 +128,11 @@ def run(customer):
             return
 
         df = pd.DataFrame(resultados)
-        colunas_ordenadas = ['codigo', 'descricao', 'categoria_superior', 'descricao_padrao',
-                             'dadosDRE_codigo', 'dadosDRE_descricao', 'dadosDRE_nivel', 'dadosDRE_ordem',
-                             'dadosDRE_tipo']
+        colunas_ordenadas = ['codigo', 'descricao', 'categoria_superior', 'descricao_padrao', 'dadosDRE_codigo',
+                             'dadosDRE_descricao', 'dadosDRE_nivel', 'dadosDRE_ordem', 'dadosDRE_tipo']
         colunas_existentes = [col for col in colunas_ordenadas if col in df.columns]
-        if colunas_existentes: df = df[colunas_existentes]
+        if colunas_existentes:
+            df = df[colunas_existentes]
         upload_to_gcs(df, f"{ENDPOINT_NAME}/categorias_omie.csv")
         logger.info(f"Coleta de categorias finalizada em {datetime.now() - inicio}")
 
@@ -236,8 +237,8 @@ def run(customer):
                             pedido_processado.update(campos_aninhados)
 
                             # Remove campos originais para evitar duplicação
-                            for campo in ["cabecalho", "det", "lista_parcelas", "frete",
-                                          "infoCadastro", "informacoes_adicionais", "total_pedido"]:
+                            for campo in ["cabecalho", "det", "lista_parcelas", "frete", "infoCadastro",
+                                          "informacoes_adicionais", "total_pedido"]:
                                 if campo in pedido_processado: del pedido_processado[campo]
 
                             resultados.append(pedido_processado)
@@ -280,14 +281,17 @@ def run(customer):
 
                         for p in pedidos:
                             id_pedido = p.get('cabecalho', {}).get('codigo_pedido')
-                            if id_pedido and id_pedido in ids_coletados: continue
-                            if id_pedido: ids_coletados.add(id_pedido)
+                            if id_pedido and id_pedido in ids_coletados:
+                                continue
+                            if id_pedido:
+                                ids_coletados.add(id_pedido)
 
                             pedido_processado = p.copy()
                             pedido_processado.update(extrair_campos_aninhados_pedidos(p))
-                            for campo in ["cabecalho", "det", "lista_parcelas", "frete",
-                                          "infoCadastro", "informacoes_adicionais", "total_pedido"]:
-                                if campo in pedido_processado: del pedido_processado[campo]
+                            for campo in ["cabecalho", "det", "lista_parcelas", "frete", "infoCadastro",
+                                          "informacoes_adicionais", "total_pedido"]:
+                                if campo in pedido_processado:
+                                    del pedido_processado[campo]
 
                             resultados.append(pedido_processado)
                             recuperados += 1
@@ -295,6 +299,7 @@ def run(customer):
                         logger.info(f"Recuperados +{recuperados} pedidos da página {pag_erro}")
                     except Exception as e:
                         logger.error(f"Erro ao recuperar página {pag_erro}: {e}")
+                        raise
 
         if not resultados:
             logger.warning("Nenhum pedido coletado.")
@@ -327,12 +332,14 @@ def run(customer):
 
             dados = response.json()
             vendedores = dados.get('cadastro', [])
-            if not vendedores: break
+            if not vendedores:
+                break
 
             resultados.extend(vendedores)
             logger.info(f"Página {pagina}: +{len(vendedores)} vendedores. Total: {len(resultados)}")
 
-            if pagina >= dados.get('total_de_paginas', 1): break
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
             pagina += 1
 
         if resultados:
@@ -367,13 +374,15 @@ def run(customer):
 
             dados = response.json()
             produtos = dados.get('produto_servico_cadastro', [])
-            if not produtos: break
+            if not produtos:
+                break
 
             resultados.extend(produtos)
             if len(resultados) % 500 == 0:
                 logger.info(f"Total coletado: {len(resultados)}")
 
-            if pagina >= dados.get('total_de_paginas', 1): break
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
             pagina += 1
 
         if resultados:
@@ -429,13 +438,15 @@ def run(customer):
 
             dados = response.json()
             etapas = dados.get('etapasPedido', [])
-            if not etapas: break
+            if not etapas:
+                break
 
             resultados.extend(etapas)
             if len(resultados) % 500 == 0:
                 logger.info(f"Total coletado: {len(resultados)}")
 
-            if pagina >= dados.get('nTotPaginas', 1): break
+            if pagina >= dados.get('nTotPaginas', 1):
+                break
             pagina += 1
 
         if resultados:
@@ -465,12 +476,14 @@ def run(customer):
 
             dados = response.json()
             etapas = dados.get('cadastros', [])
-            if not etapas: break
+            if not etapas:
+                break
 
             resultados.extend(etapas)
             logger.info(f"Página {pagina}: +{len(etapas)} etapas. Total: {len(resultados)}")
 
-            if pagina >= dados.get('total_de_paginas', 1): break
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
             pagina += 1
 
         if resultados:
