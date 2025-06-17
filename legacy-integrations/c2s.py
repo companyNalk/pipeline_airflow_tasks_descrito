@@ -142,7 +142,7 @@ def run(customer):
         per_page = 50
         all_leads = []
 
-        # Definindo a data de início como janeiro deste ano
+        # Ajuste para obter o ano atual -1 para nao zerar os dados na troca de ano
         start_date = datetime((datetime.now().year - 1), 1, 1).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         print("[INFO] Iniciando a coleta de leads...")
