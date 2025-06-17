@@ -20,6 +20,7 @@ def run_activities(customer):
     API_URL = customer['api_url']
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
     DESTINATION_FOLDER = "activities"
     DESTINATION_FILENAME = "activities.csv"
 
@@ -34,6 +35,9 @@ def run_activities(customer):
         "show": 200,
         "page": 1
     }
+
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
 
     def flatten_dict(d, parent_key='', sep='_'):
         items = []
@@ -125,6 +129,7 @@ def run_companies(customer):
     API_URL = customer['api_url']
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
     DESTINATION_FOLDER = "companies"
     DESTINATION_FILENAME = "companies.csv"
 
@@ -139,6 +144,9 @@ def run_companies(customer):
         "show": 200,
         "page": 1
     }
+
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
 
     def normalize_column_name(name):
         nfkd = unicodedata.normalize('NFKD', name)
@@ -276,6 +284,7 @@ def run_deals(customer):
     API_URL = customer['api_url']
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
     DESTINATION_FOLDER = "deals"
     DESTINATION_FILENAME = "deals.csv"
 
@@ -293,6 +302,9 @@ def run_deals(customer):
         "page": 1,
         "with": "customFields,tags,owner,pipeline,stage"
     }
+
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
 
     def normalize_column_name(name):
         nfkd = unicodedata.normalize('NFKD', name)
@@ -500,6 +512,7 @@ def run_lost_reasons(customer):
     API_URL = customer['api_url']
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
     DESTINATION_FOLDER = "lost_reasons"
     DESTINATION_FILENAME = "lost_reasons.csv"
 
@@ -514,6 +527,9 @@ def run_lost_reasons(customer):
         "show": 200,
         "page": 1
     }
+
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
 
     def normalize_column_name(name):
         nfkd = unicodedata.normalize('NFKD', name)
@@ -615,6 +631,7 @@ def run_origins(customer):
     API_URL = customer['api_url']
     API_TOKEN = customer['api_token']
     BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
     DESTINATION_FOLDER = "origins"
     DESTINATION_FILENAME = "origins.csv"
 
@@ -629,6 +646,9 @@ def run_origins(customer):
         "show": 200,
         "page": 1
     }
+
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
 
     def normalize_column_name(name):
         nfkd = unicodedata.normalize('NFKD', name)
