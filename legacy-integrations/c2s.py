@@ -143,7 +143,7 @@ def run(customer):
         all_leads = []
 
         # Definindo a data de início como janeiro deste ano
-        start_date = datetime(datetime.now().year, 1, 1).strftime("%Y-%m-%dT%H:%M:%SZ")
+        start_date = datetime((datetime.now().year - 1), 1, 1).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         print("[INFO] Iniciando a coleta de leads...")
         while True:
