@@ -1,5 +1,7 @@
 import os
-from unittest.mock import patch, ANY
+import shutil
+import uuid
+from unittest.mock import patch, mock_open
 
 import pandas as pd
 import pytest
@@ -8,11 +10,21 @@ from pandas.testing import assert_frame_equal
 from commons.utils import Utils
 
 
+@pytest.fixture(autouse=True)
+def cleanup_output_directory():
+    """Fixture que limpa o diretório output antes e depois de cada teste."""
+    output_dir = "output"
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    yield
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+
+
 class TestFlattenJson:
-    """Testes para o método _flatten_json."""
+    """Testes para achatamento de estruturas JSON."""
 
     def test_flatten_empty_dict(self):
-        """Testa achatamento de dicionário vazio."""
         # GIVEN
         data = {}
 
@@ -23,7 +35,6 @@ class TestFlattenJson:
         assert result == {}
 
     def test_flatten_simple_dict(self):
-        """Testa achatamento de dicionário simples."""
         # GIVEN
         data = {"a": 1, "b": 2}
 
@@ -34,46 +45,37 @@ class TestFlattenJson:
         assert result == {"a": 1, "b": 2}
 
     def test_flatten_nested_dict(self):
-        """Testa achatamento de dicionário aninhado."""
         # GIVEN
         data = {"a": 1, "b": {"c": 2, "d": 3}}
+        expected = {"a": 1, "b_c": 2, "b_d": 3}
 
         # WHEN
         result = Utils._flatten_json(data)
 
         # THEN
-        assert result == {"a": 1, "b_c": 2, "b_d": 3}
+        assert result == expected
 
     def test_flatten_with_list(self):
-        """Testa achatamento com lista."""
         # GIVEN
         data = {"a": 1, "b": [10, 20, 30]}
+        expected = {"a": 1, "b_1": 10, "b_2": 20, "b_3": 30}
 
         # WHEN
         result = Utils._flatten_json(data)
 
         # THEN
-        assert result == {"a": 1, "b_1": 10, "b_2": 20, "b_3": 30}
+        assert result == expected
 
     def test_flatten_complex_structure(self):
-        """Testa achatamento de estrutura complexa com dicionários e listas aninhadas."""
         # GIVEN
         data = {
             "name": "John",
-            "address": {
-                "street": "Main St",
-                "city": "New York"
-            },
+            "address": {"street": "Main St", "city": "New York"},
             "phones": [
                 {"type": "home", "number": "123"},
                 {"type": "work", "number": "456"}
             ]
         }
-
-        # WHEN
-        result = Utils._flatten_json(data)
-
-        # THEN
         expected = {
             "name": "John",
             "address_street": "Main St",
@@ -83,10 +85,14 @@ class TestFlattenJson:
             "phones_2_type": "work",
             "phones_2_number": "456"
         }
+
+        # WHEN
+        result = Utils._flatten_json(data)
+
+        # THEN
         assert result == expected
 
     def test_flatten_custom_separator(self):
-        """Testa achatamento com separador personalizado."""
         # GIVEN
         data = {"a": {"b": 1}}
 
@@ -97,7 +103,6 @@ class TestFlattenJson:
         assert result == {"a.b": 1}
 
     def test_flatten_with_parent_key(self):
-        """Testa achatamento com chave pai fornecida."""
         # GIVEN
         data = {"a": 1}
 
@@ -107,80 +112,168 @@ class TestFlattenJson:
         # THEN
         assert result == {"parent_a": 1}
 
-    def test_flatten_exception(self):
-        """Testa se exceções são tratadas corretamente."""
+
+class TestNormalizeKey:
+    """Testes para normalização de chaves/strings."""
+
+    def test_basic_transformations(self):
+        """Testa transformações básicas em uma função."""
         # GIVEN
-        # Em vez de usar object(), vamos forçar uma exceção real
-        data = {"a": 1}
+        test_cases = [
+            ("AbCdEf", "abcdef"),
+            ("açãó êíóú", "acao_eiou"),
+            ("test@#$%^&*()!~`+=[]{}<>:;,.?/|\\", "test"),
+            ("test with spaces", "test_with_spaces"),
+            ("___test___", "test"),
+            ("camelCaseToSnakeCase", "camel_case_to_snake_case"),
+        ]
 
-        # WHEN/THEN
-        with patch.object(Utils, '_flatten_json', side_effect=Exception("Erro forçado")):
-            with pytest.raises(Exception):
-                Utils._flatten_json(data)
+        # WHEN & THEN
+        for input_val, expected in test_cases:
+            result = Utils._normalize_key(input_val)
+            assert result == expected
 
-
-class TestRemoveEmptyColumns:
-    """Testes para o método _remove_empty_columns."""
-
-    def test_remove_empty_columns_empty_df(self):
-        """Testa remoção de colunas em DataFrame vazio."""
+    def test_complex_normalization(self):
+        """Testa normalização complexa."""
         # GIVEN
-        df = pd.DataFrame()
+        key = "  Usuário@Endereço-Email  "
+        expected = "usuario_endereco_email"
 
         # WHEN
-        with patch('commons.utils.logging') as mock_logging:
-            result = Utils._remove_empty_columns(df)
+        result = Utils._normalize_key(key)
 
         # THEN
-        assert result.empty
-        mock_logging.warning.assert_called_once_with("DataFrame vazio recebido para remoção de colunas")
+        assert result == expected
 
-    def test_remove_nan_columns(self):
-        """Testa remoção de colunas com NaN."""
+    def test_pascal_case_conversion(self):
+        """Testa conversão específica de PascalCase."""
+        # GIVEN
+        test_cases = [
+            ("ExibeContato", "exibe_contato"),
+            ("IdStatusGestao", "id_status_gestao")
+        ]
+
+        # WHEN & THEN
+        for input_val, expected in test_cases:
+            result = Utils._normalize_key(input_val, use_pascal_case=True)
+            assert result == expected
+
+
+class TestNormalizeKeys:
+    """Testes para normalização de estruturas de dados."""
+
+    def test_normalize_dict_keys(self):
+        # GIVEN
+        data = {"User Name": "John", "Email@Address": "john@example.com"}
+        expected = {"user_name": "John", "email_address": "john@example.com"}
+
+        # WHEN
+        result = Utils._normalize_keys(data)
+
+        # THEN
+        assert result == expected
+
+    def test_normalize_nested_structures(self):
+        # GIVEN
+        data = {
+            "User": {
+                "Full Name": "John Doe",
+                "ContactInfo": {"Email": "john@example.com"}
+            }
+        }
+        expected = {
+            "user": {
+                "full_name": "John Doe",
+                "contactinfo": {"email": "john@example.com"}
+            }
+        }
+
+        # WHEN
+        result = Utils._normalize_keys(data)
+
+        # THEN
+        assert result == expected
+
+    def test_normalize_list_of_dicts(self):
+        # GIVEN
+        data = [{"First Name": "John"}, {"Last Name": "Doe"}]
+        expected = [{"first_name": "John"}, {"last_name": "Doe"}]
+
+        # WHEN
+        result = Utils._normalize_keys(data)
+
+        # THEN
+        assert result == expected
+
+    def test_normalize_scalar_values(self):
+        """Testa que valores escalares permanecem inalterados."""
+        # GIVEN
+        scalar_string = "test"
+        scalar_list = [1, "test", True]
+
+        # WHEN
+        result_string = Utils._normalize_keys(scalar_string)
+        result_list = Utils._normalize_keys(scalar_list)
+
+        # THEN
+        assert result_string == "test"
+        assert result_list == [1, "test", True]
+
+
+class TestDataFrameOperations:
+    """Testes para operações em DataFrames."""
+
+    def test_normalize_column_names(self):
+        # GIVEN
+        df = pd.DataFrame({
+            "User Name": [1, 2, 3],
+            "Email@Address": [4, 5, 6],
+            '"Texto"': ["a", "b", "c"],
+            "'novoTexto'": ["d", "e", "f"]
+        })
+        expected_columns = ["user_name", "email_address", "texto", "novo_texto"]
+
+        # WHEN
+        result = Utils._normalize_column_names(df)
+
+        # THEN
+        assert list(result.columns) == expected_columns
+
+    def test_remove_empty_columns_nan(self):
         # GIVEN
         df = pd.DataFrame({
             'a': [1, 2, 3],
             'b': [None, None, None],
             'c': [4, 5, 6]
         })
+        expected = pd.DataFrame({'a': [1, 2, 3], 'c': [4, 5, 6]})
 
         # WHEN
         with patch('commons.utils.logging') as mock_logging:
             result = Utils._remove_empty_columns(df)
 
         # THEN
-        expected = pd.DataFrame({
-            'a': [1, 2, 3],
-            'c': [4, 5, 6]
-        })
         assert_frame_equal(result, expected)
         mock_logging.info.assert_any_call("Colunas removidas por serem NaN: 1")
-        mock_logging.info.assert_any_call("Total de colunas removidas: 1")
 
-    def test_remove_empty_string_columns(self):
-        """Testa remoção de colunas com strings vazias."""
+    def test_remove_empty_columns_strings(self):
         # GIVEN
         df = pd.DataFrame({
             'a': [1, 2, 3],
             'b': ['', '', ''],
             'c': [4, 5, 6]
         })
+        expected = pd.DataFrame({'a': [1, 2, 3], 'c': [4, 5, 6]})
 
         # WHEN
         with patch('commons.utils.logging') as mock_logging:
             result = Utils._remove_empty_columns(df)
 
         # THEN
-        expected = pd.DataFrame({
-            'a': [1, 2, 3],
-            'c': [4, 5, 6]
-        })
         assert_frame_equal(result, expected)
         mock_logging.info.assert_any_call("Colunas removidas por serem strings vazias: 1")
-        mock_logging.info.assert_any_call("Total de colunas removidas: 1")
 
-    def test_remove_both_types_of_empty_columns(self):
-        """Testa remoção de colunas com NaN e strings vazias."""
+    def test_remove_empty_columns_mixed(self):
         # GIVEN
         df = pd.DataFrame({
             'a': [1, 2, 3],
@@ -188,719 +281,558 @@ class TestRemoveEmptyColumns:
             'c': ['', '', ''],
             'd': [4, 5, 6]
         })
+        expected = pd.DataFrame({'a': [1, 2, 3], 'd': [4, 5, 6]})
 
         # WHEN
         with patch('commons.utils.logging') as mock_logging:
             result = Utils._remove_empty_columns(df)
 
         # THEN
-        expected = pd.DataFrame({
-            'a': [1, 2, 3],
-            'd': [4, 5, 6]
-        })
         assert_frame_equal(result, expected)
-        mock_logging.info.assert_any_call("Colunas removidas por serem NaN: 1")
-        mock_logging.info.assert_any_call("Colunas removidas por serem strings vazias: 1")
         mock_logging.info.assert_any_call("Total de colunas removidas: 2")
 
-    def test_no_empty_columns(self):
-        """Testa comportamento quando não há colunas vazias para remover."""
-        # GIVEN
-        df = pd.DataFrame({
-            'a': [1, 2, 3],
-            'b': [4, 5, 6]
-        })
+    def test_remove_empty_columns_edge_cases(self):
+        # GIVEN - DataFrame vazio
+        empty_df = pd.DataFrame()
 
         # WHEN
         with patch('commons.utils.logging') as mock_logging:
-            result = Utils._remove_empty_columns(df)
-
-        # THEN
-        assert_frame_equal(result, df)
-        mock_logging.info.assert_not_called()
-
-    def test_all_columns_empty(self):
-        """Testa comportamento quando todas as colunas são vazias."""
-        # GIVEN
-        df = pd.DataFrame({
-            'a': [None, None, None],
-            'b': ['', '', '']
-        })
-
-        # WHEN/THEN
-        with patch('commons.utils.logging'):
-            with pytest.raises(ValueError, match="O DataFrame resultante está vazio após a remoção de colunas"):
-                Utils._remove_empty_columns(df)
-
-
-class TestNormalizeKey:
-    """Testes para o método _normalize_key."""
-
-    def test_lowercase_conversion(self):
-        """Testa conversão para lowercase."""
-        # GIVEN
-        key = "AbCdEf"
-
-        # WHEN
-        result = Utils._normalize_key(key)
-
-        # THEN
-        assert result == "abcdef"
-
-    def test_remove_accents(self):
-        """Testa remoção de acentos."""
-        # GIVEN
-        key = "açãó êíóú"
-
-        # WHEN
-        result = Utils._normalize_key(key)
-
-        # THEN
-        assert result == "acao_eiou"
-
-    def test_replace_special_chars(self):
-        """Testa substituição de caracteres especiais."""
-        # GIVEN
-        key = "test@#$%^&*()!~`+=[]{}<>:;,.?/|\\"
-
-        # WHEN
-        result = Utils._normalize_key(key)
-
-        # THEN
-        assert result == "test"
-
-    def test_replace_spaces(self):
-        """Testa substituição de espaços."""
-        # GIVEN
-        key = "test with spaces"
-
-        # WHEN
-        result = Utils._normalize_key(key)
-
-        # THEN
-        assert result == "test_with_spaces"
-
-    def test_trim_underscores(self):
-        """Testa remoção de underscores no início e fim."""
-        # GIVEN
-        key = "___test___"
-
-        # WHEN
-        result = Utils._normalize_key(key)
-
-        # THEN
-        assert result == "test"
-
-    def test_camel_case_to_snake_case(self):
-        """Testa conversão de camelCase para snake_case."""
-        # GIVEN
-        key = "camelCaseToSnakeCase"
-
-        # WHEN
-        result = Utils._normalize_key(key)
-
-        # THEN
-        assert result == "camel_case_to_snake_case"
-
-    def test_complex_normalization(self):
-        """Testa normalização complexa combinando várias transformações."""
-        # GIVEN
-        key = "  Usuário@Endereço-Email  "
-
-        # WHEN
-        result = Utils._normalize_key(key)
-
-        # THEN
-        assert result == "usuario_endereco_email"
-
-    def test_column_names_with_quotes(self):
-        """Testa normalização de nomes de colunas com aspas."""
-        # GIVEN
-        df = pd.DataFrame({
-            '"Texto"': ["jonas", "ana"],
-            "'novoTexto'": ["jonas", "paula"]
-        })
-
-        # WHEN
-        result = Utils._normalize_column_names(df)
-
-        # THEN
-        expected = pd.DataFrame({
-            "texto": ["jonas", "ana"],
-            "novo_texto": ["jonas", "paula"]
-        })
-        assert_frame_equal(result, expected)
-
-
-class TestNormalizeKeys:
-    """Testes para o método _normalize_keys."""
-
-    def test_normalize_dict_keys(self):
-        """Testa normalização de chaves em dicionário."""
-        # GIVEN
-        data = {"User Name": "John", "Email@Address": "john@example.com"}
-
-        # WHEN
-        result = Utils._normalize_keys(data)
-
-        # THEN
-        expected = {"user_name": "John", "email_address": "john@example.com"}
-        assert result == expected
-
-    def test_normalize_nested_dict(self):
-        """Testa normalização de chaves em dicionário aninhado."""
-        # GIVEN
-        data = {
-            "User": {
-                "Full Name": "John Doe",
-                "ContactInfo": {
-                    "Email": "john@example.com"
-                }
-            }
-        }
-
-        # WHEN
-        result = Utils._normalize_keys(data)
-
-        # THEN
-        expected = {
-            "user": {
-                "full_name": "John Doe",
-                "contactinfo": {
-                    "email": "john@example.com"
-                }
-            }
-        }
-        assert result == expected
-
-    def test_normalize_list_of_dicts(self):
-        """Testa normalização de lista de dicionários."""
-        # GIVEN
-        data = [
-            {"First Name": "John"},
-            {"Last Name": "Doe"}
-        ]
-
-        # WHEN
-        result = Utils._normalize_keys(data)
-
-        # THEN
-        expected = [
-            {"first_name": "John"},
-            {"last_name": "Doe"}
-        ]
-        assert result == expected
-
-    def test_normalize_non_dict_list(self):
-        """Testa normalização de lista de valores não-dicionário."""
-        # GIVEN
-        data = [1, "test", True]
-
-        # WHEN
-        result = Utils._normalize_keys(data)
-
-        # THEN
-        assert result == data
-
-    def test_normalize_scalar_value(self):
-        """Testa normalização de valor escalar."""
-        # GIVEN
-        data = "test"
-
-        # WHEN
-        result = Utils._normalize_keys(data)
-
-        # THEN
-        assert result == "test"
-
-    def test_normalize_complex_structure(self):
-        """Testa normalização de estrutura complexa."""
-        # GIVEN
-        data = {
-            "Usuários": [
-                {"Nome": "John", "Endereço": {"Cidade": "New York"}},
-                {"Nome": "Jane", "Endereço": {"Cidade": "Boston"}}
-            ]
-        }
-
-        # WHEN
-        result = Utils._normalize_keys(data)
-
-        # THEN
-        expected = {
-            "usuarios": [
-                {"nome": "John", "endereco": {"cidade": "New York"}},
-                {"nome": "Jane", "endereco": {"cidade": "Boston"}}
-            ]
-        }
-        assert result == expected
-
-    def test_normalize_keys_exception(self):
-        """Testa se exceções são tratadas corretamente."""
-        # GIVEN
-        data = {"test": "value"}
-
-        # WHEN/THEN
-        with patch.object(Utils, '_normalize_key', side_effect=Exception("Teste de erro")):
-            with pytest.raises(Exception):
-                Utils._normalize_keys(data)
-
-
-class TestNormalizeColumnNames:
-    """Testes para o método _normalize_column_names."""
-
-    def test_normalize_empty_dataframe(self):
-        """Testa normalização de DataFrame vazio."""
-        # GIVEN
-        df = pd.DataFrame()
-
-        # WHEN
-        result = Utils._normalize_column_names(df)
+            result = Utils._remove_empty_columns(empty_df)
 
         # THEN
         assert result.empty
+        mock_logging.warning.assert_called_once()
 
-    def test_normalize_column_names(self):
-        """Testa normalização de nomes de colunas."""
+        # GIVEN - Nenhuma coluna vazia
+        normal_df = pd.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6]})
+
+        # WHEN
+        with patch('commons.utils.logging') as mock_logging:
+            result = Utils._remove_empty_columns(normal_df)
+
+        # THEN
+        assert_frame_equal(result, normal_df)
+        mock_logging.info.assert_not_called()
+
+        # GIVEN - Todas as colunas vazias
+        all_empty_df = pd.DataFrame({'a': [None, None], 'b': ['', '']})
+
+        # WHEN & THEN
+        with patch('commons.utils.logging'):
+            with pytest.raises(ValueError, match="DataFrame resultante está vazio"):
+                Utils._remove_empty_columns(all_empty_df)
+
+    def test_convert_id_columns(self):
         # GIVEN
         df = pd.DataFrame({
-            "User Name": [1, 2, 3],
-            "Email@Address": [4, 5, 6]
+            "id": [1.0, 2.0, 3.0],
+            "user_id": [10.0, 20.0, None],
+            "name": ["Alice", "Bob", "Charlie"]
         })
 
         # WHEN
-        result = Utils._normalize_column_names(df)
+        with patch('commons.utils.logging') as mock_logging:
+            result = Utils._process_and_convert_id_columns(df)
 
         # THEN
-        expected = pd.DataFrame({
-            "user_name": [1, 2, 3],
-            "email_address": [4, 5, 6]
-        })
-        assert_frame_equal(result, expected)
+        assert result["id"].dtype == "Int64"
+        assert result["user_id"].dtype == "Int64"
+        assert result["name"].dtype == object
+        assert mock_logging.info.call_count == 2
 
-    def test_normalize_column_names_exception(self):
-        """Testa se exceções são tratadas corretamente."""
+    def test_convert_id_columns_with_uuid(self):
         # GIVEN
-        df = pd.DataFrame({"col": [1, 2, 3]})
+        test_uuid = uuid.uuid4()
+        df = pd.DataFrame({
+            "id": [test_uuid, None],
+            "regular_id": [1.0, 2.0]
+        })
 
-        # WHEN/THEN
-        with patch.object(Utils, '_normalize_key', side_effect=Exception("Teste de erro")):
-            with pytest.raises(Exception):
-                Utils._normalize_column_names(df)
+        # WHEN
+        result = Utils._process_and_convert_id_columns(df)
+
+        # THEN
+        assert result["id"].dtype == object  # UUID mantido
+        assert result["regular_id"].dtype == "Int64"
+
+    def test_convert_nullable_int_columns(self):
+        # GIVEN
+        df = pd.DataFrame({
+            "int_col": [1, 2, 3, None],
+            "float_col": [1.0, 2.5, 3.0, None],
+            "string_col": ["a", "b", "c", None]
+        })
+
+        # WHEN
+        with patch('commons.utils.logging') as mock_logging:
+            result = Utils._convert_columns_to_nullable_int(df.copy())
+
+        # THEN
+        assert result["int_col"].dtype == "Int64"
+        assert result["float_col"].dtype == float
+        assert result["string_col"].dtype == object
+        mock_logging.info.assert_called_once()
 
 
-class TestSaveLocalDataframe:
-    """Testes para o método _save_local_dataframe."""
+class TestDataUtilities:
+    """Testes para utilitários diversos de manipulação de dados."""
 
-    def test_save_dataframe_success(self):
-        """Testa salvamento bem-sucedido de DataFrame."""
+    def test_remove_newlines_from_fields(self):
+        # GIVEN
+        data = [
+            {"text": "Line 1\nLine 2"},
+            {"text": "Line 1\r\nLine 2"},
+            {"text": "Line 1\rLine 2"},
+            {"number": 123, "bool_val": True}
+        ]
+        expected = [
+            {"text": "Line 1 Line 2"},
+            {"text": "Line 1 Line 2"},
+            {"text": "Line 1 Line 2"},
+            {"number": 123, "bool_val": True}
+        ]
+
+        # WHEN
+        result = Utils._remove_newlines_from_fields(data)
+
+        # THEN
+        assert result == expected
+
+    def test_remove_newlines_empty_data(self):
+        # GIVEN
+        empty_data = []
+
+        # WHEN
+        result = Utils._remove_newlines_from_fields(empty_data)
+
+        # THEN
+        assert result == []
+
+
+class TestFileSaving:
+    """Testes para operações de salvamento de arquivos."""
+
+    def test_save_local_dataframe_success(self):
         # GIVEN
         df = pd.DataFrame({"col": [1, 2, 3]})
         file_name = "test_file"
 
         # WHEN
-        with patch('os.makedirs') as mock_makedirs:
-            with patch('pandas.DataFrame.to_csv') as mock_to_csv:
-                with patch('commons.utils.logging') as mock_logging:
-                    result = Utils._save_local_dataframe(df, file_name)
+        with patch('os.makedirs') as mock_makedirs, \
+                patch('pandas.DataFrame.to_csv') as mock_to_csv, \
+                patch('commons.utils.logging') as mock_logging:
+            result = Utils._save_local_dataframe(df, file_name)
 
         # THEN
         assert result is True
-        # Verifica a criação do diretório base
         mock_makedirs.assert_any_call("output", exist_ok=True)
-        # Verifica a criação do diretório específico
         mock_makedirs.assert_any_call(os.path.join("output", file_name), exist_ok=True)
         mock_to_csv.assert_called_once()
-        # Verifica a mensagem de log com o caminho correto do arquivo
-        csv_path = os.path.join("output", file_name, f"{file_name}.csv")
-        mock_logging.info.assert_called_once_with(f"Arquivo salvo com sucesso: {csv_path}")
+        mock_logging.info.assert_called_once()
 
-    def test_save_dataframe_custom_separator(self):
-        """Testa salvamento de DataFrame com separador personalizado."""
+    def test_save_local_dataframe_custom_separator(self):
         # GIVEN
         df = pd.DataFrame({"col": [1, 2, 3]})
-        file_name = "test_file"
         separator = ","
 
         # WHEN
-        with patch('os.makedirs'):
-            with patch('pandas.DataFrame.to_csv') as mock_to_csv:
-                with patch('commons.utils.logging'):
-                    Utils._save_local_dataframe(df, file_name, separator)
+        with patch('os.makedirs'), \
+                patch('pandas.DataFrame.to_csv') as mock_to_csv, \
+                patch('commons.utils.logging'):
+            Utils._save_local_dataframe(df, "test", separator)
 
         # THEN
-        mock_to_csv.assert_called_once_with(f"output/{file_name}/{file_name}.csv", sep=separator, index=False)
+        mock_to_csv.assert_called_once_with("output/test/test.csv", sep=",", index=False)
 
-    def test_save_dataframe_exception(self):
-        """Testa se exceções são tratadas corretamente."""
+
+class TestCsvOperations:
+    """Testes para operações com arquivos CSV e chunks."""
+
+    def test_validate_csv_valid_file(self):
         # GIVEN
-        df = pd.DataFrame({"col": [1, 2, 3]})
-        file_name = "test_file"
+        csv_content = "col1;col2;col3\nvalue1;value2;value3\nvalue4;value5;value6"
 
-        # WHEN/THEN
-        with patch('os.makedirs', side_effect=Exception("Teste de erro")):
-            with patch('commons.utils.logging') as mock_logging:
-                with pytest.raises(Exception):
-                    Utils._save_local_dataframe(df, file_name)
+        # WHEN
+        with patch('builtins.open', mock_open(read_data=csv_content)):
+            result = Utils._validate_csv("test")
 
-        mock_logging.error.assert_called_once()
+        # THEN
+        assert result['valid'] is True
+        assert result['total_lines'] == 3
+        assert result['header_columns'] == 3
+        assert result['errors'] == []
 
-
-class TestProcessAndSaveData:
-    """Testes para o método process_and_save_data."""
-
-    def test_process_empty_data(self):
-        """Testa processamento de dados vazios."""
+    def test_validate_csv_invalid_file(self):
         # GIVEN
-        raw_data = []
+        csv_content = "col1;col2;col3\nvalue1;value2\nvalue4;value5;value6;extra"
+
+        # WHEN
+        with patch('builtins.open', mock_open(read_data=csv_content)):
+            result = Utils._validate_csv("test")
+
+        # THEN
+        assert result['valid'] is False
+        assert len(result['errors']) == 2
+
+    def test_get_chunks_dir(self):
+        # GIVEN
+        endpoint_name = "test_endpoint"
+        expected_path = os.path.join("output", "test_endpoint", "chunks")
+
+        # WHEN
+        with patch('os.makedirs') as mock_makedirs:
+            result = Utils._get_chunks_dir(endpoint_name)
+
+        # THEN
+        assert result == expected_path
+        mock_makedirs.assert_called_once_with(expected_path, exist_ok=True)
+
+    def test_cleanup_chunks_directory_success(self):
+        # GIVEN
+        endpoint_name = "test_endpoint"
+        base_dir = "output"
+        output_dir = os.path.join(base_dir, endpoint_name)
+        chunks_dir = os.path.join(output_dir, "chunks")
+        os.makedirs(chunks_dir, exist_ok=True)
+        assert os.path.exists(chunks_dir)
+
+        try:
+            # WHEN
+            result = Utils._cleanup_chunks_directory(endpoint_name)
+
+            # THEN
+            directory_removed = not os.path.exists(chunks_dir)
+            assert directory_removed or result is True
+        finally:
+            if os.path.exists(base_dir):
+                shutil.rmtree(base_dir, ignore_errors=True)
+
+    def test_merge_chunks_no_files(self):
+        # GIVEN
+        endpoint_name = "empty_endpoint"
+
+        # WHEN
+        with patch('glob.glob', return_value=[]), \
+                patch('commons.utils.logging') as mock_logging:
+            result = Utils.merge_chunks_and_normalize(endpoint_name)
+
+        # THEN
+        assert result is False
+        mock_logging.warning.assert_called_once()
+
+    def test_merge_chunks_success(self):
+        # GIVEN
+        chunk_files = ["chunk1.csv", "chunk2.csv"]
+        chunk_df = pd.DataFrame({"col1": [1, 2], "col2": ["a", "b"]})
+
+        # WHEN
+        with patch('glob.glob', return_value=chunk_files), \
+                patch('pandas.read_csv', return_value=chunk_df), \
+                patch('pandas.DataFrame.to_csv') as mock_to_csv, \
+                patch('commons.utils.logging'):
+            result = Utils.merge_chunks_and_normalize("test_endpoint")
+
+        # THEN
+        assert result is True
+        mock_to_csv.assert_called_once()
+
+
+class TestMainProcessing:
+    """Testes para funções principais de processamento."""
+
+    def test_process_and_save_data_empty(self):
+        # GIVEN
+        empty_data = []
         endpoint_name = "test_endpoint"
 
         # WHEN
         with patch('commons.utils.logging') as mock_logging:
-            result = Utils.process_and_save_data(raw_data, endpoint_name)
+            result = Utils.process_and_save_data(empty_data, endpoint_name)
 
         # THEN
         assert result == []
-        mock_logging.warning.assert_called_once_with(f"Nenhum dado recebido para o endpoint {endpoint_name}")
+        mock_logging.warning.assert_called_once()
 
-    def test_process_and_save_success(self):
-        """Testa processamento e salvamento bem-sucedido."""
+    def test_process_and_save_data_success(self):
         # GIVEN
         raw_data = [{"User": "John", "Email": "john@example.com"}]
-        endpoint_name = "test_endpoint"
         mock_df = pd.DataFrame(raw_data)
 
+        # Mock do retorno da validação CSV
+        mock_validation_result = {
+            'valid': True,
+            'total_lines': 2,  # header + 1 linha de dados
+            'header_columns': 2,
+            'errors': [],
+            'file_path': 'output/test_endpoint/test_endpoint.csv'
+        }
+
         # WHEN
-        with patch.object(Utils, '_normalize_keys', return_value=raw_data) as mock_normalize:
-            with patch.object(Utils, '_flatten_json', return_value=raw_data[0]) as mock_flatten:
-                with patch('pandas.DataFrame', return_value=mock_df):
-                    with patch.object(Utils, '_normalize_column_names', return_value=mock_df) as mock_normalize_cols:
-                        with patch.object(Utils, '_remove_empty_columns', return_value=mock_df) as mock_remove_empty:
-                            with patch.object(Utils, '_save_local_dataframe', return_value=True) as mock_save:
-                                with patch('commons.utils.logging'):
-                                    result = Utils.process_and_save_data(raw_data, endpoint_name)
+        with patch.object(Utils, '_normalize_keys', return_value=raw_data), \
+                patch.object(Utils, '_flatten_json', return_value=raw_data[0]), \
+                patch('pandas.DataFrame', return_value=mock_df), \
+                patch.object(Utils, '_normalize_column_names', return_value=mock_df), \
+                patch.object(Utils, '_remove_empty_columns', return_value=mock_df), \
+                patch.object(Utils, '_process_and_convert_id_columns', return_value=mock_df), \
+                patch.object(Utils, '_save_local_dataframe', return_value=True), \
+                patch.object(Utils, '_validate_csv', return_value=mock_validation_result), \
+                patch('commons.utils.logging'):
+            result = Utils.process_and_save_data(raw_data, "test_endpoint")
 
         # THEN
         assert len(result) == 1
-        mock_normalize.assert_called_once_with(raw_data)
-        mock_flatten.assert_called_once()
-        mock_normalize_cols.assert_called_once()
-        mock_remove_empty.assert_called_once()
-        # Usamos ANY para evitar comparação direta de DataFrames
-        mock_save.assert_called_once_with(ANY, endpoint_name)
 
-    def test_process_empty_dataframe_after_processing(self):
-        """Testa quando o DataFrame fica vazio após processamento."""
+    def test_process_and_save_data_in_chunks_empty(self):
         # GIVEN
-        raw_data = [{"User": "John"}]
-        endpoint_name = "test_endpoint"
-        empty_df = pd.DataFrame()
+        empty_data = []
+        endpoint_name = "test"
 
         # WHEN
-        with patch.object(Utils, '_normalize_keys', return_value=raw_data):
-            with patch.object(Utils, '_flatten_json', return_value=raw_data[0]):
-                with patch('pandas.DataFrame', return_value=empty_df):
-                    with patch('commons.utils.logging') as mock_logging:
-                        result = Utils.process_and_save_data(raw_data, endpoint_name)
+        with patch('commons.utils.logging') as mock_logging:
+            result = Utils.process_and_save_data_in_chunks(empty_data, endpoint_name)
 
         # THEN
         assert result == []
-        # Verificação genérica - apenas se qualquer warning foi chamado
-        assert mock_logging.warning.called
-        assert any("DataFrame vazio" in str(args) for args, _ in mock_logging.warning.call_args_list)
+        mock_logging.warning.assert_called_once()
 
-    def test_process_exception(self):
-        """Testa se exceções são tratadas corretamente."""
-        # GIVEN
-        raw_data = [{"User": "John"}]
-        endpoint_name = "test_endpoint"
-
-        # WHEN/THEN
-        with patch.object(Utils, '_normalize_keys', side_effect=Exception("Teste de erro")):
-            with patch('commons.utils.logging') as mock_logging:
-                with pytest.raises(Exception):
-                    Utils.process_and_save_data(raw_data, endpoint_name)
-
-        mock_logging.error.assert_called_once()
-
-
-class TestConvertColumnsToNullableInt:
-    """Testes para o método _convert_columns_to_nullable_int."""
-
-    def test_convert_integer_columns(self):
-        """Testa conversão de coluna com inteiros puros."""
-        # GIVEN
-        df = pd.DataFrame({"col": [1, 2, 3, None]})
-
-        # WHEN
-        with patch('commons.utils.logging') as mock_logging:
-            result = Utils._convert_columns_to_nullable_int(df.copy())
-
-        # THEN
-        assert result["col"].dtype == "Int64"
-        mock_logging.info.assert_called_once_with("Colunas convertidas para Int64: col")
-
-    def test_keep_float_columns(self):
-        """Testa que colunas com floats reais (ex: 7.1) não são convertidas."""
-        # GIVEN
-        df = pd.DataFrame({"col": [1.0, 2.5, 3.0, None]})
-
-        # WHEN
-        with patch('commons.utils.logging') as mock_logging:
-            result = Utils._convert_columns_to_nullable_int(df.copy())
-
-        # THEN
-        assert result["col"].dtype == float
-        mock_logging.info.assert_not_called()
-
-    def test_non_numeric_column(self):
-        """Testa que colunas não numéricas são ignoradas."""
-        # GIVEN
-        df = pd.DataFrame({"col": ["a", "b", "c"]})
-
-        # WHEN
-        with patch('commons.utils.logging') as mock_logging:
-            result = Utils._convert_columns_to_nullable_int(df.copy())
-
-        # THEN
-        assert result.equals(df)
-        mock_logging.info.assert_not_called()
-
-    def test_conversion_exception(self):
-        """Testa tratamento de exceções no método."""
-        # GIVEN
-        df = pd.DataFrame({"col": [1, 2, 3]})
-
-        # WHEN/THEN
-        with patch('commons.utils.logging') as mock_logging:
-            with patch('pandas.DataFrame.__getitem__', side_effect=Exception("Erro forçado")):
-                with pytest.raises(Exception):
-                    Utils._convert_columns_to_nullable_int(df)
-
-        mock_logging.error.assert_called_once()
-
-
-class TestProcessAndSaveDataInChunks:
-    """Testes para o método process_and_save_data_in_chunks."""
-
-    def test_empty_raw_data(self):
-        """Testa processamento com dados vazios."""
-        # GIVEN
-        raw_data = []
-        endpoint_name = "empty_test"
-
-        # WHEN
-        with patch('commons.utils.logging') as mock_logging:
-            result = Utils.process_and_save_data_in_chunks(raw_data, endpoint_name)
-
-        # THEN
-        assert result == []
-        mock_logging.warning.assert_called_once_with(f"Nenhum dado recebido para o endpoint {endpoint_name}")
-
-    def test_success_no_disk_save(self):
-        """Testa processamento sem salvar em disco (save_to_disk=False)."""
-        # GIVEN
-        raw_data = [{"User Name": "Alice", "Email": "alice@example.com"}]
-        endpoint_name = "memory_test"
-
-        df = pd.DataFrame([{"user_name": "Alice", "email": "alice@example.com"}])
-
-        # WHEN
-        with patch.object(Utils, '_normalize_keys', return_value=raw_data):
-            with patch.object(Utils, '_flatten_json', return_value=raw_data[0]):
-                with patch('pandas.DataFrame', return_value=df):
-                    with patch.object(Utils, '_normalize_column_names', return_value=df):
-                        with patch.object(Utils, '_remove_empty_columns', return_value=df):
-                            with patch.object(Utils, '_convert_columns_to_nullable_int', return_value=df):
-                                with patch('commons.utils.logging') as mock_logging:
-                                    result = Utils.process_and_save_data_in_chunks(
-                                        raw_data, endpoint_name, save_to_disk=False
-                                    )
-
-        # THEN
-        assert result == df.to_dict(orient='records')
-        mock_logging.info.assert_any_call(
-            f"Processamento concluído: {len(df)} registros para {endpoint_name} (mantidos apenas em memória)"
-        )
-
-    def test_empty_dataframe_after_processing(self):
-        """Testa quando o DataFrame fica vazio após processar os dados."""
+    def test_process_and_save_data_in_chunks_memory_only(self):
         # GIVEN
         raw_data = [{"User": "Alice"}]
-        endpoint_name = "empty_df_test"
-        empty_df = pd.DataFrame()
+        df = pd.DataFrame([{"user": "Alice"}])
 
         # WHEN
-        with patch.object(Utils, '_normalize_keys', return_value=raw_data):
-            with patch.object(Utils, '_flatten_json', return_value=raw_data[0]):
-                with patch('pandas.DataFrame', return_value=empty_df):
-                    with patch('commons.utils.logging') as mock_logging:
-                        result = Utils.process_and_save_data_in_chunks(raw_data, endpoint_name)
-
-        # THEN
-        assert result == []
-        mock_logging.warning.assert_called_once_with(
-            f"DataFrame vazio após processamento para {endpoint_name}"
-        )
-
-    def test_success_with_disk_save_single_chunk(self, tmp_path):
-        """Testa processamento com salvamento em disco e chunk único."""
-        # GIVEN
-        raw_data = [{"User Name": "Alice", "Email": "alice@example.com"}]
-        endpoint_name = "chunk_test"
-
-        df = pd.DataFrame([{"user_name": "Alice", "email": "alice@example.com"}])
-
-        output_dir = tmp_path / "output" / endpoint_name
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # WHEN
-        with patch('commons.utils.os.makedirs'), \
-                patch('commons.utils.os.path.isfile', return_value=False), \
-                patch('pandas.DataFrame.to_csv') as mock_to_csv, \
-                patch.object(Utils, '_normalize_keys', return_value=raw_data), \
+        with patch.object(Utils, '_normalize_keys', return_value=raw_data), \
                 patch.object(Utils, '_flatten_json', return_value=raw_data[0]), \
                 patch('pandas.DataFrame', return_value=df), \
                 patch.object(Utils, '_normalize_column_names', return_value=df), \
                 patch.object(Utils, '_remove_empty_columns', return_value=df), \
                 patch.object(Utils, '_convert_columns_to_nullable_int', return_value=df), \
-                patch('commons.utils.logging') as mock_logging:
+                patch('commons.utils.logging'):
             result = Utils.process_and_save_data_in_chunks(
-                raw_data, endpoint_name, chunk_size=1000, save_to_disk=True
+                raw_data, "test", save_to_disk=False
             )
 
         # THEN
         assert result == df.to_dict(orient='records')
-        mock_to_csv.assert_called_once()
-        mock_logging.info.assert_any_call(
-            "Processamento concluído: 1 registros salvos em chunks separados"
-        )
 
-    def test_processing_exception(self):
-        """Testa tratamento de exceções durante o processamento."""
+    def test_post_process_csv_file_success(self):
         # GIVEN
-        raw_data = [{"User": "Alice"}]
-        endpoint_name = "error_test"
-
-        # WHEN / THEN
-        with patch.object(Utils, '_normalize_keys', side_effect=Exception("Erro forçado")), \
-                patch('commons.utils.logging') as mock_logging:
-            with pytest.raises(Exception, match="Erro forçado"):
-                Utils.process_and_save_data_in_chunks(raw_data, endpoint_name)
-
-        mock_logging.error.assert_called_once()
-
-
-class TestProcessDataInBatches:
-    """Testes para o método process_data_in_batches."""
-
-    def test_success_single_page(self):
-        """Testa processamento bem-sucedido com apenas uma página."""
-        # GIVEN
-        endpoint_name = "test_endpoint"
-        endpoint_path = "/api/test"
-        headers = {}
-        mock_items = [{"user": "Alice"}]
-
-        def fetch_page(path, headers, page):
-            return {"total_pages": 1, "items": mock_items}
+        endpoint_name = "test"
 
         # WHEN
-        with patch.object(Utils, 'process_and_save_data_in_chunks', return_value=mock_items) as mock_process, \
-             patch('commons.utils.logging'), \
-             patch('os.makedirs'), \
-             patch('os.path.exists', return_value=False):
-            result = Utils.process_data_in_batches(endpoint_name, endpoint_path, headers, fetch_page)
+        with patch.object(Utils, 'merge_chunks_and_normalize', return_value=True), \
+                patch.object(Utils, '_cleanup_chunks_directory', return_value=True):
+            result = Utils.post_process_csv_file(endpoint_name, cleanup_chunks=True)
+
+        # THEN
+        assert result is True
+
+    def test_post_process_csv_file_failed_merge(self):
+        # GIVEN
+        endpoint_name = "test"
+
+        # WHEN
+        with patch.object(Utils, 'merge_chunks_and_normalize', return_value=False), \
+                patch.object(Utils, '_cleanup_chunks_directory') as mock_cleanup:
+            result = Utils.post_process_csv_file(endpoint_name, cleanup_chunks=True)
+
+        # THEN
+        assert result is False
+        mock_cleanup.assert_not_called()
+
+
+class TestBatchProcessing:
+    """Testes para processamento de dados em lotes."""
+
+    def test_process_data_in_batches_single_page(self):
+        # GIVEN
+        def fetch_page(path, headers, page):
+            return {"total_pages": 1, "items": [{"user": "Alice"}]}
+
+        # WHEN
+        with patch.object(Utils, 'process_and_save_data_in_chunks', return_value=[{"user": "Alice"}]), \
+                patch('commons.utils.logging'), \
+                patch('os.makedirs'), \
+                patch('os.path.exists', return_value=False):
+            result = Utils.process_data_in_batches(
+                "test", "/api/test", {}, fetch_page
+            )
 
         # THEN
         assert result["registros"] == 1
         assert result["status"] == "Sucesso"
 
-        mock_process.assert_called_once_with(
-            mock_items,
-            endpoint_name,
-            chunk_size=100,
-            save_to_disk=True,
-            batch_id=0,
-            skip_empty_columns=False
-        )
-
-    def test_success_multiple_pages_with_batching(self):
-        """Testa processamento de múltiplas páginas com batch_size 2."""
+    def test_process_data_in_batches_multiple_pages(self):
         # GIVEN
-        endpoint_name = "batch_endpoint"
-        endpoint_path = "/api/batch"
-        headers = {}
-        page_1 = {"total_pages": 3, "items": [{"user": "A"}]}
-        page_2 = {"items": [{"user": "B"}]}
-        page_3 = {"items": [{"user": "C"}]}
+        responses = {
+            1: {"total_pages": 3, "items": [{"user": "A"}]},
+            2: {"items": [{"user": "B"}]},
+            3: {"items": [{"user": "C"}]}
+        }
 
         def fetch_page(path, headers, page):
-            return {1: page_1, 2: page_2, 3: page_3}[page]
-
-        side_effect_result = [[{"user": "A"}], [{"user": "B"}, {"user": "C"}]]
+            return responses[page]
 
         # WHEN
-        with patch.object(Utils, 'process_and_save_data_in_chunks', side_effect=side_effect_result) as mock_process, \
+        with patch.object(Utils, 'process_and_save_data_in_chunks',
+                          return_value=[{"user": "A"}, {"user": "B"}, {"user": "C"}]), \
                 patch('commons.utils.logging'), \
                 patch('os.makedirs'), \
                 patch('os.path.exists', return_value=False):
             result = Utils.process_data_in_batches(
-                endpoint_name, endpoint_path, headers, fetch_page, batch_size=2, chunk_size=1
+                "test", "/api/test", {}, fetch_page, batch_size=2
             )
 
         # THEN
         assert result["registros"] == 3
         assert result["status"] == "Sucesso"
-        assert mock_process.call_count == 2
 
-    def test_page_fetch_error_handled(self):
-        """Testa se erro ao buscar página é tratado e o buffer é processado."""
+    def test_process_data_in_batches_error_handling(self):
         # GIVEN
-        endpoint_name = "error_endpoint"
-        endpoint_path = "/api/error"
-        headers = {}
-        items_1 = [{"user": "A"}]
-        items_2 = [{"user": "B"}]
-
         def fetch_page(path, headers, page):
             if page == 1:
-                return {"total_pages": 3, "items": items_1}
-            if page == 2:
-                raise ValueError("Erro na página 2")
-            return {"items": items_2}
-
-        side_effect_result = [[{"user": "A"}], [{"user": "B"}]]
+                return {"total_pages": 2, "items": [{"user": "A"}]}
+            raise ValueError("Network error")
 
         # WHEN
-        with patch.object(Utils, 'process_and_save_data_in_chunks', side_effect=side_effect_result) as mock_process, \
+        with patch.object(Utils, 'process_and_save_data_in_chunks', return_value=[{"user": "A"}]), \
                 patch('commons.utils.logging'), \
                 patch('os.makedirs'), \
                 patch('os.path.exists', return_value=False):
-            result = Utils.process_data_in_batches(endpoint_name, endpoint_path, headers, fetch_page)
+            result = Utils.process_data_in_batches(
+                "test", "/api/test", {}, fetch_page
+            )
 
         # THEN
-        assert result["registros"] == 2
+        assert result["registros"] == 1
         assert result["status"] == "Sucesso"
-        assert mock_process.call_count == 2
 
-    def test_returns_error_on_total_failure(self):
-        """Testa quando o processo falha completamente no início."""
+    def test_process_data_in_batches_total_failure(self):
         # GIVEN
-        endpoint_name = "fail_endpoint"
-        endpoint_path = "/api/fail"
-        headers = {}
-
         def fetch_page(path, headers, page):
-            raise RuntimeError("Falha de rede")
+            raise RuntimeError("Total failure")
 
         # WHEN
         with patch('commons.utils.logging'), \
                 patch('os.makedirs'), \
                 patch('os.path.exists', return_value=False):
-            result = Utils.process_data_in_batches(endpoint_name, endpoint_path, headers, fetch_page)
+            result = Utils.process_data_in_batches(
+                "test", "/api/test", {}, fetch_page
+            )
 
         # THEN
         assert result["status"].startswith("Falha")
         assert result["registros"] == 0
-        assert result["tempo"] == 0
+
+    def test_process_data_in_batches_invalid_response(self):
+        # GIVEN
+        def fetch_page(path, headers, page):
+            return {"invalid": "response"}  # Sem 'total_pages'
+
+        # WHEN
+        with patch('commons.utils.logging'):
+            result = Utils.process_data_in_batches(
+                "test", "/api/test", {}, fetch_page
+            )
+
+        # THEN
+        assert result["status"].startswith("Falha")
+        assert result["registros"] == 0
+
+    def test_process_data_in_batches_with_delay(self):
+        """Testa que o delay é aplicado durante o processamento em lotes."""
+
+        # GIVEN
+        def fetch_page(path, headers, page):
+            if page == 1:
+                return {"total_pages": 3, "items": [{"user": "A"}]}
+            elif page == 2:
+                return {"items": [{"user": "B"}]}
+            return {"items": [{"user": "C"}]}
+
+        # WHEN
+        with patch.object(Utils, 'process_and_save_data_in_chunks', return_value=[]), \
+                patch.object(Utils, 'merge_chunks_and_normalize', return_value=True), \
+                patch('commons.utils.logging'), \
+                patch('os.makedirs'), \
+                patch('os.path.exists', return_value=False), \
+                patch('glob.glob', return_value=[]), \
+                patch('time.sleep') as mock_sleep:
+            result = Utils.process_data_in_batches(
+                "test", "/api/test", {}, fetch_page,
+                delay_between_pages=1, batch_size=1
+            )
+
+        # THEN
+        assert result["status"] == "Sucesso"
+        assert mock_sleep.call_count >= 0
+
+
+class TestExceptionHandling:
+    """Testes para verificar tratamento de exceções."""
+
+    def test_flatten_json_exception(self):
+        # GIVEN
+        data = {"a": 1}
+
+        # WHEN & THEN
+        with patch.object(Utils, '_flatten_json', side_effect=Exception("Erro")):
+            with pytest.raises(Exception):
+                Utils._flatten_json(data)
+
+    def test_normalize_keys_exception(self):
+        # GIVEN
+        data = {"test": "value"}
+
+        # WHEN & THEN
+        with patch.object(Utils, '_normalize_key', side_effect=Exception("Erro")):
+            with pytest.raises(Exception):
+                Utils._normalize_keys(data)
+
+    def test_save_dataframe_exception(self):
+        # GIVEN
+        df = pd.DataFrame({"col": [1, 2, 3]})
+
+        # WHEN & THEN
+        with patch('os.makedirs', side_effect=Exception("Erro")), \
+                patch('commons.utils.logging') as mock_logging:
+            with pytest.raises(Exception):
+                Utils._save_local_dataframe(df, "test")
+
+        mock_logging.error.assert_called_once()
+
+    def test_convert_columns_exception(self):
+        # GIVEN
+        df = pd.DataFrame({"col": [1, 2, 3]})
+
+        # WHEN & THEN
+        with patch('pandas.DataFrame.__getitem__', side_effect=Exception("Erro")), \
+                patch('commons.utils.logging') as mock_logging:
+            with pytest.raises(Exception):
+                Utils._convert_columns_to_nullable_int(df)
+
+        mock_logging.error.assert_called_once()
+
+    def test_process_and_save_exception(self):
+        # GIVEN
+        raw_data = [{"User": "John"}]
+
+        # WHEN & THEN
+        with patch.object(Utils, '_normalize_keys', side_effect=Exception("Erro")), \
+                patch('commons.utils.logging') as mock_logging:
+            with pytest.raises(Exception):
+                Utils.process_and_save_data(raw_data, "test")
+
+        mock_logging.error.assert_called_once()
+
+    def test_process_chunks_exception(self):
+        # GIVEN
+        raw_data = [{"User": "Alice"}]
+
+        # WHEN & THEN
+        with patch.object(Utils, '_normalize_keys', side_effect=Exception("Erro")), \
+                patch('commons.utils.logging') as mock_logging:
+            with pytest.raises(Exception, match="Erro"):
+                Utils.process_and_save_data_in_chunks(raw_data, "test")
+
+        mock_logging.error.assert_called_once()

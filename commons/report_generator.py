@@ -49,7 +49,7 @@ class ReportGenerator:
                 f"| {endpoint_name:<25} | {status_icon} {status_text:<28} | {stats['registros']:<10} | {stats.get('tempo', 0):<10.2f} |")
 
         logger.info(f"{'-' * 100}")
-        logger.info(f"{'#' * 100}\n")
+        logger.info(f"{'#' * 100}")
 
         # Se houver falhas, retornar False e logar erro
         if any_erros:

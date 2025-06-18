@@ -1,3 +1,4 @@
+import csv
 import glob
 import logging
 import os
@@ -250,20 +251,103 @@ class Utils:
     @staticmethod
     def _process_and_convert_id_columns(df: pd.DataFrame) -> pd.DataFrame:
         """
-        Verifica as colunas que possuem 'id' ou '_id' no nome e, caso todos os valores sejam float,
+        Verifica as colunas que possuem 'id' ou '_id' no nome e, caso TODOS os valores sejam float,
         vazios ou nulos, converte esses valores para inteiros.
         """
+        converted_columns = []
+
         for col in df.columns:
             if 'id' in col.lower():  # Verifica se o nome da coluna contém 'id' ou '_id'
-                # Verificar se todos os valores são float ou nulos
-                if df[col].isnull().all() or (df[col].apply(lambda x: isinstance(x, float)).all()):
+                try:
                     # Se for UUID, mantenha como string
                     if df[col].apply(lambda x: isinstance(x, uuid.UUID) if pd.notnull(x) else False).any():
                         continue
-                    # Caso contrário, converta para inteiro
-                    df[col] = df[col].fillna(0).astype('Int64')  # Usando 'Int64' para suportar nulos
-                    logging.info(f"Coluna {col} convertida para inteiros")
+
+                    # Verificar se TODOS os valores são nulos
+                    if df[col].isnull().all():
+                        df[col] = df[col].astype('Int64')
+                        converted_columns.append(col)
+                        logging.info(f"Coluna {col} convertida para Int64")  # ← Logging individual
+                        continue
+
+                    # Verificar se TODOS os valores não-nulos são float
+                    non_null_mask = df[col].notnull()
+                    if non_null_mask.any():  # Se há valores não-nulos
+                        non_null_values = df[col][non_null_mask]
+
+                        # TODOS os valores não-nulos devem ser float
+                        if non_null_values.apply(lambda x: isinstance(x, float)).all():
+                            # Verificar se TODOS podem ser convertidos para int sem perda
+                            # (ou seja, não têm parte decimal significativa)
+                            if (non_null_values % 1 == 0).all():
+                                # Caso contrário, converta para inteiro
+                                df[col] = df[col].fillna(0).astype('Int64')
+                                converted_columns.append(col)
+                                logging.info(f"Coluna {col} convertida para Int64")  # ← Logging individual
+                            else:
+                                logging.warning(f"Coluna {col} NÃO convertida: contém valores decimais significativos")
+                        else:
+                            logging.debug(f"Coluna {col} NÃO convertida: nem todos os valores são float")
+
+                except Exception as e:
+                    logging.error(f"Erro ao processar coluna {col}: {str(e)}")
+                    # Continuar sem converter esta coluna
+                    continue
+
         return df
+
+    @staticmethod
+    def _validate_csv(endpoint_name: str, delimiter: str = ';') -> Dict:
+        """
+        Valida o CSV e retorna relatório detalhado.
+        """
+        file_path = f"output/{endpoint_name}/{endpoint_name}.csv"
+
+        validation_result = {
+            'valid': False,
+            'total_lines': 0,
+            'header_columns': 0,
+            'errors': [],
+            'file_path': file_path
+        }
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                reader = csv.reader(file, delimiter=delimiter)
+
+                header = next(reader)
+                validation_result['header_columns'] = len(header)
+
+                errors = []
+                total_lines = 1
+
+                for line_num, row in enumerate(reader, start=2):
+                    total_lines += 1
+                    row_count = len(row)
+
+                    if row_count != len(header):
+                        errors.append({
+                            'line': line_num,
+                            'found_columns': row_count,
+                            'expected_columns': len(header)
+                        })
+
+                validation_result['total_lines'] = total_lines
+                validation_result['errors'] = errors
+                validation_result['valid'] = len(errors) == 0
+
+                # Log do resultado
+                if validation_result['valid']:
+                    logging.info(f"✅ CSV {endpoint_name}: {total_lines} linhas válidas")
+                else:
+                    logging.error(f"❌ CSV {endpoint_name}: {len(errors)} linhas inválidas de {total_lines}")
+
+            return validation_result
+
+        except Exception as e:
+            logging.error(f"Erro ao validar CSV {endpoint_name}: {str(e)}")
+            validation_result['errors'].append(f"Erro de leitura: {str(e)}")
+            raise
 
     @staticmethod
     def process_and_save_data(raw_data: List[Dict], endpoint_name: str) -> List[Dict]:
@@ -304,6 +388,9 @@ class Utils:
 
             # Salvar localmente
             Utils._save_local_dataframe(df, endpoint_name)
+
+            # Verificar validade do csv
+            Utils._validate_csv(endpoint_name, delimiter=';')
 
             logging.info(f"Processamento concluído: {len(df)} registros para {endpoint_name}")
 
