@@ -108,6 +108,8 @@ def main():
     global_start_time = ReportGenerator.init_report(logger)
     endpoint_stats = {}
 
+    print(args.GOOGLE_APPLICATION_CREDENTIALS)
+
     try:
         for endpoint_name, endpoint_config in CONFIG["endpoints"].items():
             endpoint_stats[endpoint_name] = process_endpoint(endpoint_name, endpoint_config, args)
