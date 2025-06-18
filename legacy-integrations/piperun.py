@@ -1,3 +1,7 @@
+"""
+Piperun module for data extraction functions.
+This module contains functions specific to the Piperun integration.
+"""
 import os
 import pathlib
 import re
@@ -8,355 +12,770 @@ from io import StringIO
 
 import pandas as pd
 import requests
+from core import gcs
 from google.cloud import storage
 
 
-# FUNÇÕES UTILITÁRIAS COMPARTILHADAS
-def setup_gcs_credentials():
-    """Configura as credenciais do GCS"""
+def run_activities(customer):
+    API_URL = customer['api_url']
+    API_TOKEN = customer['api_token']
+    BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
+    DESTINATION_FOLDER = "activities"
+    DESTINATION_FILENAME = "activities.csv"
+
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
 
-
-def normalize_column_name(name):
-    """Normaliza nomes de colunas removendo acentos e caracteres especiais"""
-    nfkd = unicodedata.normalize('NFKD', name)
-    ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
-    cleaned = re.sub(r"[^\w\s]", "", ascii_name)
-    return re.sub(r"\s+", "_", cleaned).lower()
-
-
-def flatten_dict(d, parent_key='', sep='_'):
-    """Achata dicionários aninhados"""
-    items = []
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
-
-
-def convert_boolean_columns(df):
-    """Converte colunas booleanas para inteiros (0/1)"""
-    # Converte booleanos detectados automaticamente
-    bool_columns = df.select_dtypes(include=['bool']).columns
-    for col in bool_columns:
-        df[col] = df[col].astype(int)
-
-    # Trata colunas que podem ser booleanas mas não foram detectadas
-    boolean_columns = ['active', 'status']
-    for col in boolean_columns:
-        if col in df.columns:
-            df[col] = df[col].astype(str)
-            df[col] = df[col].map({
-                'True': 1, 'true': 1, '1': 1,
-                'False': 0, 'false': 0, '0': 0,
-                'None': 0, 'nan': 0, 'null': 0
-            })
-            df[col] = df[col].fillna(0).astype(int)
-
-    return df
-
-
-def is_date_format(value):
-    """Verifica se o valor está em formato de data brasileiro"""
-    if not isinstance(value, str):
-        return False
-
-    patterns = [
-        r'^\d{2}/\d{2}/\d{4}$',
-        r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$',
-        r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$'
-    ]
-    return any(re.match(pattern, value.strip()) for pattern in patterns)
-
-
-def convert_date_format(value):
-    """Converte datas do formato brasileiro para BigQuery"""
-    if not isinstance(value, str):
-        return value
-
-    value = value.strip()
-    try:
-        if re.match(r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$', value):
-            dt = datetime.strptime(value, '%d/%m/%Y %H:%M')
-            return dt.strftime('%Y-%m-%d %H:%M:00')
-        elif re.match(r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$', value):
-            dt = datetime.strptime(value, '%d/%m/%Y %H:%M:%S')
-            return dt.strftime('%Y-%m-%d %H:%M:%S')
-        elif re.match(r'^\d{2}/\d{2}/\d{4}$', value):
-            dt = datetime.strptime(value, '%d/%m/%Y')
-            return dt.strftime('%Y-%m-%d')
-        return value
-    except Exception:
-        return value
-
-
-def detect_and_convert_dates(df):
-    """Detecta e converte colunas de data automaticamente"""
-    for col in df.columns:
-        if df[col].dropna().empty:
-            continue
-
-        non_null_values = df[col].dropna()
-        if len(non_null_values) > 0:
-            date_count = sum(1 for val in non_null_values if is_date_format(str(val)))
-            if date_count / len(non_null_values) >= 0.7:
-                print(f"Convertendo coluna de data: {col}")
-                df[col] = df[col].apply(convert_date_format)
-
-    return df
-
-
-def clean_dataframe(df, convert_dates=False):
-    """Limpa e trata o DataFrame"""
-    # Normaliza nomes das colunas
-    df.columns = [normalize_column_name(col) for col in df.columns]
-
-    # Converte booleanos
-    df = convert_boolean_columns(df)
-
-    # Converte datas se solicitado
-    if convert_dates:
-        df = detect_and_convert_dates(df)
-
-    return df
-
-
-def make_api_request(url, headers, params):
-    """Faz requisição para a API com tratamento de rate limit"""
-    while True:
-        response = requests.get(url, headers=headers, params=params)
-
-        if response.status_code == 429:
-            print("Limite excedido. Aguardando 30 segundos...")
-            time.sleep(30)
-            continue
-
-        if response.status_code != 200:
-            print(f"Erro {response.status_code}: {response.text}")
-            return None
-
-        return response.json()
-
-
-def extract_data_from_endpoint(api_url, endpoint, headers, start_date=None):
-    """Extrai dados de um endpoint específico com paginação"""
-    params = {"show": 200, "page": 1}
-
-    if start_date:
-        params["created_at_start"] = start_date
-
-    all_data = []
-    total_collected = 0
-
-    while True:
-        data = make_api_request(f"{api_url}/{endpoint}", headers, params)
-
-        if not data or "data" not in data or not isinstance(data["data"], list):
-            print(f"Formato inesperado da resposta da API para {endpoint}.")
-            break
-
-        items = data["data"]
-        if not items:
-            print(f"Nenhum item retornado para {endpoint}.")
-            break
-
-        # Achata os dados
-        for item in items:
-            flat = flatten_dict(item)
-            all_data.append(flat)
-
-        total_collected += len(items)
-        print(f"Coletados {total_collected} registros de {endpoint}...")
-
-        # Verifica se há próxima página
-        if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
-            params["page"] += 1
-        else:
-            break
-
-        time.sleep(1)
-
-    return all_data
-
-
-def upload_to_gcs(df, customer, folder, filename):
-    """Upload do DataFrame para o GCS"""
-    try:
-        storage_client = storage.Client(project=customer['project_id'])
-        bucket = storage_client.bucket(customer['bucket_name'])
-        blob = bucket.blob(f"{folder}/{filename}")
-
-        buffer = StringIO()
-        df.to_csv(buffer, sep=";", index=False)
-        buffer.seek(0)
-        blob.upload_from_string(buffer.getvalue(), content_type="text/csv")
-
-        print(f"Arquivo enviado: gs://{customer['bucket_name']}/{folder}/{filename}")
-    except Exception as e:
-        print(f"Erro ao enviar para o GCS: {e}")
-        raise
-
-
-def generic_extraction(customer, endpoint, folder, filename, convert_dates=False):
-    """Função genérica para extração de dados"""
-    setup_gcs_credentials()
-
-    headers = {
+    HEADERS = {
         "accept": "application/json",
-        "token": customer['api_token']
+        "token": API_TOKEN
+    }
+    PARAMS = {
+        "show": 200,
+        "page": 1
     }
 
-    # Extrai dados
-    data = extract_data_from_endpoint(
-        customer['api_url'],
-        endpoint,
-        headers,
-        customer.get('start_date')
-    )
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
 
-    if not data:
-        print("Nenhum dado para exportar.")
-        return
+    def flatten_dict(d, parent_key='', sep='_'):
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
 
-    # Processa e limpa dados
-    df = pd.DataFrame(data)
-    df = clean_dataframe(df, convert_dates=convert_dates)
+    def get_activities():
+        all_data = []
+        total_collected = 0
 
-    # Faz upload
-    upload_to_gcs(df, customer, folder, filename)
+        while True:
+            response = requests.get(f"{API_URL}/activities", headers=HEADERS, params=PARAMS)
 
+            if response.status_code == 429:
+                print("Limite excedido. Aguardando 30 segundos...")
+                time.sleep(30)
+                continue
 
-# FUNÇÕES ESPECÍFICAS DE EXTRAÇÃO
-def run_teams(customer):
-    """Extrai dados de teams"""
-    generic_extraction(customer, "teams", "teams", "teams.csv")
+            if response.status_code != 200:
+                print(f"Erro {response.status_code}: {response.text}")
+                break
 
+            try:
+                data = response.json()
+                if "data" not in data or not isinstance(data["data"], list):
+                    print("Formato inesperado da resposta da API.")
+                    break
 
-def run_team_groups(customer):
-    """Extrai dados de team groups"""
-    generic_extraction(customer, "teamGroup", "team_groups", "team_groups.csv")
+                activities = data["data"]
+                if not activities:
+                    print("Nenhuma atividade retornada.")
+                    break
 
+                for item in activities:
+                    flat = flatten_dict(item)
+                    all_data.append(flat)
 
-def run_items(customer):
-    """Extrai dados de items"""
-    generic_extraction(customer, "items", "items", "items.csv", convert_dates=True)
+                total_collected += len(activities)
+                print(f"Coletados {total_collected} registros até agora...")
 
+                if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
+                    PARAMS["page"] += 1
+                else:
+                    break
 
-def run_activities(customer):
-    """Extrai dados de activities"""
-    generic_extraction(customer, "activities", "activities", "activities.csv")
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"Erro ao processar resposta: {e}")
+                raise
+
+        return all_data
+
+    def upload_to_gcs(df: pd.DataFrame):
+        try:
+            storage_client = storage.Client(project=customer['project_id'])
+            bucket = storage_client.bucket(BUCKET_NAME)
+            blob = bucket.blob(f"{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+
+            buffer = StringIO()
+            df.to_csv(buffer, sep=";", index=False)
+            buffer.seek(0)
+            blob.upload_from_string(buffer.getvalue(), content_type="text/csv")
+
+            print(f"Arquivo enviado com sucesso para: gs://{BUCKET_NAME}/{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+        except Exception as e:
+            print(f"Erro ao enviar para o GCS: {e}")
+            raise
+
+    def main():
+        data = get_activities()
+        if not data:
+            print("Nenhum dado para exportar.")
+            return
+
+        df = pd.DataFrame(data)
+        upload_to_gcs(df)
+
+    # START
+    main()
 
 
 def run_companies(customer):
-    """Extrai dados de companies"""
-    generic_extraction(customer, "companies", "companies", "companies.csv")
+    API_URL = customer['api_url']
+    API_TOKEN = customer['api_token']
+    BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
+    DESTINATION_FOLDER = "companies"
+    DESTINATION_FILENAME = "companies.csv"
+
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    HEADERS = {
+        "accept": "application/json",
+        "token": API_TOKEN
+    }
+    PARAMS = {
+        "show": 200,
+        "page": 1
+    }
+
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
+
+    def normalize_column_name(name):
+        nfkd = unicodedata.normalize('NFKD', name)
+        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+        return re.sub(r"\s+", "_", cleaned).lower()
+
+    def flatten_dict(d, parent_key='', sep='_'):
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    def get_companies():
+        all_data = []
+        total_collected = 0
+
+        while True:
+            response = requests.get(f"{API_URL}/companies", headers=HEADERS, params=PARAMS)
+
+            if response.status_code == 429:
+                print("Limite excedido. Aguardando 30 segundos...")
+                time.sleep(30)
+                continue
+
+            if response.status_code != 200:
+                print(f"Erro {response.status_code}: {response.text}")
+                break
+
+            try:
+                data = response.json()
+                if "data" not in data or not isinstance(data["data"], list):
+                    print("Formato inesperado da resposta da API.")
+                    break
+
+                companies = data["data"]
+                if not companies:
+                    print("Nenhuma empresa retornada.")
+                    break
+
+                for item in companies:
+                    flat = flatten_dict(item)
+                    all_data.append(flat)
+
+                total_collected += len(companies)
+                print(f"Coletados {total_collected} registros até agora...")
+
+                if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
+                    PARAMS["page"] += 1
+                else:
+                    break
+
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"Erro ao processar resposta: {e}")
+                raise
+
+        return all_data
+
+    def convert_boolean_to_int(df):
+        """Converte colunas booleanas para inteiros (0/1)."""
+        bool_columns = df.select_dtypes(include=['bool']).columns
+        for col in bool_columns:
+            df[col] = df[col].astype(int)
+        return df
+
+    def clean_dataframe(df):
+        """Realiza limpeza e tratamento do DataFrame."""
+        # Normaliza os nomes das colunas
+        df.columns = [normalize_column_name(col) for col in df.columns]
+
+        # Converte valores booleanos para int (0/1)
+        df = convert_boolean_to_int(df)
+
+        # Trata colunas específicas que sabemos que são booleanas mas podem não ser
+        # detectadas corretamente pelo pandas
+        boolean_columns = [
+            'status', 'is_brand', 'is_supplier', 'is_client',
+            'is_carrier', 'is_franchise', 'is_channel',
+            'is_distributor', 'is_manufacturer', 'is_partner'
+        ]
+
+        for col in boolean_columns:
+            if col in df.columns:
+                # Primeiro converte para string para lidar com possíveis valores nulos
+                df[col] = df[col].astype(str)
+                # Mapeia valores para 0/1
+                df[col] = df[col].map({'True': 1, 'true': 1, '1': 1,
+                                       'False': 0, 'false': 0, '0': 0,
+                                       'None': 0, 'nan': 0, 'null': 0})
+                # Preenche valores nulos com 0
+                df[col] = df[col].fillna(0).astype(int)
+
+        return df
+
+    def upload_to_gcs(df: pd.DataFrame):
+        try:
+            storage_client = storage.Client(project=customer['project_id'])
+            bucket = storage_client.bucket(BUCKET_NAME)
+            blob = bucket.blob(f"{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+
+            buffer = StringIO()
+            df.to_csv(buffer, sep=";", index=False)
+            buffer.seek(0)
+            blob.upload_from_string(buffer.getvalue(), content_type="text/csv")
+
+            print(f"Arquivo enviado com sucesso para: gs://{BUCKET_NAME}/{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+        except Exception as e:
+            print(f"Erro ao enviar para o GCS: {e}")
+            raise
+
+    def main():
+        data = get_companies()
+        if not data:
+            print("Nenhum dado para exportar.")
+            return
+
+        df = pd.DataFrame(data)
+
+        # Limpa e trata o DataFrame
+        df = clean_dataframe(df)
+
+        upload_to_gcs(df)
+
+    # START
+    main()
 
 
 def run_deals(customer):
-    """Extrai dados de deals com campos aninhados"""
-    setup_gcs_credentials()
+    API_URL = customer['api_url']
+    API_TOKEN = customer['api_token']
+    BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
+    DESTINATION_FOLDER = "deals"
+    DESTINATION_FILENAME = "deals.csv"
 
-    headers = {
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    NESTED_FIELDS = ["customFields", "owner", "pipeline", "stage", "tags"]
+
+    HEADERS = {
         "accept": "application/json",
-        "token": customer['api_token']
+        "token": API_TOKEN
     }
-
-    params = {
+    PARAMS = {
         "show": 200,
         "page": 1,
         "with": "customFields,tags,owner,pipeline,stage"
     }
 
-    if customer.get('start_date'):
-        params["created_at_start"] = customer['start_date']
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
 
-    all_deals = []
-    total_collected = 0
+    def normalize_column_name(name):
+        nfkd = unicodedata.normalize('NFKD', name)
+        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+        return re.sub(r"\s+", "_", cleaned).lower()
 
-    while True:
-        data = make_api_request(f"{customer['api_url']}/deals", headers, params)
+    def flatten_dict(d, parent_key="", sep="_"):
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
 
-        if not data or not isinstance(data.get("data"), list):
-            print("Formato inesperado da resposta da API para deals.")
-            break
+    def flatten_nested_fields(deals):
+        flat_deals = []
 
-        deals = data["data"]
-        if not deals:
-            break
-
-        # Processa campos aninhados específicos do deals
         for deal in deals:
-            flat = {k: v for k, v in deal.items() if k not in ["customFields", "owner", "pipeline", "stage", "tags"]}
+            flat = {k: v for k, v in deal.items() if k not in NESTED_FIELDS}
 
-            # CustomFields
-            if "customFields" in deal and isinstance(deal["customFields"], list):
-                for item in deal["customFields"]:
-                    if isinstance(item, dict) and "name" in item:
-                        name = normalize_column_name(item["name"])
-                        flat[name] = item.get("value")
+            for field in NESTED_FIELDS:
+                if field not in deal:
+                    continue
 
-            # Owner
-            if "owner" in deal and isinstance(deal["owner"], dict):
-                flat["owner_name"] = deal["owner"].get("name")
+                nested_data = deal[field]
 
-            # Tags
-            if "tags" in deal and isinstance(deal["tags"], list):
-                tag_names = [t.get("name") for t in deal["tags"] if isinstance(t, dict) and "name" in t]
-                flat["tags_name"] = "|".join(tag_names)
+                if field == "customFields" and isinstance(nested_data, list):
+                    for item in nested_data:
+                        if isinstance(item, dict):
+                            name = item.get("name")
+                            value = item.get("value")
+                            if name:
+                                normalized = normalize_column_name(name)
+                                flat[normalized] = value
 
-            # Pipeline
-            if "pipeline" in deal and isinstance(deal["pipeline"], dict):
-                flat["pipeline_funnel_type_name"] = deal["pipeline"].get("funnel_type_name")
-                flat["pipeline_name"] = deal["pipeline"].get("name")
+                elif field == "owner" and isinstance(nested_data, dict):
+                    flat["owner_name"] = nested_data.get("name")
 
-            # Stage
-            if "stage" in deal and isinstance(deal["stage"], dict):
-                flat["stage_name"] = deal["stage"].get("name")
+                elif field == "tags" and isinstance(nested_data, list):
+                    tag_names = [t.get("name") for t in nested_data if isinstance(t, dict) and "name" in t]
+                    flat["tags_name"] = "|".join(tag_names)
 
-            all_deals.append(flat)
+                elif field == "pipeline" and isinstance(nested_data, dict):
+                    flat["pipeline_funnel_type_name"] = nested_data.get("funnel_type_name")
+                    flat["pipeline_name"] = nested_data.get("name")
 
-        total_collected += len(deals)
-        print(f"Coletados {total_collected} registros de deals...")
+                elif field == "stage" and isinstance(nested_data, dict):
+                    flat["stage_name"] = nested_data.get("name")
 
-        if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
-            params["page"] += 1
-        else:
-            break
+            flat_deals.append(flat)
 
-        time.sleep(1)
+        return flat_deals
 
-    if not all_deals:
-        print("Nenhum dado para processar.")
-        return
+    def get_deals():
+        all_deals = []
+        total_collected = 0
 
-    df = pd.DataFrame(all_deals)
-    df = clean_dataframe(df, convert_dates=True)
-    upload_to_gcs(df, customer, "deals", "deals.csv")
+        while True:
+            response = requests.get(f"{API_URL}/deals", headers=HEADERS, params=PARAMS)
+
+            if response.status_code == 429:
+                print("Limite de requisições excedido. Aguardando 30 segundos...")
+                time.sleep(30)
+                continue
+
+            if response.status_code != 200:
+                print(f"Erro ao coletar dados: {response.status_code} - {response.text}")
+                break
+
+            try:
+                data = response.json()
+
+                if isinstance(data, dict) and "data" in data:
+                    deals = data["data"]
+                else:
+                    print("Formato inesperado da resposta da API.")
+                    break
+
+                if not deals:
+                    print("Nenhum dado retornado.")
+                    break
+
+                all_deals.extend(deals)
+                total_collected += len(deals)
+                print(f"Coletados {total_collected} registros até agora...")
+
+                if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
+                    PARAMS["page"] += 1
+                else:
+                    break
+
+                time.sleep(1)
+            except Exception as e:
+                print(f"Erro ao processar JSON: {e}")
+                raise
+
+        return all_deals
+
+    def is_date_format(value):
+        """Verifica se o valor parece estar em formato de data DD/MM/YYYY"""
+        if not isinstance(value, str):
+            return False
+
+        # Padrões de data comuns no Brasil
+        patterns = [
+            r'^\d{2}/\d{2}/\d{4}$',  # DD/MM/YYYY
+            r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$',  # DD/MM/YYYY HH:MM
+            r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$'  # DD/MM/YYYY HH:MM:SS
+        ]
+
+        return any(re.match(pattern, value.strip()) for pattern in patterns)
+
+    def convert_date_format(value):
+        """Converte datas do formato brasileiro para o formato BigQuery"""
+        if not isinstance(value, str):
+            return value
+
+        value = value.strip()
+
+        try:
+            # Tenta converter DD/MM/YYYY HH:MM
+            if re.match(r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$', value):
+                dt = datetime.strptime(value, '%d/%m/%Y %H:%M')
+                return dt.strftime('%Y-%m-%d %H:%M:00')
+
+            # Tenta converter DD/MM/YYYY HH:MM:SS
+            elif re.match(r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$', value):
+                dt = datetime.strptime(value, '%d/%m/%Y %H:%M:%S')
+                return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+            # Tenta converter apenas DD/MM/YYYY (sem hora)
+            elif re.match(r'^\d{2}/\d{2}/\d{4}$', value):
+                dt = datetime.strptime(value, '%d/%m/%Y')
+                return dt.strftime('%Y-%m-%d')
+
+            return value
+        except Exception:
+            # Se falhar na conversão, retorna o valor original
+            return value
+
+    def detect_and_convert_date_columns(df):
+        """Detecta colunas de data e converte para o formato BigQuery"""
+        # Exemplo das primeiras linhas para detecção
+        sample = df.head(10)
+
+        date_columns = []
+
+        # Identifica colunas que parecem conter datas
+        for col in df.columns:
+            # Pula colunas vazias
+            if df[col].dropna().empty:
+                continue
+
+            # Verifica se pelo menos 70% dos valores não-nulos parecem ser datas
+            non_null_values = df[col].dropna()
+            if len(non_null_values) > 0:
+                date_count = sum(1 for val in non_null_values if is_date_format(str(val)))
+                if date_count / len(non_null_values) >= 0.7:
+                    date_columns.append(col)
+
+        # Converte as colunas identificadas
+        for col in date_columns:
+            print(f"Convertendo coluna de data: {col}")
+            df[col] = df[col].apply(convert_date_format)
+
+        return df
+
+    def upload_csv_to_gcs(df):
+        try:
+            # Detecta e converte colunas de data antes de enviar
+            df = detect_and_convert_date_columns(df)
+
+            storage_client = storage.Client(project=customer['project_id'])
+            bucket = storage_client.bucket(BUCKET_NAME)
+            blob = bucket.blob(f"{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+
+            csv_buffer = StringIO()
+            df.to_csv(csv_buffer, sep=";", index=False)
+            csv_buffer.seek(0)
+
+            blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
+            print(f"Arquivo enviado com sucesso para: gs://{BUCKET_NAME}/{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+        except Exception as e:
+            print(f"Erro ao enviar para o GCS: {e}")
+            raise
+
+    def main():
+        deals = get_deals()
+        if not deals:
+            print("Nenhum dado para processar.")
+            return
+
+        flat_deals = flatten_nested_fields(deals)
+        df = pd.DataFrame(flat_deals)
+        upload_csv_to_gcs(df)
+
+    # START
+    main()
 
 
 def run_lost_reasons(customer):
-    """Extrai dados de lost reasons"""
-    generic_extraction(customer, "lostReasons", "lost_reasons", "lost_reasons.csv")
+    API_URL = customer['api_url']
+    API_TOKEN = customer['api_token']
+    BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
+    DESTINATION_FOLDER = "lost_reasons"
+    DESTINATION_FILENAME = "lost_reasons.csv"
+
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    HEADERS = {
+        "accept": "application/json",
+        "token": API_TOKEN
+    }
+    PARAMS = {
+        "show": 200,
+        "page": 1
+    }
+
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
+
+    def normalize_column_name(name):
+        nfkd = unicodedata.normalize('NFKD', name)
+        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+        return re.sub(r"\s+", "_", cleaned).lower()
+
+    def flatten_dict(d, parent_key='', sep='_'):
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    def get_lost_reasons():
+        all_data = []
+        total_collected = 0
+
+        while True:
+            response = requests.get(f"{API_URL}/lostReasons", headers=HEADERS, params=PARAMS)
+
+            if response.status_code == 429:
+                print("Limite excedido. Aguardando 30 segundos...")
+                time.sleep(30)
+                continue
+
+            if response.status_code != 200:
+                print(f"Erro {response.status_code}: {response.text}")
+                break
+
+            try:
+                data = response.json()
+                if "data" not in data or not isinstance(data["data"], list):
+                    print("Formato inesperado da resposta da API.")
+                    break
+
+                lost_reasons = data["data"]
+                if not lost_reasons:
+                    print("Nenhuma razão de perda retornada.")
+                    break
+
+                for item in lost_reasons:
+                    flat = flatten_dict(item)
+                    all_data.append(flat)
+
+                total_collected += len(lost_reasons)
+                print(f"Coletados {total_collected} registros até agora...")
+
+                if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
+                    PARAMS["page"] += 1
+                else:
+                    break
+
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"Erro ao processar resposta: {e}")
+                raise
+
+        return all_data
+
+    def upload_to_gcs(df: pd.DataFrame):
+        try:
+            storage_client = storage.Client(project=customer['project_id'])
+            bucket = storage_client.bucket(BUCKET_NAME)
+            blob = bucket.blob(f"{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+
+            buffer = StringIO()
+            df.to_csv(buffer, sep=";", index=False)
+            buffer.seek(0)
+            blob.upload_from_string(buffer.getvalue(), content_type="text/csv")
+
+            print(f"Arquivo enviado com sucesso para: gs://{BUCKET_NAME}/{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+        except Exception as e:
+            print(f"Erro ao enviar para o GCS: {e}")
+            raise
+
+    def main():
+        data = get_lost_reasons()
+        if not data:
+            print("Nenhum dado para exportar.")
+            return
+
+        df = pd.DataFrame(data)
+
+        # Normaliza os nomes das colunas se necessário
+        df.columns = [normalize_column_name(col) for col in df.columns]
+
+        upload_to_gcs(df)
+
+    # START
+    main()
 
 
 def run_origins(customer):
-    """Extrai dados de origins"""
-    generic_extraction(customer, "origins", "origins", "origins.csv")
+    API_URL = customer['api_url']
+    API_TOKEN = customer['api_token']
+    BUCKET_NAME = customer['bucket_name']
+    START_DATE = customer['start_date']
+    DESTINATION_FOLDER = "origins"
+    DESTINATION_FILENAME = "origins.csv"
+
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    HEADERS = {
+        "accept": "application/json",
+        "token": API_TOKEN
+    }
+    PARAMS = {
+        "show": 200,
+        "page": 1
+    }
+
+    if START_DATE:
+        PARAMS["created_at_start"] = START_DATE
+
+    def normalize_column_name(name):
+        nfkd = unicodedata.normalize('NFKD', name)
+        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+        return re.sub(r"\s+", "_", cleaned).lower()
+
+    def flatten_dict(d, parent_key='', sep='_'):
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    def get_origins():
+        all_data = []
+        total_collected = 0
+
+        while True:
+            response = requests.get(f"{API_URL}/origins", headers=HEADERS, params=PARAMS)
+
+            if response.status_code == 429:
+                print("Limite excedido. Aguardando 30 segundos...")
+                time.sleep(30)
+                continue
+
+            if response.status_code != 200:
+                print(f"Erro {response.status_code}: {response.text}")
+                break
+
+            try:
+                data = response.json()
+                if "data" not in data or not isinstance(data["data"], list):
+                    print("Formato inesperado da resposta da API.")
+                    break
+
+                origins = data["data"]
+                if not origins:
+                    print("Nenhuma origem retornada.")
+                    break
+
+                for item in origins:
+                    flat = flatten_dict(item)
+                    all_data.append(flat)
+
+                total_collected += len(origins)
+                print(f"Coletados {total_collected} registros até agora...")
+
+                if "meta" in data and "links" in data["meta"] and "next" in data["meta"]["links"]:
+                    PARAMS["page"] += 1
+                else:
+                    break
+
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"Erro ao processar resposta: {e}")
+                raise
+
+        return all_data
+
+    def upload_to_gcs(df: pd.DataFrame):
+        try:
+            storage_client = storage.Client(project=customer['project_id'])
+            bucket = storage_client.bucket(BUCKET_NAME)
+            blob = bucket.blob(f"{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+
+            buffer = StringIO()
+            df.to_csv(buffer, sep=";", index=False)
+            buffer.seek(0)
+            blob.upload_from_string(buffer.getvalue(), content_type="text/csv")
+
+            print(f"Arquivo enviado com sucesso para: gs://{BUCKET_NAME}/{DESTINATION_FOLDER}/{DESTINATION_FILENAME}")
+        except Exception as e:
+            print(f"Erro ao enviar para o GCS: {e}")
+            raise
+
+    def main():
+        data = get_origins()
+        if not data:
+            print("Nenhum dado para exportar.")
+            return
+
+        df = pd.DataFrame(data)
+
+        # Normaliza os nomes das colunas se necessário
+        df.columns = [normalize_column_name(col) for col in df.columns]
+
+        # Converte valores booleanos para int (0/1) se necessário
+        if 'active' in df.columns:
+            df['active'] = df['active'].astype(int)
+
+        upload_to_gcs(df)
+
+    # START
+    main()
 
 
 def get_extraction_tasks():
-    """Lista de tarefas de extração"""
+    """
+    Get the list of data extraction tasks for Moskit.
+
+    Returns:
+        list: List of task configurations
+    """
     return [
-        {'task_id': 'extract_activities', 'python_callable': run_activities},
-        {'task_id': 'extract_companies', 'python_callable': run_companies},
-        {'task_id': 'extract_deals', 'python_callable': run_deals},
-        {'task_id': 'extract_lost_reasons', 'python_callable': run_lost_reasons},
-        {'task_id': 'extract_origins', 'python_callable': run_origins},
-        {'task_id': 'extract_teams', 'python_callable': run_teams},
-        {'task_id': 'extract_team_groups', 'python_callable': run_team_groups},
-        {'task_id': 'extract_items', 'python_callable': run_items}
+        {
+            'task_id': 'extract_activities',
+            'python_callable': run_activities
+        },
+        {
+            'task_id': 'extract_companies',
+            'python_callable': run_companies
+        },
+        {
+            'task_id': 'extract_deals',
+            'python_callable': run_deals
+        },
+        {
+            'task_id': 'extract_lost_reasons',
+            'python_callable': run_lost_reasons
+        },
+        {
+            'task_id': 'extract_origins',
+            'python_callable': run_origins
+        }
     ]
