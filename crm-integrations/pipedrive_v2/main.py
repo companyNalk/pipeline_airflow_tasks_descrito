@@ -9,6 +9,8 @@ import unicodedata
 import requests
 
 from commons.app_inicializer import AppInitializer
+from commons.big_query import BigQuery
+from commons.memory_monitor import MemoryMonitor
 from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
 
@@ -20,6 +22,9 @@ def get_arguments():
     return (ArgumentManager("Script para coletar e processar dados da API ArboCRM")
             .add("API_DOMAIN", "URL base", required=True)
             .add("API_TOKEN", "Token de autenticação", required=True)
+            .add("PROJECT_ID", "ID do projeto GCS", required=True)
+            .add("CRM_TYPE", "Ferramenta: Nome aba sheets", required=True)
+            .add("GOOGLE_APPLICATION_CREDENTIALS", "Credenciais GCS", required=True)
             .parse())
 
 
@@ -30,6 +35,24 @@ OUTPUT_DIR = './original_data'
 NORMALIZED_DIR = './normalized'
 CONVERTED_DIR = './converted'
 CSV_DIR = './output'
+
+
+def get_available_endpoints():
+    """Retorna os endpoints com dados (subpastas presentes na pasta output)."""
+    if not os.path.exists(CSV_DIR):
+        return {}
+
+    subdirs = [
+        name for name in os.listdir(CSV_DIR)
+        if os.path.isdir(os.path.join(CSV_DIR, name))
+    ]
+
+    return {name: {} for name in subdirs}
+
+
+CONFIG = {
+    "endpoints": get_available_endpoints()
+}
 
 
 def clean_and_create_directories():
@@ -178,8 +201,8 @@ def flatten_json_to_csv():
             # Achatar cada registro completamente
             # flattened_records = []
             # for record in records:
-                # flattened = flatten_dict(record)
-                # flattened_records.append(flattened)
+            # flattened = flatten_dict(record)
+            # flattened_records.append(flattened)
 
             # # Converter para DataFrame
             # df = pd.DataFrame(flattened_records)
@@ -555,12 +578,12 @@ def main():
         collect_pipelines,
         collect_stages,
         collect_organizations,
-        # collect_persons,
-        # collect_products,
-        # collect_users,
-        # collect_deals,
-        # collect_activities,
-        # collect_leads
+        collect_persons,
+        collect_products,
+        collect_users,
+        collect_deals,
+        collect_activities,
+        collect_leads
     ]
 
     results = []
@@ -598,6 +621,13 @@ def main():
     logger.info("📊 Leads convertidos com campos legíveis")
     logger.info("📊 Custom fields convertidos para todos os tipos de dados")
     logger.info("📊 Todos os arquivos convertidos para CSV achatados")
+
+    with MemoryMonitor(logger):
+        BigQuery.process_csv_files()
+
+    for endpoint_name in CONFIG["endpoints"].keys():
+        BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=endpoint_name,
+                                credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
 
 if __name__ == "__main__":
