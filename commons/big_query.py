@@ -13,12 +13,12 @@ from pathlib import Path
 
 import dateutil.parser as date_parser
 import pandas as pd
+from google.auth import load_credentials_from_file
 from google.cloud import bigquery
 from google.oauth2 import service_account
 
 
 class BigQuery:
-
     DEFAULT_OUTPUT_DIR = './output'
     LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
     CSV_DELIMITER = ';'
@@ -349,6 +349,10 @@ class BigQuery:
     @staticmethod
     def _create_externa_table(project_id, tool_name, table_name, credentials_path):
         """Carrega dados do CSV diretamente para uma tabela BigQuery."""
+        import warnings
+        # Suprimir warning específico do Google Auth sobre quota project
+        warnings.filterwarnings("ignore", message="Your application has authenticated using end user credentials")
+
         start_time = time.time()
 
         # Setup de logging para método estático
@@ -356,8 +360,31 @@ class BigQuery:
         logger.info(f"Iniciando criação da tabela externa: {project_id}.{tool_name}.{table_name}")
 
         try:
-            credentials = service_account.Credentials.from_service_account_file(credentials_path)
-            client = bigquery.Client(project=project_id, credentials=credentials)
+            # Detectar tipo de credencial automaticamente
+            logger.info(f"Carregando credenciais de: {credentials_path}")
+
+            # Ler arquivo para detectar o tipo
+            with open(credentials_path, 'r') as f:
+                cred_info = json.load(f)
+
+            cred_type = cred_info.get('type', 'unknown')
+            logger.info(f"Tipo de credencial detectado: {cred_type}")
+
+            # Carregar credenciais baseado no tipo
+            if cred_type == 'service_account':
+                credentials = service_account.Credentials.from_service_account_file(credentials_path)
+                client = bigquery.Client(project=project_id, credentials=credentials)
+                logger.info("Usando credenciais de Service Account")
+            elif cred_type == 'authorized_user':
+                credentials, _ = load_credentials_from_file(credentials_path)
+                # Configurar quota project para evitar warnings
+                credentials = credentials.with_quota_project(project_id)
+                client = bigquery.Client(project=project_id, credentials=credentials)
+                logger.info("Usando credenciais de Authorized User (OAuth2) com quota project")
+            else:
+                logger.warning(f"Tipo de credencial desconhecido: {cred_type}. Tentando carregamento genérico...")
+                credentials, _ = load_credentials_from_file(credentials_path)
+                client = bigquery.Client(project=project_id, credentials=credentials)
 
             schema_path = os.path.join("./output", table_name, "schema.json")
             csv_path = os.path.join("./output", table_name, f"{table_name}.csv")
@@ -423,8 +450,30 @@ class BigQuery:
         logger.info(f"Iniciando criação da tabela gold para: {tool_name}_{table_name}_gold")
 
         try:
-            credentials = service_account.Credentials.from_service_account_file(credentials_path)
-            client = bigquery.Client(project=project_id, credentials=credentials)
+            # Detectar tipo de credencial automaticamente
+            logger.info(f"Carregando credenciais de: {credentials_path}")
+
+            # Ler arquivo para detectar o tipo
+            with open(credentials_path, 'r') as f:
+                cred_info = json.load(f)
+
+            cred_type = cred_info.get('type', 'unknown')
+            logger.info(f"Tipo de credencial detectado: {cred_type}")
+
+            # Carregar credenciais baseado no tipo
+            if cred_type == 'service_account':
+                credentials = service_account.Credentials.from_service_account_file(credentials_path)
+                client = bigquery.Client(project=project_id, credentials=credentials)
+                logger.info("Usando credenciais de Service Account")
+            elif cred_type == 'authorized_user':
+                credentials, _ = load_credentials_from_file(credentials_path)
+                credentials = credentials.with_quota_project(project_id)
+                client = bigquery.Client(project=project_id, credentials=credentials)
+                logger.info("Usando credenciais de Authorized User (OAuth2) com quota project")
+            else:
+                logger.warning(f"Tipo de credencial desconhecido: {cred_type}. Tentando carregamento genérico...")
+                credentials, _ = load_credentials_from_file(credentials_path)
+                client = bigquery.Client(project=project_id, credentials=credentials)
 
             source_table_id = f"{project_id}.{tool_name}.{table_name}"
             gold_table_id = f"{project_id}.vendas.{tool_name}_{table_name}_gold"
@@ -529,12 +578,15 @@ def analyze_column_worker(column_name, column_data, boolean_values, type_mapping
             return 'time'
 
         # Detecção de data
-        dt = date_parser.parse(value, fuzzy=False)
-        if dt.tzinfo or 'z' in value.lower():
-            return 'timestamp'
-        if dt.hour or dt.minute or dt.second:
-            return 'datetime'
-        return 'string'
+        try:
+            dt = date_parser.parse(value, fuzzy=False)
+            if dt.tzinfo or 'z' in value.lower():
+                return 'timestamp'
+            if dt.hour or dt.minute or dt.second:
+                return 'datetime'
+            return 'date'
+        except Exception:
+            return 'string'
 
     try:
         # Análise da coluna
