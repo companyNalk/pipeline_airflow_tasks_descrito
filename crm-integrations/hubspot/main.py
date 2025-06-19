@@ -25,17 +25,17 @@ LIMIT_PER_PAGE = 100
 
 
 def get_arguments():
-   return (ArgumentManager("Script HubSpot - Coleta com Campos Configuráveis")
-           .add("ACCESS_TOKEN", "Token de acesso para autenticação", required=True)
-           .add("FIELDS_CONTACTS", "Lista de campos para contacts (formato: ['campo1' , 'campo2' , 'campo3'])", required=False, default="")
-           .add("FIELDS_DEALS", "Lista de campos para deals (formato: ['campo1' , 'campo2' , 'campo3'])", required=False, default="")
-           .add("FIELDS_OWNERS", "Lista de campos para owners (formato: ['campo1' , 'campo2' , 'campo3'])", required=False, default="")
-           .add("FIELDS_PIPELINES", "Lista de campos para pipelines (formato: ['campo1' , 'campo2' , 'campo3'])", required=False, default="")
-           .add("FIELDS_PROPERTIES", "Lista de campos para properties (formato: ['campo1' , 'campo2' , 'campo3'])", required=False, default="")
-           .add("PROJECT_ID", "ID do projeto GCS", required=True)
-           .add("CRM_TYPE", "Ferramenta: Nome aba sheets", required=True)
-           .add("GOOGLE_APPLICATION_CREDENTIALS", "Credenciais GCS", required=True)
-           .parse())
+    return (ArgumentManager("Script HubSpot - Coleta com Campos Configuráveis")
+            .add("ACCESS_TOKEN", "Token de acesso para autenticação", required=True)
+            .add("FIELDS_CONTACTS", "Lista de campos para contacts (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("FIELDS_DEALS", "Lista de campos para deals (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("FIELDS_OWNERS", "Lista de campos para owners (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("FIELDS_PIPELINES", "Lista de campos para pipelines (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("FIELDS_PROPERTIES", "Lista de campos para properties (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("PROJECT_ID", "ID do projeto GCS", required=True)
+            .add("CRM_TYPE", "Ferramenta: Nome aba sheets", required=True)
+            .add("GOOGLE_APPLICATION_CREDENTIALS", "Credenciais GCS", required=True)
+            .parse())
 
 
 args = get_arguments()
@@ -43,8 +43,11 @@ args = get_arguments()
 
 def parse_env_list(fields):
     try:
-        if not fields or fields.strip() == "":
+        if not fields or (isinstance(fields, str) and fields.strip() == ""):
             return []
+
+        if isinstance(fields, list):
+            return [item.strip() if isinstance(item, str) else item for item in fields]
 
         fields = fields.strip()
         parsed_list = ast.literal_eval(fields)
@@ -55,7 +58,9 @@ def parse_env_list(fields):
         return [str(parsed_list)]
 
     except (ValueError, SyntaxError, AttributeError) as e:
-        logger.warning(f"⚠️ Erro ao fazer parse dos campos '{fields}': {e}, usando lista vazia (todos os campos)")
+        logger.warning(f"⚠️ Erro ao fazer parse dos campos: {e}")
+        logger.info("💡 Formato esperado: ['campo1', 'campo2'] ou string vazia para todos os campos")
+        logger.info("🔄 Usando todos os campos (lista vazia)")
         return []
 
 
@@ -65,44 +70,55 @@ FIELDS_OWNERS = parse_env_list('FIELDS_OWNERS')
 FIELDS_PIPELINES = parse_env_list('FIELDS_PIPELINES')
 FIELDS_PROPERTIES = parse_env_list('FIELDS_PROPERTIES')
 
-ENDPOINT_FIELD_CONFIG = {
-    "hubspot_contacts": {
+
+ENDPOINT_CONFIG = {
+    "contacts": {
+        "object_type": "contacts",
         "mode": "specific" if FIELDS_CONTACTS else "all",
-        "fields": FIELDS_CONTACTS
+        "fields": FIELDS_CONTACTS,
+        "params": {"limit": LIMIT_PER_PAGE}
     },
-    "hubspot_deals": {
+    "deals": {
+        "object_type": "deals",
         "mode": "specific" if FIELDS_DEALS else "all",
-        "fields": FIELDS_DEALS
+        "fields": FIELDS_DEALS,
+        "params": {"limit": LIMIT_PER_PAGE}
     },
-    "hubspot_owners": {
+    "owners": {
+        "object_type": "owners",
         "mode": "specific" if FIELDS_OWNERS else "all",
-        "fields": FIELDS_OWNERS
+        "fields": FIELDS_OWNERS,
+        "params": {}
     },
-    "hubspot_pipelines": {
+    "pipelines": {
+        "object_type": "pipelines",
         "mode": "specific" if FIELDS_PIPELINES else "all",
-        "fields": FIELDS_PIPELINES
+        "fields": FIELDS_PIPELINES,
+        "params": {"object_type": "deals"}
     },
-    "hubspot_properties": {
+    "properties": {
+        "object_type": "properties",
         "mode": "specific" if FIELDS_PROPERTIES else "all",
-        "fields": FIELDS_PROPERTIES
+        "fields": FIELDS_PROPERTIES,
+        "params": {"object_type": "contacts"}
     }
 }
 
-ENDPOINTS = {
-    # "hubspot_contacts": "contacts",
-    "hubspot_deals": "deals",
-    # "hubspot_owners": "owners",
-    # "hubspot_pipelines": "pipelines",
-    # "hubspot_properties": "properties"
-}
 
-ENDPOINT_PARAMS = {
-    "hubspot_deals": {"limit": LIMIT_PER_PAGE},
-    "hubspot_contacts": {"limit": LIMIT_PER_PAGE},
-    "hubspot_owners": {},
-    "hubspot_pipelines": {"object_type": "deals"},
-    "hubspot_properties": {"object_type": "contacts"}
-}
+def get_endpoint_object_type(endpoint_name):
+    return ENDPOINT_CONFIG.get(endpoint_name, {}).get("object_type")
+
+
+def get_endpoint_field_config(endpoint_name):
+    config = ENDPOINT_CONFIG.get(endpoint_name, {})
+    return {
+        "mode": config.get("mode", "all"),
+        "fields": config.get("fields", [])
+    }
+
+
+def get_endpoint_params(endpoint_name):
+    return ENDPOINT_CONFIG.get(endpoint_name, {}).get("params", {})
 
 
 def init_hubspot_client(access_token):
@@ -120,7 +136,7 @@ def get_deal_stage_properties():
     """Retorna todos os campos relacionados a deal stage que devem ser coletados"""
     return [
         'dealstage',
-        'hs_deal_stage_id'
+        'hs_deal_stage_id',
         'pipeline',
         'hs_pipeline',
         'hs_pipeline_stage',
@@ -173,7 +189,7 @@ def create_stage_mapping(client):
 
 def get_endpoint_properties(client, endpoint_name, object_type):
     """Obter propriedades com adição automática de campos essenciais para deals"""
-    config = ENDPOINT_FIELD_CONFIG.get(endpoint_name, {"mode": "all", "fields": []})
+    config = get_endpoint_field_config(endpoint_name)
 
     logger.info(f"🔍 Configuração para {endpoint_name}: modo='{config['mode']}'")
 
@@ -187,7 +203,7 @@ def get_endpoint_properties(client, endpoint_name, object_type):
             logger.info(f"✅ {len(all_properties)} propriedades obtidas em {duration:.2f}s")
 
             # Para deals, garantir que campos essenciais de stage estão incluídos
-            if endpoint_name == "hubspot_deals":
+            if endpoint_name == "deals":
                 essential_fields = get_deal_stage_properties()
                 added_fields = []
                 for field in essential_fields:
@@ -208,7 +224,7 @@ def get_endpoint_properties(client, endpoint_name, object_type):
         logger.info(f"🎯 Usando {len(specified_fields)} campos específicos")
 
         # Para deals, garantir que campos essenciais estão incluídos
-        if endpoint_name == "hubspot_deals":
+        if endpoint_name == "deals":
             essential_fields = get_deal_stage_properties()
             for field in essential_fields:
                 if field not in specified_fields:
@@ -529,7 +545,7 @@ def debug_dealstage_fields(client, deal_id=None):
         logger.error(f"❌ Erro no debug: {e}")
 
 
-def process_deals_endpoint(client, endpoint_name="hubspot_deals", limit=LIMIT_PER_PAGE):
+def process_deals_endpoint(client, endpoint_name="deals", limit=LIMIT_PER_PAGE):
     """Versão corrigida que resolve problemas com dealstage"""
     try:
         logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()} (VERSÃO CORRIGIDA)\n{'=' * 50}")
@@ -540,7 +556,8 @@ def process_deals_endpoint(client, endpoint_name="hubspot_deals", limit=LIMIT_PE
         stage_mapping = create_stage_mapping(client)
 
         # PASSO 2: Obter propriedades (já inclui campos essenciais automaticamente)
-        all_properties = get_endpoint_properties(client, endpoint_name, "deals")
+        object_type = get_endpoint_object_type(endpoint_name)
+        all_properties = get_endpoint_properties(client, endpoint_name, object_type)
         property_groups = create_property_groups(all_properties, MAX_PROPERTIES_PER_REQUEST)
 
         # PASSO 3: Coletar dados de deals
@@ -635,7 +652,8 @@ async def process_contacts_with_config(client, access_token, endpoint_name, log_
                                        max_contacts=None):
     logger.info(f"🔄 Iniciando coleta configurada para {endpoint_name} a partir de: {after or 'início'}")
 
-    target_properties = get_endpoint_properties(client, endpoint_name, "contacts")
+    object_type = get_endpoint_object_type(endpoint_name)
+    target_properties = get_endpoint_properties(client, endpoint_name, object_type)
 
     if not target_properties:
         logger.error(f"❌ Nenhuma propriedade válida encontrada para {endpoint_name}")
@@ -747,12 +765,12 @@ async def process_contacts_with_config(client, access_token, endpoint_name, log_
     return processed_contacts, current_after
 
 
-def process_contacts_endpoint(client, access_token, endpoint_name="hubspot_contacts", log_details=False,
+def process_contacts_endpoint(client, access_token, endpoint_name="contacts", log_details=False,
                               after_key=None):
     try:
         logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()}\n{'=' * 50}")
 
-        config = ENDPOINT_FIELD_CONFIG.get(endpoint_name, {})
+        config = get_endpoint_field_config(endpoint_name)
         logger.info(f"🎯 Configuração: modo='{config.get('mode', 'all')}'")
         if config.get('mode') == 'specific':
             fields = config.get('fields', [])
@@ -823,7 +841,7 @@ def get_all_owners(client):
         raise
 
 
-def process_owners_endpoint(client, endpoint_name="hubspot_owners"):
+def process_owners_endpoint(client, endpoint_name="owners"):
     try:
         logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()}\n{'=' * 50}")
         endpoint_start = time.time()
@@ -898,7 +916,7 @@ def get_all_pipelines(client, object_type="deals"):
         raise
 
 
-def process_pipelines_endpoint(client, endpoint_name="hubspot_pipelines", object_type="deals"):
+def process_pipelines_endpoint(client, endpoint_name="pipelines", object_type="deals"):
     try:
         logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()}\n{'=' * 50}")
         endpoint_start = time.time()
@@ -961,7 +979,7 @@ def get_all_properties(client, object_type="contacts"):
         raise
 
 
-def process_properties_endpoint(client, endpoint_name="hubspot_properties", object_type="contacts"):
+def process_properties_endpoint(client, endpoint_name="properties", object_type="contacts"):
     try:
         logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()}\n{'=' * 50}")
         endpoint_start = time.time()
@@ -1012,15 +1030,15 @@ def main():
         hubspot_client = init_hubspot_client(access_token)
 
         endpoints_to_process = {}
-        for endpoint_name in ENDPOINTS:
+        for endpoint_name in ENDPOINT_CONFIG:
             if endpoints_filter is None or endpoint_name in endpoints_filter:
-                endpoints_to_process[endpoint_name] = ENDPOINTS[endpoint_name]
+                endpoints_to_process[endpoint_name] = get_endpoint_object_type(endpoint_name)
 
         logger.info(f"🔍 Endpoints a processar: {', '.join(endpoints_to_process.keys())}")
         logger.info("🎯 MODO: Coleta configurável por endpoint com correção de DealStage")
 
         for endpoint_name in endpoints_to_process.keys():
-            config = ENDPOINT_FIELD_CONFIG.get(endpoint_name, {})
+            config = get_endpoint_field_config(endpoint_name)
             mode = config.get('mode', 'all')
             if mode == 'specific':
                 fields = config.get('fields', [])
@@ -1037,22 +1055,22 @@ def main():
             try:
                 logger.info(f"🔄 Iniciando processamento paralelo do endpoint: {endpoint_name}")
 
-                if endpoint_name == "hubspot_deals":
+                if endpoint_name == "deals":
                     # Usar a versão corrigida para deals
                     _, stats = process_deals_endpoint(hubspot_client, endpoint_name)
 
-                elif endpoint_name == "hubspot_contacts":
+                elif endpoint_name == "contacts":
                     _, stats = process_contacts_endpoint(hubspot_client, access_token, endpoint_name, log_details)
 
-                elif endpoint_name == "hubspot_owners":
+                elif endpoint_name == "owners":
                     _, stats = process_owners_endpoint(hubspot_client, endpoint_name)
 
-                elif endpoint_name == "hubspot_pipelines":
-                    object_type = ENDPOINT_PARAMS[endpoint_name].get("object_type", "deals")
+                elif endpoint_name == "pipelines":
+                    object_type = get_endpoint_params(endpoint_name).get("object_type", "deals")
                     _, stats = process_pipelines_endpoint(hubspot_client, endpoint_name, object_type)
 
-                elif endpoint_name == "hubspot_properties":
-                    object_type = ENDPOINT_PARAMS[endpoint_name].get("object_type", "contacts")
+                elif endpoint_name == "properties":
+                    object_type = get_endpoint_params(endpoint_name).get("object_type", "contacts")
                     _, stats = process_properties_endpoint(hubspot_client, endpoint_name, object_type)
 
                 else:
@@ -1099,7 +1117,7 @@ def main():
         total_properties = sum(stats.get('total_properties', 0) for stats in endpoint_stats.values())
 
         for endpoint_name, stats in endpoint_stats.items():
-            config = ENDPOINT_FIELD_CONFIG.get(endpoint_name, {})
+            config = get_endpoint_field_config(endpoint_name)
             mode_info = f"({config.get('mode', 'all')} mode)"
 
             logger.info(f"📈 {endpoint_name} {mode_info}:")
@@ -1119,19 +1137,13 @@ def main():
         with MemoryMonitor(logger):
             BigQuery.process_csv_files()
 
-        for endpoint_name in ENDPOINTS.keys():
-            BigQuery.start_pipeline(args.PROJECT_ID, args.TOOL_NAME, table_name=endpoint_name,
+        for endpoint_name in ENDPOINT_CONFIG.keys():
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=endpoint_name,
                                     credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         if not success:
             failed_endpoints = [name for name, stats in endpoint_stats.items() if 'Falha' in stats['status']]
             raise Exception(f"Falhas nos endpoints: {failed_endpoints}")
-
-        logger.info("✅ SUCESSO: Coleta configurável com correção DealStage concluída!")
-
-        # Oferecer função de debug se houver interesse
-        if 'hubspot_deals' in endpoints_to_process:
-            logger.info("💡 DICA: Para debug de um deal específico, use: debug_dealstage_fields(client, 'DEAL_ID')")
 
     except Exception as e:
         logger.exception(f"❌ ERRO CRÍTICO NA EXECUÇÃO: {e}")
