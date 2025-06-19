@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import time
 import unicodedata
 import uuid
@@ -834,3 +835,86 @@ class Utils:
                 "status": f"Falha: {type(e).__name__}: {str(e)}",
                 "tempo": 0
             }
+
+    @staticmethod
+    def clean_output_folder(logger, base_path="output"):
+        """
+        Limpa completamente a pasta output se ela existir
+        Remove todos os arquivos e subpastas dentro de output/
+        """
+        # Pega o diretório onde o script principal está sendo executado
+        if hasattr(sys.modules['__main__'], '__file__'):
+            script_dir = os.path.dirname(os.path.abspath(sys.modules['__main__'].__file__))
+        else:
+            # Fallback para o diretório atual
+            script_dir = os.getcwd()
+
+        # Constrói o caminho completo para a pasta output
+        full_base_path = os.path.join(script_dir, base_path)
+
+        logger.info(f"🧹 Verificando limpeza em: {full_base_path}")
+
+        if not os.path.exists(full_base_path):
+            logger.info(f"📁 Pasta '{full_base_path}' não existe - nada para limpar")
+            return
+
+        try:
+            # Lista o que será removido
+            items_to_remove = os.listdir(full_base_path)
+            if not items_to_remove:
+                logger.info("📁 Pasta output já está vazia")
+                return
+
+            logger.info(f"🗑️ Removendo {len(items_to_remove)} item(s) de output:")
+
+            for item in items_to_remove:
+                item_path = os.path.join(full_base_path, item)
+
+                if os.path.isdir(item_path):
+                    logger.info(f"   📂 Removendo pasta: {item}")
+                    shutil.rmtree(item_path)
+                else:
+                    logger.info(f"   📄 Removendo arquivo: {item}")
+                    os.remove(item_path)
+
+            logger.info(f"✅ Pasta output limpa com sucesso!")
+
+        except Exception as e:
+            logger.error(f"❌ Erro ao limpar pasta output: {e}")
+            raise
+
+    @staticmethod
+    def get_existing_folders(logger, base_path="output"):
+        """
+        Retorna lista simples de pastas que existem em output/
+        A busca é feita a partir do diretório onde o script principal está sendo executado
+        """
+        # Pega o diretório onde o script principal está sendo executado
+        if hasattr(sys.modules['__main__'], '__file__'):
+            script_dir = os.path.dirname(os.path.abspath(sys.modules['__main__'].__file__))
+        else:
+            # Fallback para o diretório atual
+            script_dir = os.getcwd()
+
+        # Constrói o caminho completo para a pasta output
+        full_base_path = os.path.join(script_dir, base_path)
+
+        logger.info(f"🔍 Buscando pastas em: {full_base_path}")
+
+        if not os.path.exists(full_base_path):
+            logger.warning(f"📁 Pasta '{full_base_path}' não encontrada")
+            return []
+
+        folders = []
+        try:
+            for item in os.listdir(full_base_path):
+                item_path = os.path.join(full_base_path, item)
+                if os.path.isdir(item_path):
+                    folders.append(item)
+                    logger.info(f"📂 Pasta encontrada: {item}")
+        except Exception as e:
+            logger.error(f"❌ Erro ao listar pastas: {e}")
+            return []
+
+        logger.info(f"📊 Total de pastas encontradas: {len(folders)}")
+        return folders

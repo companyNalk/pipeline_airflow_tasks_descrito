@@ -16,6 +16,7 @@ from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
 
 logger = AppInitializer.initialize()
+Utils.clean_output_folder(logger)
 
 MAX_IDS = 100
 RATE_LIMIT = 100
@@ -1137,8 +1138,9 @@ def main():
         with MemoryMonitor(logger):
             BigQuery.process_csv_files()
 
-        for endpoint_name in ENDPOINT_CONFIG.keys():
-            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=endpoint_name,
+        existing_folders = Utils.get_existing_folders(logger)
+        for folder_name in existing_folders:
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=folder_name,
                                     credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         if not success:
