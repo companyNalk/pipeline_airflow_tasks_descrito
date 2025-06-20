@@ -1138,9 +1138,9 @@ def main():
         with MemoryMonitor(logger):
             BigQuery.process_csv_files()
 
-        existing_folders = Utils.get_existing_folders(logger)
-        for folder_name in existing_folders:
-            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=folder_name,
+        tables = Utils.get_existing_folders(logger)
+        for table in tables:
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
                                     credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         if not success:
