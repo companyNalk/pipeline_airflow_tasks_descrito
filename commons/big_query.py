@@ -447,6 +447,9 @@ class BigQuery:
                 field_delimiter=";",
                 source_format=bigquery.SourceFormat.CSV,
                 write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                max_bad_records=10,
+                allow_jagged_rows=True,
+                allow_quoted_newlines=True
             )
 
             logger.info("Removendo tabela existente (se houver)")

@@ -877,7 +877,7 @@ class Utils:
                     logger.info(f"   📄 Removendo arquivo: {item}")
                     os.remove(item_path)
 
-            logger.info(f"✅ Pasta output limpa com sucesso!")
+            logger.info("✅ Pasta output limpa com sucesso!")
 
         except Exception as e:
             logger.error(f"❌ Erro ao limpar pasta output: {e}")
