@@ -15,6 +15,7 @@ from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
 
 logger = AppInitializer.initialize()
+Utils.clean_output_folder(logger)
 
 
 def get_arguments():
@@ -35,24 +36,6 @@ OUTPUT_DIR = './original_data'
 NORMALIZED_DIR = './normalized'
 CONVERTED_DIR = './converted'
 CSV_DIR = './output'
-
-
-def get_available_endpoints():
-    """Retorna os endpoints com dados (subpastas presentes na pasta output)."""
-    if not os.path.exists(CSV_DIR):
-        return {}
-
-    subdirs = [
-        name for name in os.listdir(CSV_DIR)
-        if os.path.isdir(os.path.join(CSV_DIR, name))
-    ]
-
-    return {name: {} for name in subdirs}
-
-
-CONFIG = {
-    "endpoints": get_available_endpoints()
-}
 
 
 def clean_and_create_directories():
@@ -625,8 +608,9 @@ def main():
     with MemoryMonitor(logger):
         BigQuery.process_csv_files()
 
-    for endpoint_name in CONFIG["endpoints"].keys():
-        BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=endpoint_name,
+    tables = Utils.get_existing_folders(logger)
+    for table in tables:
+        BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
                                 credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
 
