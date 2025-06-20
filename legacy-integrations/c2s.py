@@ -2,6 +2,7 @@
 Contact2Sale module for data extraction functions.
 This module contains functions specific to the Contact2Sale integration.
 """
+from datetime import timedelta
 
 from core import gcs
 
@@ -142,8 +143,8 @@ def run(customer):
         per_page = 50
         all_leads = []
 
-        # Ajuste para obter o ano atual -1 para nao zerar os dados na troca de ano
-        start_date = datetime((datetime.now().year - 1), 1, 1).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # COLETA DOS ULTIMOS 365 DIAS
+        start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         print("[INFO] Iniciando a coleta de leads...")
         while True:
