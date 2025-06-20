@@ -39,7 +39,7 @@ class BigQuery:
         'numeric': 'NUMERIC',
         'float': 'FLOAT64',
         'date': 'DATE',
-        'datetime': 'DATETIME',
+        'datetime': 'TIMESTAMP',
         'timestamp': 'TIMESTAMP',
         'time': 'TIME',
         'boolean': 'BOOLEAN',
