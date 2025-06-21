@@ -3,6 +3,7 @@ import asyncio
 import concurrent.futures
 import os
 import time
+from datetime import datetime, timedelta
 
 import aiohttp
 import hubspot
@@ -26,21 +27,18 @@ LIMIT_PER_PAGE = 100
 
 
 def get_arguments():
-    return (ArgumentManager("Script HubSpot - Coleta com Campos Configuráveis")
+    return (ArgumentManager("Script HubSpot - Coleta com Campos Configuráveis e Data Inicial")
             .add("ACCESS_TOKEN", "Token de acesso para autenticação", required=True)
-            .add("FIELDS_CONTACTS", "Lista de campos para contacts (formato: ['campo1' , 'campo2' , 'campo3'])",
-                 required=True)
-            .add("FIELDS_DEALS", "Lista de campos para deals (formato: ['campo1' , 'campo2' , 'campo3'])",
-                 required=True)
-            .add("FIELDS_OWNERS", "Lista de campos para owners (formato: ['campo1' , 'campo2' , 'campo3'])",
-                 required=True)
-            .add("FIELDS_PIPELINES", "Lista de campos para pipelines (formato: ['campo1' , 'campo2' , 'campo3'])",
-                 required=True)
-            .add("FIELDS_PROPERTIES", "Lista de campos para properties (formato: ['campo1' , 'campo2' , 'campo3'])",
-                 required=True)
+            .add("FIELDS_CONTACTS", "Lista de campos para contacts (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("FIELDS_DEALS", "Lista de campos para deals (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("FIELDS_OWNERS", "Lista de campos para owners (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("FIELDS_PIPELINES", "Lista de campos para pipelines (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("FIELDS_PROPERTIES", "Lista de campos para properties (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
             .add("PROJECT_ID", "ID do projeto GCS", required=True)
             .add("CRM_TYPE", "Ferramenta: Nome aba sheets", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credenciais GCS", required=True)
+            .add("START_DATE", "Data inicial para coleta (formato: YYYY-MM-DD, ex: 2024-01-01)", required=False, default="2024-01-01")
+            .add("INTERVAL_DAYS", "Intervalo em dias para dividir consultas grandes (padrão: 15)", required=False, default="15")
             .parse())
 
 
@@ -70,42 +68,112 @@ def parse_env_list(fields):
         return []
 
 
+def format_date_for_hubspot(date_str, is_end_date=False):
+    """
+    Formatar data para o formato esperado pelo HubSpot API
+    """
+    try:
+        if is_end_date:
+            # Para data final, usar fim do dia
+            return f"{date_str}T23:59:59.999Z"
+        else:
+            # Para data inicial, usar início do dia
+            return f"{date_str}T00:00:00.000Z"
+    except Exception:
+        return date_str
+
+
+def validate_and_parse_date(date_str):
+    """Valida e converte a data de string para objeto datetime"""
+    try:
+        parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
+        logger.info(f"📅 Data inicial configurada: {parsed_date.strftime('%Y-%m-%d')}")
+        return parsed_date
+    except ValueError:
+        logger.warning(f"⚠️ Data inválida '{date_str}', usando padrão: 2024-01-01")
+        return datetime.strptime("2024-01-01", "%Y-%m-%d")
+
+
+def generate_date_ranges(start_date_str, end_date_str=None, interval_days=15):
+    """
+    Gera intervalos de datas para dividir consultas grandes.
+    """
+    start_date = validate_and_parse_date(start_date_str)
+
+    if end_date_str:
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+    else:
+        end_date = datetime.now()
+
+    date_ranges = []
+    current_start = start_date
+
+    while current_start < end_date:
+        current_end = current_start + timedelta(days=interval_days)
+        if current_end > end_date:
+            current_end = end_date
+
+        date_ranges.append((
+            current_start.strftime("%Y-%m-%d"),
+            current_end.strftime("%Y-%m-%d")
+        ))
+
+        current_start = current_end + timedelta(days=1)
+
+    logger.info(f"📊 Criados {len(date_ranges)} intervalos de {interval_days} dias cada")
+    return date_ranges
+
+
+# Parsing dos argumentos
 FIELDS_CONTACTS = parse_env_list(args.FIELDS_CONTACTS)
 FIELDS_DEALS = parse_env_list(args.FIELDS_DEALS)
 FIELDS_OWNERS = parse_env_list(args.FIELDS_OWNERS)
 FIELDS_PIPELINES = parse_env_list(args.FIELDS_PIPELINES)
 FIELDS_PROPERTIES = parse_env_list(args.FIELDS_PROPERTIES)
 
+# Parametro de data
+START_DATE = args.START_DATE
+INTERVAL_DAYS = int(args.INTERVAL_DAYS)
+
+logger.info(f"📅 Configuração temporal:")
+logger.info(f"   • Data inicial: {START_DATE}")
+logger.info(f"   • Intervalo: {INTERVAL_DAYS} dias")
+
 ENDPOINT_CONFIG = {
     "contacts": {
         "object_type": "contacts",
         "mode": "specific" if FIELDS_CONTACTS else "all",
         "fields": FIELDS_CONTACTS,
-        "params": {"limit": LIMIT_PER_PAGE}
+        "params": {"limit": LIMIT_PER_PAGE},
+        "use_date_filter": True
     },
     "deals": {
         "object_type": "deals",
         "mode": "specific" if FIELDS_DEALS else "all",
         "fields": FIELDS_DEALS,
-        "params": {"limit": LIMIT_PER_PAGE}
+        "params": {"limit": LIMIT_PER_PAGE},
+        "use_date_filter": True
     },
     "owners": {
         "object_type": "owners",
         "mode": "specific" if FIELDS_OWNERS else "all",
         "fields": FIELDS_OWNERS,
-        "params": {}
+        "params": {},
+        "use_date_filter": False
     },
     "pipelines": {
         "object_type": "pipelines",
         "mode": "specific" if FIELDS_PIPELINES else "all",
         "fields": FIELDS_PIPELINES,
-        "params": {"object_type": "deals"}
+        "params": {"object_type": "deals"},
+        "use_date_filter": False
     },
     "properties": {
         "object_type": "properties",
         "mode": "specific" if FIELDS_PROPERTIES else "all",
         "fields": FIELDS_PROPERTIES,
-        "params": {"object_type": "contacts"}
+        "params": {"object_type": "contacts"},
+        "use_date_filter": False
     }
 }
 
@@ -124,6 +192,11 @@ def get_endpoint_field_config(endpoint_name):
 
 def get_endpoint_params(endpoint_name):
     return ENDPOINT_CONFIG.get(endpoint_name, {}).get("params", {})
+
+
+def should_use_date_filter(endpoint_name):
+    """Verifica se o endpoint deve usar filtro de data"""
+    return ENDPOINT_CONFIG.get(endpoint_name, {}).get("use_date_filter", False)
 
 
 def init_hubspot_client(access_token):
@@ -273,13 +346,53 @@ def create_property_groups(properties, group_size=250):
     return groups
 
 
-def fetch_deals_page(client, properties, limit, after=None):
+def fetch_deals_page_with_date_filter(client, properties, limit, date_range=None, after=None):
+    """
+    Busca página de deals com filtro de data opcional
+    """
     try:
-        response = client.crm.deals.basic_api.get_page(
-            limit=limit,
-            properties=properties,
-            after=after
-        )
+        if date_range and should_use_date_filter("deals"):
+            # Importar o modelo correto do HubSpot
+            from hubspot.crm.deals import PublicObjectSearchRequest, Filter, FilterGroup
+
+            # Formatar datas corretamente
+            start_date = format_date_for_hubspot(date_range[0], is_end_date=False)
+            end_date = format_date_for_hubspot(date_range[1], is_end_date=True)
+
+            # Criar filtros de data
+            filter_gte = Filter(
+                property_name="createdate",
+                operator="GTE",
+                value=start_date
+            )
+
+            filter_lte = Filter(
+                property_name="createdate",
+                operator="LTE",
+                value=end_date
+            )
+
+            # Criar grupo de filtros
+            filter_group = FilterGroup(filters=[filter_gte, filter_lte])
+
+            # Criar request de busca
+            search_request = PublicObjectSearchRequest(
+                filter_groups=[filter_group],
+                properties=properties,
+                limit=limit,
+                after=after
+            )
+
+            response = client.crm.deals.search_api.do_search(
+                public_object_search_request=search_request
+            )
+        else:
+            # Usar API básica sem filtro de data
+            response = client.crm.deals.basic_api.get_page(
+                limit=limit,
+                properties=properties,
+                after=after
+            )
         return response
     except ApiException as e:
         logger.error(f"❌ API Exception ao buscar página de deals: {str(e)}")
@@ -289,7 +402,77 @@ def fetch_deals_page(client, properties, limit, after=None):
         raise
 
 
-def process_deals_batch(client, property_groups, limit, after=None):
+def process_deals_batch_with_date_ranges(client, property_groups, limit):
+    """
+    Processa deals usando intervalos de data para evitar limitações
+    """
+    all_items = []
+
+    if should_use_date_filter("deals"):
+        date_ranges = generate_date_ranges(START_DATE, interval_days=INTERVAL_DAYS)
+        logger.info(f"📊 Processando deals em {len(date_ranges)} intervalos de data")
+
+        for range_idx, date_range in enumerate(date_ranges):
+            logger.info(
+                f"📅 Processando intervalo {range_idx + 1}/{len(date_ranges)}: {date_range[0]} a {date_range[1]}")
+
+            has_more = True
+            current_after = None
+            range_items = []
+
+            while has_more:
+                batch_start_time = time.time()
+
+                for group_index, properties in enumerate(property_groups):
+                    try:
+                        api_response = fetch_deals_page_with_date_filter(
+                            client, properties, limit, date_range, current_after
+                        )
+                        deals = api_response.results
+
+                        if group_index == 0:
+                            has_more = api_response.paging is not None
+                            current_after = api_response.paging.next.after if has_more else None
+
+                        for deal in deals:
+                            deal_id = deal.id
+                            existing_deal = next((item for item in range_items if item.get("hs_object_id") == deal_id),
+                                                 None)
+
+                            if existing_deal:
+                                for property_name in properties:
+                                    existing_deal[property_name] = deal.properties.get(property_name, "")
+                            else:
+                                new_deal = {"hs_object_id": deal_id}
+                                for property_name in properties:
+                                    new_deal[property_name] = deal.properties.get(property_name, "")
+                                range_items.append(new_deal)
+
+                        logger.info(f"✓ Grupo {group_index + 1}/{len(property_groups)} processado")
+
+                    except Exception as e:
+                        logger.error(f"❌ Erro no grupo {group_index + 1}: {str(e)}")
+                        continue
+
+                batch_duration = time.time() - batch_start_time
+                logger.info(f"✓ Lote: {len(range_items)} deals em {batch_duration:.2f}s")
+
+                if not has_more:
+                    break
+
+            all_items.extend(range_items)
+            logger.info(f"📊 Intervalo concluído: {len(range_items)} deals. Total acumulado: {len(all_items)}")
+
+    else:
+        # Processar sem filtro de data (modo original)
+        logger.info("📊 Processando deals sem filtro de data")
+        all_items = process_deals_batch_original(client, property_groups, limit)
+
+    return all_items
+
+
+def process_deals_batch_original(client, property_groups, limit, after=None):
+    """Versão original do processamento de deals (sem filtro de data)"""
     all_items = []
     has_more = True
     current_after = after
@@ -300,7 +483,7 @@ def process_deals_batch(client, property_groups, limit, after=None):
 
         for group_index, properties in enumerate(property_groups):
             try:
-                api_response = fetch_deals_page(client, properties, limit, current_after)
+                api_response = fetch_deals_page_with_date_filter(client, properties, limit, None, current_after)
                 deals = api_response.results
 
                 if group_index == 0:
@@ -498,62 +681,11 @@ def analyze_dealstage_data_quality(deals_data):
             f"✅ SUCESSO: {original_vs_enriched['enriched_filled']} deals com dealstage vazio foram enriquecidos!")
 
 
-def debug_dealstage_fields(client, deal_id=None):
-    """Função de debug para investigar campos de dealstage em um deal específico"""
-
-    if not deal_id:
-        # Buscar primeiro deal disponível
-        try:
-            response = client.crm.deals.basic_api.get_page(limit=1)
-            if response.results:
-                deal_id = response.results[0].id
-            else:
-                logger.error("❌ Nenhum deal encontrado para debug")
-                return
-        except Exception as e:
-            logger.error(f"❌ Erro ao buscar deal para debug: {e}")
-            return
-
-    logger.info(f"🔍 DEBUG: Investigando campos de dealstage no deal {deal_id}")
-
-    try:
-        # Buscar deal com todos os campos relacionados a stage
-        stage_fields = get_deal_stage_properties()
-
-        deal = client.crm.deals.basic_api.get_by_id(
-            deal_id=deal_id,
-            properties=stage_fields
-        )
-
-        logger.info(f"📋 Campos de stage encontrados no deal {deal_id}:")
-        for field in stage_fields:
-            value = deal.properties.get(field, 'CAMPO_NAO_ENCONTRADO')
-            logger.info(f"   • {field}: '{value}'")
-
-        # Buscar mapeamento de stages
-        stage_mapping = create_stage_mapping(client)
-
-        # Tentar identificar o stage atual
-        stage_id = (deal.properties.get('hs_deal_stage_id') or deal.properties.get('dealstage') or deal.properties.get(
-            'hs_pipeline_stage'))
-
-        if stage_id and stage_id in stage_mapping:
-            stage_info = stage_mapping[stage_id]
-            logger.info(f"✅ Stage identificado: '{stage_info['label']}' (ID: {stage_id})")
-            logger.info(f"   • Pipeline: {stage_info['pipeline_name']}")
-            logger.info(f"   • Ordem: {stage_info['display_order']}")
-            logger.info(f"   • Probabilidade: {stage_info['probability']}")
-        else:
-            logger.warning(f"⚠️ Stage não identificado. ID encontrado: '{stage_id}'")
-
-    except Exception as e:
-        logger.error(f"❌ Erro no debug: {e}")
-
-
 def process_deals_endpoint(client, endpoint_name="deals", limit=LIMIT_PER_PAGE):
-    """Versão corrigida que resolve problemas com dealstage"""
+    """Versão corrigida que resolve problemas com dealstage e usa filtro de data"""
     try:
-        logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()} (VERSÃO CORRIGIDA)\n{'=' * 50}")
+        logger.info(
+            f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()} (VERSÃO CORRIGIDA COM FILTRO DE DATA)\n{'=' * 50}")
 
         endpoint_start = time.time()
 
@@ -565,9 +697,11 @@ def process_deals_endpoint(client, endpoint_name="deals", limit=LIMIT_PER_PAGE):
         all_properties = get_endpoint_properties(client, endpoint_name, object_type)
         property_groups = create_property_groups(all_properties, MAX_PROPERTIES_PER_REQUEST)
 
-        # PASSO 3: Coletar dados de deals
-        logger.info("📊 Coletando dados de deals...")
-        raw_data = process_deals_batch(client, property_groups, limit)
+        # PASSO 3: Coletar dados de deals com filtro de data
+        logger.info("📊 Coletando dados de deals com filtro de data...")
+        if should_use_date_filter(endpoint_name):
+            logger.info(f"📅 Usando filtro de data a partir de: {START_DATE}")
+        raw_data = process_deals_batch_with_date_ranges(client, property_groups, limit)
 
         # PASSO 4: Enriquecer dados com informações de stage
         enriched_data = enrich_deals_with_stage_info(raw_data, stage_mapping)
@@ -586,7 +720,9 @@ def process_deals_endpoint(client, endpoint_name="deals", limit=LIMIT_PER_PAGE):
             "status": "Sucesso",
             "tempo": endpoint_duration,
             "total_properties": len(all_properties),
-            "stages_mapeados": len(stage_mapping)
+            "stages_mapeados": len(stage_mapping),
+            "start_date": START_DATE,
+            "interval_days": INTERVAL_DAYS
         }
 
         logger.info(f"✅ {endpoint_name}: {len(processed_data)} registros em {endpoint_duration:.2f}s")
@@ -602,44 +738,98 @@ def process_deals_endpoint(client, endpoint_name="deals", limit=LIMIT_PER_PAGE):
             "status": f"Falha: {type(e).__name__}: {str(e)}",
             "tempo": 0,
             "total_properties": 0,
-            "stages_mapeados": 0
+            "stages_mapeados": 0,
+            "start_date": START_DATE,
+            "interval_days": INTERVAL_DAYS
         }
 
         return [], stats
 
 
-async def fetch_contacts_page_with_properties(access_token, properties, after=None, session=None, max_retries=3):
-    url = "https://api.hubapi.com/crm/v3/objects/contacts"
-
-    params = {
-        "limit": LIMIT_PER_PAGE,
-        "properties": ",".join(properties)
-    }
-    if after:
-        params["after"] = after
-
+async def fetch_contacts_page_with_properties_and_date(access_token, properties, date_range=None, after=None,
+                                                       session=None, max_retries=3):
+    """
+    Busca página de contatos com propriedades e filtro de data opcional
+    """
     headers = {"Authorization": f"Bearer {access_token}"}
-
     close_session = False
+
     if session is None:
         session = aiohttp.ClientSession()
         close_session = True
 
     for attempt in range(max_retries):
         try:
-            async with session.get(url, params=params, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data
-                elif response.status == 429:
-                    wait_time = 2 ** attempt
-                    logger.warning(f"⚠️ Rate limited, aguardando {wait_time}s (tentativa {attempt + 1})")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logger.error(f"❌ Erro HTTP {response.status} na tentativa {attempt + 1}")
-                    if attempt == max_retries - 1:
-                        return None
+            if date_range and should_use_date_filter("contacts"):
+                # Usar API de busca com filtro de data
+                url = "https://api.hubapi.com/crm/v3/objects/contacts/search"
+
+                # Formatar datas corretamente
+                start_date = format_date_for_hubspot(date_range[0], is_end_date=False)
+                end_date = format_date_for_hubspot(date_range[1], is_end_date=True)
+
+                # Criar filtros usando a estrutura correta
+                search_data = {
+                    "filterGroups": [
+                        {
+                            "filters": [
+                                {
+                                    "propertyName": "createdate",
+                                    "operator": "GTE",
+                                    "value": start_date
+                                },
+                                {
+                                    "propertyName": "createdate",
+                                    "operator": "LTE",
+                                    "value": end_date
+                                }
+                            ]
+                        }
+                    ],
+                    "properties": properties,
+                    "limit": LIMIT_PER_PAGE
+                }
+
+                if after:
+                    search_data["after"] = after
+
+                async with session.post(url, json=search_data, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data
+                    elif response.status == 429:
+                        wait_time = 2 ** attempt
+                        logger.warning(f"⚠️ Rate limited, aguardando {wait_time}s (tentativa {attempt + 1})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"❌ Erro HTTP {response.status} na tentativa {attempt + 1}")
+                        if attempt == max_retries - 1:
+                            return None
+            else:
+                # Usar API básica sem filtro de data
+                url = "https://api.hubapi.com/crm/v3/objects/contacts"
+
+                params = {
+                    "limit": LIMIT_PER_PAGE,
+                    "properties": ",".join(properties)
+                }
+                if after:
+                    params["after"] = after
+
+                async with session.get(url, params=params, headers=headers) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data
+                    elif response.status == 429:
+                        wait_time = 2 ** attempt
+                        logger.warning(f"⚠️ Rate limited, aguardando {wait_time}s (tentativa {attempt + 1})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"❌ Erro HTTP {response.status} na tentativa {attempt + 1}")
+                        if attempt == max_retries - 1:
+                            return None
 
         except Exception as e:
             logger.error(f"❌ Erro na tentativa {attempt + 1}: {e}")
@@ -653,9 +843,151 @@ async def fetch_contacts_page_with_properties(access_token, properties, after=No
     return None
 
 
-async def process_contacts_with_config(client, access_token, endpoint_name, log_details=False, after=None,
-                                       max_contacts=None):
+async def process_contacts_with_config_and_date(client, access_token, endpoint_name, log_details=False, after=None,
+                                                max_contacts=None):
+    """
+    Processa contatos com configuração e filtro de data
+    """
     logger.info(f"🔄 Iniciando coleta configurada para {endpoint_name} a partir de: {after or 'início'}")
+    if should_use_date_filter(endpoint_name):
+        logger.info(f"📅 Usando filtro de data a partir de: {START_DATE}")
+
+    object_type = get_endpoint_object_type(endpoint_name)
+    target_properties = get_endpoint_properties(client, endpoint_name, object_type)
+
+    if not target_properties:
+        logger.error(f"❌ Nenhuma propriedade válida encontrada para {endpoint_name}")
+        return [], None
+
+    property_groups = create_property_groups(target_properties, MAX_PROPERTIES_PER_REQUEST)
+    all_contacts = []
+
+    if should_use_date_filter(endpoint_name):
+        # Processar por intervalos de data
+        date_ranges = generate_date_ranges(START_DATE, interval_days=INTERVAL_DAYS)
+        logger.info(f"📊 Processando contatos em {len(date_ranges)} intervalos de data")
+
+        async with aiohttp.ClientSession() as session:
+            for range_idx, date_range in enumerate(date_ranges):
+                logger.info(
+                    f"📅 Processando intervalo {range_idx + 1}/{len(date_ranges)}: {date_range[0]} a {date_range[1]}")
+
+                current_after = None
+                batch_count = 0
+                has_more = True
+                consecutive_errors = 0
+                max_consecutive_errors = 5
+
+                while has_more:
+                    if max_contacts and len(all_contacts) >= max_contacts:
+                        logger.info(f"📊 Limite máximo de {max_contacts:,} contatos atingido")
+                        break
+
+                    batch_start_time = time.time()
+                    contact_objects = {}
+
+                    for group_index, properties in enumerate(property_groups):
+                        logger.info(
+                            f"🔄 Buscando grupo {group_index + 1}/{len(property_groups)} com {len(properties)} propriedades")
+
+                        data = await fetch_contacts_page_with_properties_and_date(
+                            access_token, properties, date_range, current_after, session
+                        )
+
+                        if data is None:
+                            consecutive_errors += 1
+                            logger.error(f"❌ Falha no grupo {group_index + 1} (erro consecutivo {consecutive_errors})")
+
+                            if consecutive_errors >= max_consecutive_errors:
+                                logger.error(f"❌ Muitos erros consecutivos ({consecutive_errors}), parando coleta")
+                                has_more = False
+                                break
+                            continue
+
+                        if 'results' not in data:
+                            logger.error(f"❌ Resposta inválida para grupo {group_index + 1}")
+                            continue
+
+                        consecutive_errors = 0
+                        contacts = data['results']
+
+                        for contact in contacts:
+                            contact_id = contact['id']
+
+                            if contact_id in contact_objects:
+                                for prop_name, prop_value in contact['properties'].items():
+                                    contact_objects[contact_id]['properties'][prop_name] = prop_value
+                            else:
+                                contact_objects[contact_id] = contact
+
+                        if group_index == 0:
+                            has_more = 'paging' in data and 'next' in data['paging']
+                            if has_more:
+                                current_after = data['paging']['next']['after']
+                            else:
+                                logger.info("🏁 Fim da paginação alcançado")
+
+                        logger.info(f"✓ Grupo {group_index + 1}/{len(property_groups)} processado")
+
+                    if contact_objects:
+                        all_contacts.extend(list(contact_objects.values()))
+                        batch_count += 1
+
+                        batch_duration = time.time() - batch_start_time
+                        logger.info(f"✓ Lote {batch_count}: {len(contact_objects)} contatos em {batch_duration:.2f}s")
+
+                        if batch_count % 5 == 0:
+                            logger.info(f"📊 Progresso: {len(all_contacts)} contatos coletados")
+
+                    await asyncio.sleep(0.1)
+
+                logger.info(f"📊 Intervalo concluído. Total acumulado: {len(all_contacts)} contatos")
+    else:
+        # Processar sem filtro de data (modo original)
+        logger.info("📊 Processando contatos sem filtro de data")
+        all_contacts, _ = await process_contacts_original(client, access_token, endpoint_name, log_details, after,
+                                                          max_contacts)
+
+    # Processar contatos coletados
+    processed_contacts = []
+    utm_found_count = 0
+
+    for contact in all_contacts:
+        processed_contact = {
+            'id': contact['id'],
+            'createdAt': contact.get('createdAt', ''),
+            'updatedAt': contact.get('updatedAt', ''),
+            'archived': str(contact.get('archived', False))
+        }
+
+        utm_data = {}
+        if 'properties' in contact:
+            for prop_name, prop_value in contact['properties'].items():
+                processed_contact[prop_name] = prop_value or ''
+
+                if prop_name.startswith('utm_') and prop_value:
+                    utm_data[prop_name] = prop_value
+
+        if utm_data:
+            utm_found_count += 1
+            if log_details:
+                utm_summary = ', '.join([f"{k}={v}" for k, v in utm_data.items()])
+                logger.info(f"🎯 Contato {contact['id']} UTMs: {utm_summary}")
+
+        processed_contacts.append(processed_contact)
+
+    logger.info(f"📊 RESUMO: {len(processed_contacts)} contatos processados")
+    if utm_found_count > 0:
+        logger.info(
+            f"🎯 UTM: {utm_found_count} contatos com dados UTM ({utm_found_count / len(processed_contacts) * 100:.1f}%)")
+
+    return processed_contacts, None
+
+
+async def process_contacts_original(client, access_token, endpoint_name, log_details=False, after_key=None,
+                                    max_contacts=None):
+    """Versão original do processamento de contatos (sem filtro de data)"""
+    logger.info(f"🔄 Iniciando coleta configurada para {endpoint_name} a partir de: {after_key or 'início'}")
 
     object_type = get_endpoint_object_type(endpoint_name)
     target_properties = get_endpoint_properties(client, endpoint_name, object_type)
@@ -667,7 +999,7 @@ async def process_contacts_with_config(client, access_token, endpoint_name, log_
     property_groups = create_property_groups(target_properties, MAX_PROPERTIES_PER_REQUEST)
 
     all_contacts = []
-    current_after = after
+    current_after = after_key
     batch_count = 0
     has_more = True
     consecutive_errors = 0
@@ -686,7 +1018,9 @@ async def process_contacts_with_config(client, access_token, endpoint_name, log_
                 logger.info(
                     f"🔄 Buscando grupo {group_index + 1}/{len(property_groups)} com {len(properties)} propriedades")
 
-                data = await fetch_contacts_page_with_properties(access_token, properties, current_after, session)
+                data = await fetch_contacts_page_with_properties_and_date(
+                    access_token, properties, None, current_after, session
+                )
 
                 if data is None:
                     consecutive_errors += 1
@@ -735,43 +1069,11 @@ async def process_contacts_with_config(client, access_token, endpoint_name, log_
 
             await asyncio.sleep(0.1)
 
-    processed_contacts = []
-    utm_found_count = 0
-
-    for contact in all_contacts:
-        processed_contact = {
-            'id': contact['id'],
-            'createdAt': contact.get('createdAt', ''),
-            'updatedAt': contact.get('updatedAt', ''),
-            'archived': str(contact.get('archived', False))
-        }
-
-        utm_data = {}
-        if 'properties' in contact:
-            for prop_name, prop_value in contact['properties'].items():
-                processed_contact[prop_name] = prop_value or ''
-
-                if prop_name.startswith('utm_') and prop_value:
-                    utm_data[prop_name] = prop_value
-
-        if utm_data:
-            utm_found_count += 1
-            if log_details:
-                utm_summary = ', '.join([f"{k}={v}" for k, v in utm_data.items()])
-                logger.info(f"🎯 Contato {contact['id']} UTMs: {utm_summary}")
-
-        processed_contacts.append(processed_contact)
-
-    logger.info(f"📊 RESUMO: {len(processed_contacts)} contatos processados")
-    if utm_found_count > 0:
-        logger.info(
-            f"🎯 UTM: {utm_found_count} contatos com dados UTM ({utm_found_count / len(processed_contacts) * 100:.1f}%)")
-
-    return processed_contacts, current_after
+    return all_contacts, current_after
 
 
-def process_contacts_endpoint(client, access_token, endpoint_name="contacts", log_details=False,
-                              after_key=None):
+def process_contacts_endpoint(client, access_token, endpoint_name="contacts", log_details=False, after_key=None):
+    """Processa endpoint de contatos com filtro de data opcional"""
     try:
         logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()}\n{'=' * 50}")
 
@@ -781,13 +1083,17 @@ def process_contacts_endpoint(client, access_token, endpoint_name="contacts", lo
             fields = config.get('fields', [])
             logger.info(f"🎯 Campos específicos: {', '.join(fields[:5])}{'...' if len(fields) > 5 else ''}")
 
+        if should_use_date_filter(endpoint_name):
+            logger.info(f"📅 Filtro de data ativo a partir de: {START_DATE}")
+
         endpoint_start = time.time()
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         raw_data, last_after = loop.run_until_complete(
-            process_contacts_with_config(client, access_token, endpoint_name, log_details, after_key, max_contacts=None)
+            process_contacts_with_config_and_date(client, access_token, endpoint_name, log_details, after_key,
+                                                  max_contacts=None)
         )
 
         loop.close()
@@ -803,7 +1109,9 @@ def process_contacts_endpoint(client, access_token, endpoint_name="contacts", lo
             "status": "Sucesso",
             "tempo": endpoint_duration,
             "ultimo_after": last_after,
-            "total_properties": total_properties
+            "total_properties": total_properties,
+            "start_date": START_DATE,
+            "interval_days": INTERVAL_DAYS
         }
 
         logger.info(
@@ -819,7 +1127,9 @@ def process_contacts_endpoint(client, access_token, endpoint_name="contacts", lo
             "status": f"Falha: {type(e).__name__}: {str(e)}",
             "tempo": 0,
             "ultimo_after": after_key,
-            "total_properties": 0
+            "total_properties": 0,
+            "start_date": START_DATE,
+            "interval_days": INTERVAL_DAYS
         }
 
         return [], stats
@@ -1040,7 +1350,7 @@ def main():
                 endpoints_to_process[endpoint_name] = get_endpoint_object_type(endpoint_name)
 
         logger.info(f"🔍 Endpoints a processar: {', '.join(endpoints_to_process.keys())}")
-        logger.info("🎯 MODO: Coleta configurável por endpoint com correção de DealStage")
+        logger.info("🎯 MODO: Coleta configurável por endpoint com correção de DealStage e filtro de data")
 
         for endpoint_name in endpoints_to_process.keys():
             config = get_endpoint_field_config(endpoint_name)
@@ -1052,6 +1362,9 @@ def main():
             else:
                 logger.info(f"📋 {endpoint_name}: TODAS as propriedades")
 
+            if should_use_date_filter(endpoint_name):
+                logger.info(f"📅 {endpoint_name}: Usando filtro de data a partir de {START_DATE}")
+
         endpoint_stats = {}
 
         def process_endpoint_worker(endpoint_info):
@@ -1061,7 +1374,7 @@ def main():
                 logger.info(f"🔄 Iniciando processamento paralelo do endpoint: {endpoint_name}")
 
                 if endpoint_name == "deals":
-                    # Usar a versão corrigida para deals
+                    # Usar a versão corrigida para deals com filtro de data
                     _, stats = process_deals_endpoint(hubspot_client, endpoint_name)
 
                 elif endpoint_name == "contacts":
@@ -1113,10 +1426,12 @@ def main():
                 endpoint_stats[endpoint_name] = stats
 
                 stages_info = f" | {stats.get('stages_mapeados', 0)} stages mapeados" if 'stages_mapeados' in stats else ""
+                date_info = f" | Data: {stats.get('start_date', 'N/A')}" if stats.get('start_date') else ""
                 logger.info(f"📊 {endpoint_name}: {stats['registros']} registros "
-                            f"com {stats.get('total_properties', 0)} propriedades em {stats['tempo']:.2f}s{stages_info}")
+                            f"com {stats.get('total_properties', 0)} propriedades em {stats['tempo']:.2f}s{stages_info}{date_info}")
 
-        logger.info(f"\n{'=' * 60}\n🎯 RESUMO FINAL - COLETA CONFIGURÁVEL COM CORREÇÃO DEALSTAGE\n{'=' * 60}")
+        logger.info(
+            f"\n{'=' * 60}\n🎯 RESUMO FINAL - COLETA CONFIGURÁVEL COM CORREÇÃO DEALSTAGE E FILTRO DE DATA\n{'=' * 60}")
 
         total_records = sum(stats['registros'] for stats in endpoint_stats.values())
         total_properties = sum(stats.get('total_properties', 0) for stats in endpoint_stats.values())
@@ -1124,18 +1439,29 @@ def main():
         for endpoint_name, stats in endpoint_stats.items():
             config = get_endpoint_field_config(endpoint_name)
             mode_info = f"({config.get('mode', 'all')} mode)"
+            date_filter_info = " com filtro de data" if should_use_date_filter(endpoint_name) else ""
 
-            logger.info(f"📈 {endpoint_name} {mode_info}:")
+            logger.info(f"📈 {endpoint_name} {mode_info}{date_filter_info}:")
             logger.info(f"   - Registros: {stats['registros']}")
             logger.info(f"   - Propriedades coletadas: {stats.get('total_properties', 0)}")
             if 'stages_mapeados' in stats:
                 logger.info(f"   - Stages mapeados: {stats['stages_mapeados']}")
+            if 'start_date' in stats:
+                logger.info(f"   - Data inicial: {stats['start_date']}")
+                logger.info(f"   - Intervalo: {stats.get('interval_days', 'N/A')} dias")
             logger.info(f"   - Status: {stats['status']}")
 
         logger.info("\n🎯 RESUMO GERAL:")
         logger.info(f"   - Total de registros: {total_records}")
         logger.info(f"   - Total de campos coletados: {total_properties}")
         logger.info(f"   - Endpoints processados: {len(endpoint_stats)}")
+        logger.info(f"   - Data inicial configurada: {START_DATE}")
+        logger.info(f"   - Intervalo de dias: {INTERVAL_DAYS}")
+
+        # Mostrar quais endpoints usaram filtro de data
+        endpoints_with_date = [name for name in endpoints_to_process.keys() if should_use_date_filter(name)]
+        if endpoints_with_date:
+            logger.info(f"   - Endpoints com filtro de data: {', '.join(endpoints_with_date)}")
 
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
 
