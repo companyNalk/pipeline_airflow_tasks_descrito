@@ -25,12 +25,7 @@ class BigQuery:
 
     # Valores para classificação de tipos
     BOOLEAN_VALUES = {
-        'true', 'false', 't', 'f',
-        'yes', 'no', 'y', 'n',
-        'sim', 'não', 'nao', 's',
-        '1', '0', '1.0', '0.0',
-        'verdadeiro', 'falso', 'v',
-        'on', 'off'
+        'true', 'false'
     }
 
     # Mapeamento de tipos para BigQuery
