@@ -10,6 +10,7 @@ from generic.http_client import HttpClient
 from generic.rate_limiter import RateLimiter
 
 logger = AppInitializer.initialize()
+Utils.clean_output_folder(logger)
 
 CONFIG = {
     "rate_limit": 100,
@@ -122,9 +123,10 @@ def main():
         with MemoryMonitor(logger):
             BigQuery.process_csv_files()
 
-        for endpoint_name in CONFIG["endpoints"].keys():
-            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=endpoint_name, credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
-
+        tables = Utils.get_existing_folders(logger)
+        for table in tables:
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
+                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
     except Exception as e:
         logger.exception(f"❌ ERRO CRÍTICO: {e}")
         raise
