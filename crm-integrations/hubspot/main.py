@@ -28,11 +28,16 @@ LIMIT_PER_PAGE = 100
 def get_arguments():
     return (ArgumentManager("Script HubSpot - Coleta com Campos Configuráveis")
             .add("ACCESS_TOKEN", "Token de acesso para autenticação", required=True)
-            .add("FIELDS_CONTACTS", "Lista de campos para contacts (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
-            .add("FIELDS_DEALS", "Lista de campos para deals (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
-            .add("FIELDS_OWNERS", "Lista de campos para owners (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
-            .add("FIELDS_PIPELINES", "Lista de campos para pipelines (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
-            .add("FIELDS_PROPERTIES", "Lista de campos para properties (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("FIELDS_CONTACTS", "Lista de campos para contacts (formato: ['campo1' , 'campo2' , 'campo3'])",
+                 required=True)
+            .add("FIELDS_DEALS", "Lista de campos para deals (formato: ['campo1' , 'campo2' , 'campo3'])",
+                 required=True)
+            .add("FIELDS_OWNERS", "Lista de campos para owners (formato: ['campo1' , 'campo2' , 'campo3'])",
+                 required=True)
+            .add("FIELDS_PIPELINES", "Lista de campos para pipelines (formato: ['campo1' , 'campo2' , 'campo3'])",
+                 required=True)
+            .add("FIELDS_PROPERTIES", "Lista de campos para properties (formato: ['campo1' , 'campo2' , 'campo3'])",
+                 required=True)
             .add("PROJECT_ID", "ID do projeto GCS", required=True)
             .add("CRM_TYPE", "Ferramenta: Nome aba sheets", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credenciais GCS", required=True)
@@ -65,12 +70,11 @@ def parse_env_list(fields):
         return []
 
 
-FIELDS_CONTACTS = parse_env_list('FIELDS_CONTACTS')
-FIELDS_DEALS = parse_env_list('FIELDS_DEALS')
-FIELDS_OWNERS = parse_env_list('FIELDS_OWNERS')
-FIELDS_PIPELINES = parse_env_list('FIELDS_PIPELINES')
-FIELDS_PROPERTIES = parse_env_list('FIELDS_PROPERTIES')
-
+FIELDS_CONTACTS = parse_env_list(args.FIELDS_CONTACTS)
+FIELDS_DEALS = parse_env_list(args.FIELDS_DEALS)
+FIELDS_OWNERS = parse_env_list(args.FIELDS_OWNERS)
+FIELDS_PIPELINES = parse_env_list(args.FIELDS_PIPELINES)
+FIELDS_PROPERTIES = parse_env_list(args.FIELDS_PROPERTIES)
 
 ENDPOINT_CONFIG = {
     "contacts": {
