@@ -373,6 +373,105 @@ class BigQuery:
             raise
 
     @staticmethod
+    def _convert_date_br_to_iso(csv_path, schema_json, logger):
+        """
+        Preprocessa dados do CSV para compatibilidade com BigQuery.
+        Converte APENAS datas no formato D/MM/AAAA ou DD/MM/AAAA para AAAA-MM-DD.
+        NUNCA converte se houver componente de hora.
+        """
+        try:
+            logger.info("🔄 Iniciando preprocessamento de dados...")
+
+            # Identificar campos de data
+            date_fields = [field['name'] for field in schema_json if field['type'] == 'DATE']
+            datetime_fields = [field['name'] for field in schema_json if field['type'] in ['TIMESTAMP', 'DATETIME']]
+
+            if not date_fields and not datetime_fields:
+                logger.info("ℹ️  Nenhum campo de data/datetime encontrado")
+                return
+
+            logger.info(f"📅 Campos DATE: {date_fields}")
+            logger.info(f"🕐 Campos DATETIME/TIMESTAMP: {datetime_fields}")
+
+            # Processar CSV
+            df = pd.read_csv(csv_path, delimiter=';', dtype=str, low_memory=False)
+            total_conversions = 0
+
+            # Converter campos DATE
+            for field in date_fields:
+                if field in df.columns:
+                    before = df[field].copy()
+
+                    for idx, date_str in enumerate(df[field]):
+                        # Converte APENAS D/MM/AAAA ou DD/MM/AAAA para AAAA-MM-DD (SEM HORA)
+                        if not date_str or pd.isna(date_str) or str(date_str).strip() == '':
+                            df.at[idx, field] = None
+                            continue
+
+                        date_str = str(date_str).strip()
+
+                        # REJEITA se contém espaço (indica hora)
+                        if ' ' in date_str:
+                            df.at[idx, field] = date_str
+                            continue
+
+                        # Aceita APENAS D/MM/AAAA ou DD/MM/AAAA
+                        if re.match(r'^\d{1,2}/\d{2}/\d{4}$', date_str):
+                            parts = date_str.split('/')
+                            day, month, year = parts
+
+                            # Validar se mês e ano têm tamanho correto
+                            if len(month) != 2 or len(year) != 4:
+                                df.at[idx, field] = date_str
+                                continue
+
+                            # Validar se dia tem 1 ou 2 dígitos
+                            if len(day) not in [1, 2]:
+                                df.at[idx, field] = date_str
+                                continue
+
+                            # Validar valores
+                            try:
+                                day_int, month_int, year_int = int(day), int(month), int(year)
+                                if not (1 <= day_int <= 31 and 1 <= month_int <= 12 and 1900 <= year_int <= 2100):
+                                    df.at[idx, field] = None
+                                    continue
+                            except ValueError:
+                                df.at[idx, field] = None
+                                continue
+
+                            # Converter para ISO
+                            df.at[idx, field] = f"{year}-{month}-{day.zfill(2)}"
+                        else:
+                            df.at[idx, field] = date_str
+
+                    converted = sum(1 for old, new in zip(before, df[field])
+                                    if pd.notna(old) and pd.notna(new) and old != new)
+                    if converted > 0:
+                        total_conversions += converted
+                        logger.info(f"   ✅ {field}: {converted} conversões")
+
+            # Processar campos DATETIME (sem converter - NUNCA converte datetime)
+            for field in datetime_fields:
+                if field in df.columns:
+                    for idx, datetime_str in enumerate(df[field]):
+                        if not datetime_str or pd.isna(datetime_str):
+                            df.at[idx, field] = None
+                        else:
+                            df.at[idx, field] = str(datetime_str).strip()
+
+            # Salvar se houve conversões
+            if total_conversions > 0:
+                df.to_csv(csv_path, sep=';', index=False, encoding='utf-8')
+                logger.info(f"✅ {total_conversions} conversão(ões) realizada(s)")
+            else:
+                logger.info("ℹ️  Nenhuma conversão necessária")
+
+        except Exception as e:
+            logger.error(f"❌ Erro no preprocessamento: {e}")
+            raise
+
+    @staticmethod
     def _create_externa_table(project_id, tool_name, table_name, credentials_path):
         """Carrega dados do CSV diretamente para uma tabela BigQuery."""
         import warnings
@@ -427,6 +526,9 @@ class BigQuery:
 
             with open(schema_path, 'r', encoding='utf-8') as f:
                 schema_json = json.load(f)
+
+            # Reprocessamento
+            BigQuery._convert_date_br_to_iso(csv_path, schema_json, logger)
 
             schema = [
                 bigquery.SchemaField(field["name"], field["type"], mode=field.get("mode", "NULLABLE"))
