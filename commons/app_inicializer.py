@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 
+from commons.utils import Utils
 from commons.validate_env import load_env_file
 
 
@@ -36,5 +37,7 @@ class AppInitializer:
         os.umask(0)
 
         logger = cls._setup_logging(logger_name, level)
+        Utils.clean_output_folder(logger)
+
         cls._load_environment()
         return logger
