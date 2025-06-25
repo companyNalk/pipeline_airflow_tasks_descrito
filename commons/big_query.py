@@ -197,31 +197,18 @@ class BigQuery:
         self.logger.info(f"RESUMO: {optimized} colunas otimizadas, {safe} colunas seguras (STRING)")
         return schema, report
 
-    def _is_timezone_name(self, v):
-        """Verifica se é nome de timezone (ex: America/Sao_Paulo, UTC, etc)."""
-        # Padrões comuns de nomes de timezone
-        timezone_patterns = [
-            r'^[A-Z][a-z]+/[A-Z][a-z_]+$',  # America/Sao_Paulo, America/Cuiaba
-            r'^UTC$',  # UTC
-            r'^GMT[+-]?\d*$',  # GMT, GMT+3, GMT-5
-            r'^[A-Z]{3,4}$',  # EST, PST, etc
-        ]
-
-        for pattern in timezone_patterns:
-            if re.match(pattern, v.strip()):
-                return True
-        return False
-
     def _detect_pattern(self, value):
         """Detecta o padrão do valor e retorna o tipo correspondente."""
         if not isinstance(value, str):
             return 'string'
 
-        value_lower = value.lower().strip()
-
-        if self._is_timezone_name(value):
+        if re.match(r'^[A-Za-z]+/[A-Za-z_]+$', value):  # America/Sao_Paulo, Europe/London, etc.
             return 'string'
 
+        if re.match(r'^[+-]\d{2}:\d{2}$', value):  # -03:00, +02:00
+            return 'string'
+
+        value_lower = value.lower().strip()
         try:
             if self._is_integer(value):
                 return 'integer'
@@ -392,50 +379,6 @@ class BigQuery:
             raise
 
     @staticmethod
-    def _convert_timezone_offsets(csv_path, schema_json, logger):
-        """Converte timezone offsets para timestamps válidos do BigQuery."""
-        try:
-            logger.info("🔄 Convertendo timezone offsets...")
-
-            df = pd.read_csv(csv_path, delimiter=';', dtype=str, low_memory=False)
-            conversions = 0
-
-            # Buscar colunas com 'timezone' no nome
-            timezone_cols = [col for col in df.columns if 'timezone' in col.lower()]
-
-            for col in timezone_cols:
-                logger.info(f"Processando coluna: {col}")
-
-                for idx, value in enumerate(df[col]):
-                    if pd.isna(value):
-                        continue
-
-                    value_str = str(value).strip()
-
-                    # Se é timezone offset (-03:00, +05:30)
-                    if re.match(r'^[+-]([01]?\d|2[0-3]):([0-5]\d)$', value_str):
-                        # Converter para timestamp válido: "2000-01-01 00:00:00-03:00"
-                        timestamp_with_tz = f"2000-01-01 00:00:00{value_str}"
-                        df.at[idx, col] = timestamp_with_tz
-                        conversions += 1
-
-                # Atualizar schema para TIMESTAMP
-                for field in schema_json:
-                    if field['name'] == col:
-                        field['type'] = 'TIMESTAMP'
-
-            if conversions > 0:
-                # Salvar CSV atualizado
-                df.to_csv(csv_path, sep=';', index=False, encoding='utf-8')
-                logger.info(f"✅ {conversions} timezone offsets convertidos para TIMESTAMP")
-            else:
-                logger.info("ℹ️  Nenhum timezone offset encontrado")
-
-        except Exception as e:
-            logger.error(f"❌ Erro na conversão de timezone: {e}")
-            raise
-
-    @staticmethod
     def _convert_date_br_to_iso(csv_path, schema_json, logger):
         """
         Preprocessa dados do CSV para compatibilidade com BigQuery.
@@ -444,8 +387,6 @@ class BigQuery:
         """
         try:
             logger.info("🔄 Iniciando preprocessamento de dados...")
-
-            BigQuery._convert_timezone_offsets(csv_path, schema_json, logger)
 
             # Identificar campos de data
             date_fields = [field['name'] for field in schema_json if field['type'] == 'DATE']
@@ -750,18 +691,15 @@ def analyze_column_worker(column_name, column_data, boolean_values, type_mapping
         if not isinstance(value, str):
             return 'string'
 
-        value_lower = value.lower().strip()
+        value_stripped = value.strip()
+        value_lower = value_stripped.lower()
 
-        timezone_patterns = [
-            r'^[A-Z][a-z]+/[A-Z][a-z_]+$',  # America/Sao_Paulo
-            r'^UTC$',  # UTC
-            r'^GMT[+-]?\d*$',  # GMT+3
-            r'^[A-Z]{3,4}$',  # EST, PST
-        ]
+        # Detectar timezone patterns primeiro
+        if re.match(r'^[A-Za-z]+/[A-Za-z_]+$', value_stripped):  # America/Sao_Paulo
+            return 'string'
 
-        for pattern in timezone_patterns:
-            if re.match(pattern, value.strip()):
-                return 'string'
+        if re.match(r'^[+-]\d{2}:\d{2}$', value_stripped):  # -03:00, +02:00
+            return 'string'
 
         # Verificar se é inteiro
         if bool(re.fullmatch(r"-?\d+", value)) and -9223372036854775808 <= int(value) <= 9223372036854775807:
