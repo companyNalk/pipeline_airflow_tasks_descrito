@@ -373,6 +373,50 @@ class BigQuery:
             raise
 
     @staticmethod
+    def _convert_timezone_offsets(csv_path, schema_json, logger):
+        """Converte timezone offsets para timestamps válidos do BigQuery."""
+        try:
+            logger.info("🔄 Convertendo timezone offsets...")
+
+            df = pd.read_csv(csv_path, delimiter=';', dtype=str, low_memory=False)
+            conversions = 0
+
+            # Buscar colunas com 'timezone' no nome
+            timezone_cols = [col for col in df.columns if 'timezone' in col.lower()]
+
+            for col in timezone_cols:
+                logger.info(f"Processando coluna: {col}")
+
+                for idx, value in enumerate(df[col]):
+                    if pd.isna(value):
+                        continue
+
+                    value_str = str(value).strip()
+
+                    # Se é timezone offset (-03:00, +05:30)
+                    if re.match(r'^[+-]([01]?\d|2[0-3]):([0-5]\d)$', value_str):
+                        # Converter para timestamp válido: "2000-01-01 00:00:00-03:00"
+                        timestamp_with_tz = f"2000-01-01 00:00:00{value_str}"
+                        df.at[idx, col] = timestamp_with_tz
+                        conversions += 1
+
+                # Atualizar schema para TIMESTAMP
+                for field in schema_json:
+                    if field['name'] == col:
+                        field['type'] = 'TIMESTAMP'
+
+            if conversions > 0:
+                # Salvar CSV atualizado
+                df.to_csv(csv_path, sep=';', index=False, encoding='utf-8')
+                logger.info(f"✅ {conversions} timezone offsets convertidos para TIMESTAMP")
+            else:
+                logger.info("ℹ️  Nenhum timezone offset encontrado")
+
+        except Exception as e:
+            logger.error(f"❌ Erro na conversão de timezone: {e}")
+            raise
+
+    @staticmethod
     def _convert_date_br_to_iso(csv_path, schema_json, logger):
         """
         Preprocessa dados do CSV para compatibilidade com BigQuery.
@@ -381,6 +425,8 @@ class BigQuery:
         """
         try:
             logger.info("🔄 Iniciando preprocessamento de dados...")
+
+            BigQuery._convert_timezone_offsets(csv_path, schema_json, logger)
 
             # Identificar campos de data
             date_fields = [field['name'] for field in schema_json if field['type'] == 'DATE']
