@@ -197,12 +197,31 @@ class BigQuery:
         self.logger.info(f"RESUMO: {optimized} colunas otimizadas, {safe} colunas seguras (STRING)")
         return schema, report
 
+    def _is_timezone_name(self, v):
+        """Verifica se é nome de timezone (ex: America/Sao_Paulo, UTC, etc)."""
+        # Padrões comuns de nomes de timezone
+        timezone_patterns = [
+            r'^[A-Z][a-z]+/[A-Z][a-z_]+$',  # America/Sao_Paulo, America/Cuiaba
+            r'^UTC$',  # UTC
+            r'^GMT[+-]?\d*$',  # GMT, GMT+3, GMT-5
+            r'^[A-Z]{3,4}$',  # EST, PST, etc
+        ]
+
+        for pattern in timezone_patterns:
+            if re.match(pattern, v.strip()):
+                return True
+        return False
+
     def _detect_pattern(self, value):
         """Detecta o padrão do valor e retorna o tipo correspondente."""
         if not isinstance(value, str):
             return 'string'
 
         value_lower = value.lower().strip()
+
+        if self._is_timezone_name(value):
+            return 'string'
+
         try:
             if self._is_integer(value):
                 return 'integer'
