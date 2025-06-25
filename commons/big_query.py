@@ -478,6 +478,27 @@ class BigQuery:
             raise
 
     @staticmethod
+    def _clean_null_values(csv_path, logger):
+        """Limpa valores 'null' string substituindo por NULL real."""
+        try:
+            logger.info("🧹 Limpando valores 'null' no CSV...")
+
+            df = pd.read_csv(csv_path, delimiter=';', dtype=str, low_memory=False)
+
+            # Substituir strings "null" por valores vazios
+            df = df.replace('null', '')
+            df = df.replace('NULL', '')
+            df = df.replace('Null', '')
+
+            # Salvar CSV limpo
+            df.to_csv(csv_path, sep=';', index=False, encoding='utf-8')
+            logger.info("✅ Valores 'null' limpos com sucesso")
+
+        except Exception as e:
+            logger.error(f"❌ Erro na limpeza de nulls: {e}")
+            raise
+
+    @staticmethod
     def _create_externa_table(project_id, tool_name, table_name, credentials_path):
         """Carrega dados do CSV diretamente para uma tabela BigQuery."""
         import warnings
@@ -535,6 +556,7 @@ class BigQuery:
 
             # Reprocessamento
             BigQuery._convert_date_br_to_iso(csv_path, schema_json, logger)
+            BigQuery._clean_null_values(csv_path, logger)
 
             schema = [
                 bigquery.SchemaField(field["name"], field["type"], mode=field.get("mode", "NULLABLE"))
