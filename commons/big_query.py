@@ -752,6 +752,17 @@ def analyze_column_worker(column_name, column_data, boolean_values, type_mapping
 
         value_lower = value.lower().strip()
 
+        timezone_patterns = [
+            r'^[A-Z][a-z]+/[A-Z][a-z_]+$',  # America/Sao_Paulo
+            r'^UTC$',  # UTC
+            r'^GMT[+-]?\d*$',  # GMT+3
+            r'^[A-Z]{3,4}$',  # EST, PST
+        ]
+
+        for pattern in timezone_patterns:
+            if re.match(pattern, value.strip()):
+                return 'string'
+
         # Verificar se é inteiro
         if bool(re.fullmatch(r"-?\d+", value)) and -9223372036854775808 <= int(value) <= 9223372036854775807:
             return 'integer'
