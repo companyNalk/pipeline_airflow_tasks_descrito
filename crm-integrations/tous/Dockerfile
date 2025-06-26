@@ -3,8 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copia somente o necessário - ajustado para o contexto raiz
-COPY crm-integrations/belle/main.py .
-COPY crm-integrations/belle/requirements.txt .
+COPY crm-integrations/tous/main.py .
+COPY crm-integrations/tous/requirements.txt .
 
 # Copia commons e generic como módulo
 COPY commons/ /app/commons/
