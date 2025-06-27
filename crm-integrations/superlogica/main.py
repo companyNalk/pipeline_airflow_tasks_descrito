@@ -84,12 +84,50 @@ def process_endpoint(endpoint_name, endpoint_config, app_token, access_token):
         # Buscar dados do endpoint
         all_data = fetch_endpoint_data(http_client, endpoint_config, app_token, access_token)
 
-        # Processar e salvar dados
         logger.info(f"💾 Processando e salvando {len(all_data)} registros para {table_name}")
-        processed_data = Utils.process_and_save_data(all_data, table_name)
+
+        if table_name == "proprietarios":
+            proprietarios_list = []
+            beneficiarios_list = []
+            contratos_list = []
+
+            proprietario_id = 1
+            beneficiario_id = 1
+            contrato_id = 1
+
+            for prop in all_data:
+                prop_dict = {k: v for k, v in prop.items() if k != "proprietarios_beneficiarios"}
+                prop_dict["id_proprietario"] = proprietario_id
+                proprietarios_list.append(prop_dict)
+
+                for benef in prop.get("proprietarios_beneficiarios", []):
+                    benef_dict = {k: v for k, v in benef.items() if k != "contratos"}
+                    benef_dict["id_beneficiario"] = beneficiario_id
+                    benef_dict["id_proprietario"] = proprietario_id
+                    beneficiarios_list.append(benef_dict)
+
+                    for contrato in benef.get("contratos", []):
+                        contrato["id_contrato"] = contrato_id
+                        contrato["id_beneficiario"] = beneficiario_id
+                        contratos_list.append(contrato)
+                        contrato_id += 1
+
+                    beneficiario_id += 1
+
+                proprietario_id += 1
+
+            Utils.process_and_save_data(proprietarios_list, "proprietarios")
+            Utils.process_and_save_data(beneficiarios_list, "proprietarios_beneficiarios")
+            Utils.process_and_save_data(contratos_list, "proprietarios_contratos")
+
+            total_registros = len(proprietarios_list) + len(beneficiarios_list) + len(contratos_list)
+
+        else:
+            processed_data = Utils.process_and_save_data(all_data, table_name)
+            total_registros = len(processed_data)
 
         return {
-            "registros": len(processed_data),
+            "registros": total_registros,
             "status": "Sucesso",
             "tempo": time.time() - start_time,
             "table_name": table_name
