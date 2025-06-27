@@ -292,6 +292,13 @@ class BigQuery:
             if re.match(pattern, v.strip()):
                 return None
 
+        if re.match(r'^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2}$', v.strip()):
+            return 'timestamp'
+
+        # YYYY-MM-DD HH:MM:SS -> sempre TIMESTAMP
+        if re.match(r'^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2}$', v.strip()):
+            return 'timestamp'
+
         try:
             dt = date_parser.parse(v, fuzzy=False)
 
@@ -303,7 +310,8 @@ class BigQuery:
             if dt.tzinfo or 'z' in v.lower():
                 return 'timestamp'
             if dt.hour or dt.minute or dt.second:
-                return 'datetime'
+                # return 'datetime'
+                return 'timestamp'
             return 'date'
         except Exception:
             return None
@@ -477,6 +485,142 @@ class BigQuery:
             logger.error(f"❌ Erro no preprocessamento: {e}")
             raise
 
+    def _convert_timestamp_us_to_iso(csv_path, schema_json=None, logger=None, delimiter=';'):
+        """
+        Converte timestamps no formato MM/DD/YYYY HH:MM:SS para YYYY-MM-DD HH:MM:SS
+        para compatibilidade com BigQuery.
+
+        Args:
+            csv_path (str): Caminho para o arquivo CSV
+            schema_json (list, optional): Schema JSON com informações dos campos
+            logger (logging.Logger, optional): Logger para output
+            delimiter (str): Delimitador do CSV (padrão: ';')
+
+        Returns:
+            int: Número total de conversões realizadas
+        """
+
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
+        try:
+            logger.info("🔄 Iniciando conversão de timestamps US para ISO...")
+
+            # Carregar CSV
+            df = pd.read_csv(csv_path, delimiter=delimiter, dtype=str, low_memory=False)
+            logger.info(f"📄 Arquivo carregado: {len(df)} linhas, {len(df.columns)} colunas")
+
+            # Identificar campos de timestamp do schema (se fornecido)
+            timestamp_fields = []
+            if schema_json:
+                timestamp_fields = [
+                    field['name'] for field in schema_json
+                    if field['type'] in ['TIMESTAMP', 'DATETIME']
+                ]
+                logger.info(f"🕐 Campos TIMESTAMP identificados no schema: {timestamp_fields}")
+
+            # Se não tiver schema, detectar automaticamente colunas com timestamp
+            if not timestamp_fields:
+                timestamp_fields = []
+                for col in df.columns:
+                    # Verificar se a coluna tem padrão de timestamp US
+                    sample_values = df[col].dropna().head(10)
+                    us_timestamp_count = 0
+
+                    for val in sample_values:
+                        if isinstance(val, str) and re.match(r'^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2}$',
+                                                             val.strip()):
+                            us_timestamp_count += 1
+
+                    # Se mais de 50% das amostras são timestamps US, incluir
+                    if us_timestamp_count >= len(sample_values) * 0.5:
+                        timestamp_fields.append(col)
+
+                logger.info(f"🔍 Campos TIMESTAMP detectados automaticamente: {timestamp_fields}")
+
+            if not timestamp_fields:
+                logger.info("ℹ️  Nenhum campo de timestamp encontrado")
+                return 0
+
+            total_conversions = 0
+
+            # Processar cada campo de timestamp
+            for field in timestamp_fields:
+                if field not in df.columns:
+                    logger.warning(f"⚠️  Campo '{field}' não encontrado no CSV")
+                    continue
+
+                field_conversions = 0
+                logger.info(f"🔄 Processando campo: {field}")
+
+                for idx, timestamp_str in enumerate(df[field]):
+                    # Pular valores vazios/nulos
+                    if not timestamp_str or pd.isna(timestamp_str):
+                        continue
+
+                    timestamp_str = str(timestamp_str).strip()
+
+                    # Verificar se está no formato MM/DD/YYYY HH:MM:SS
+                    match = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4}) (\d{1,2}):(\d{2}):(\d{2})$', timestamp_str)
+
+                    if match:
+                        month, day, year, hour, minute, second = match.groups()
+
+                        # Validar valores
+                        try:
+                            month_int = int(month)
+                            day_int = int(day)
+                            year_int = int(year)
+                            hour_int = int(hour)
+                            minute_int = int(minute)
+                            second_int = int(second)
+
+                            # Verificar se os valores são válidos
+                            if not (1 <= month_int <= 12 and
+                                    1 <= day_int <= 31 and
+                                    1900 <= year_int <= 2100 and
+                                    0 <= hour_int <= 23 and
+                                    0 <= minute_int <= 59 and
+                                    0 <= second_int <= 59):
+                                continue
+
+                            # Converter para formato ISO: YYYY-MM-DD HH:MM:SS
+                            iso_timestamp = f"{year}-{month.zfill(2)}-{day.zfill(2)} {hour.zfill(2)}:{minute}:{second}"
+                            df.at[idx, field] = iso_timestamp
+                            field_conversions += 1
+
+                        except ValueError:
+                            # Se algum valor não puder ser convertido para int, pular
+                            continue
+
+                if field_conversions > 0:
+                    total_conversions += field_conversions
+                    logger.info(f"   ✅ {field}: {field_conversions} conversões realizadas")
+                else:
+                    logger.info(f"   ℹ️  {field}: nenhuma conversão necessária")
+
+            # Salvar arquivo se houve conversões
+            if total_conversions > 0:
+                # Fazer backup do arquivo original
+                backup_path = f"{csv_path}.backup"
+                if not Path(backup_path).exists():
+                    df_original = pd.read_csv(csv_path, delimiter=delimiter, dtype=str, low_memory=False)
+                    df_original.to_csv(backup_path, sep=delimiter, index=False, encoding='utf-8')
+                    logger.info(f"💾 Backup criado: {backup_path}")
+
+                # Salvar arquivo convertido
+                df.to_csv(csv_path, sep=delimiter, index=False, encoding='utf-8')
+                logger.info(f"✅ {total_conversions} timestamp(s) convertido(s) com sucesso!")
+                logger.info(f"📁 Arquivo atualizado: {csv_path}")
+            else:
+                logger.info("ℹ️  Nenhuma conversão de timestamp necessária")
+
+            return total_conversions
+
+        except Exception as e:
+            logger.error(f"❌ Erro na conversão de timestamps: {e}")
+            raise
+
     @staticmethod
     def _clean_null_values(csv_path, logger):
         """Limpa valores 'null' string substituindo por NULL real."""
@@ -556,6 +700,7 @@ class BigQuery:
 
             # Reprocessamento
             BigQuery._convert_date_br_to_iso(csv_path, schema_json, logger)
+            BigQuery._convert_timestamp_us_to_iso(csv_path, schema_json, logger)
             BigQuery._clean_null_values(csv_path, logger)
 
             schema = [
@@ -762,6 +907,12 @@ def analyze_column_worker(column_name, column_data, boolean_values, type_mapping
         if re.match(r'^\d{1,2}:\d{2}$', value):
             return 'string'
 
+        if re.match(r'^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2}$', value.strip()):
+            return 'timestamp'
+
+        if re.match(r'^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2}$', value.strip()):
+            return 'timestamp'
+
         # Detecção de data filtrada
         try:
             dt = date_parser.parse(value, fuzzy=False)
@@ -772,7 +923,8 @@ def analyze_column_worker(column_name, column_data, boolean_values, type_mapping
             if dt.tzinfo or 'z' in value.lower():
                 return 'timestamp'
             if dt.hour or dt.minute or dt.second:
-                return 'datetime'
+                # return 'datetime'
+                return 'timestamp'
             return 'date'
         except Exception:
             return 'string'
