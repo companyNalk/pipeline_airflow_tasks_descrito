@@ -576,12 +576,7 @@ class BigQuery:
                             second_int = int(second)
 
                             # Verificar se os valores são válidos
-                            if not (1 <= month_int <= 12 and
-                                    1 <= day_int <= 31 and
-                                    1900 <= year_int <= 2100 and
-                                    0 <= hour_int <= 23 and
-                                    0 <= minute_int <= 59 and
-                                    0 <= second_int <= 59):
+                            if not (1 <= month_int <= 12 and 1 <= day_int <= 31 and 1900 <= year_int <= 2100 and 0 <= hour_int <= 23 and 0 <= minute_int <= 59 and 0 <= second_int <= 59):  # noqa
                                 continue
 
                             # Converter para formato ISO: YYYY-MM-DD HH:MM:SS
@@ -890,6 +885,9 @@ def analyze_column_worker(column_name, column_data, boolean_values, type_mapping
         time_pattern_valid = r"^([01]?\d|2[0-3]):([0-5]\d):([0-5]\d)(\.\d+)?$"
         if re.match(time_pattern_valid, value):
             return 'time'
+
+        if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$', value.strip()):
+            return 'timestamp'
 
         # CORREÇÃO: Filtrar dias da semana e HH:MM
         weekday_names = {
