@@ -11,7 +11,6 @@ from generic.http_client import HttpClient
 from generic.rate_limiter import RateLimiter
 
 logger = AppInitializer.initialize()
-Utils.clean_output_folder(logger)
 
 RATE_LIMIT = 100
 BASE_URL = "https://stores.grupoacert.app/api/v1"

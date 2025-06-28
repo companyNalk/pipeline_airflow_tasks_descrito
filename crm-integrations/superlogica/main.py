@@ -151,7 +151,7 @@ def main():
     all_endpoint_stats = {}
     all_table_names = []
 
-    logger.info(f"🚀 Iniciando coleta de dados da API Superlógica")
+    logger.info("🚀 Iniciando coleta de dados da API Superlógica")
 
     try:
         # Processar cada endpoint

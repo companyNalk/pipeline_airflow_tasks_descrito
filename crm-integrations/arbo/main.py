@@ -10,7 +10,6 @@ from generic.http_client import HttpClient
 from generic.rate_limiter import RateLimiter
 
 logger = AppInitializer.initialize()
-Utils.clean_output_folder(logger)
 
 CONFIG = {
     "rate_limit": 100,
@@ -108,8 +107,6 @@ def main():
     args = get_arguments()
     global_start_time = ReportGenerator.init_report(logger)
     endpoint_stats = {}
-
-    print(args.GOOGLE_APPLICATION_CREDENTIALS)
 
     try:
         for endpoint_name, endpoint_config in CONFIG["endpoints"].items():

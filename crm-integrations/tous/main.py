@@ -114,7 +114,7 @@ def fetch_panel_cards_data(http_client, token, panel_id):
     page_number = 1
     has_more_pages = True
 
-    endpoint_path = f"crm/v1/panel/card"
+    endpoint_path = "crm/v1/panel/card"
 
     while has_more_pages:
         params = {
@@ -239,7 +239,7 @@ def process_panel_cards(token):
         return all_stats
 
     except Exception as e:
-        logger.exception(f"❌ Falha geral no processamento de panel cards")
+        logger.exception(f"❌ Falha geral no processamento de panel cards: {e}")
         raise
 
 
@@ -294,7 +294,7 @@ def main():
     all_endpoint_stats = {}
     all_table_names = []
 
-    logger.info(f"🚀 Iniciando coleta de dados da API WTS")
+    logger.info("🚀 Iniciando coleta de dados da API WTS")
 
     try:
         # Processar cada endpoint regular

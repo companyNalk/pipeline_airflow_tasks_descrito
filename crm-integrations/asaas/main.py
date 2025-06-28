@@ -3,6 +3,8 @@ import os
 import time
 
 from commons.app_inicializer import AppInitializer
+from commons.big_query import BigQuery
+from commons.memory_monitor import MemoryMonitor
 from commons.report_generator import ReportGenerator
 from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
@@ -35,6 +37,9 @@ def get_arguments():
     return (ArgumentManager("Script para coletar e processar dados da API Asaas")
             .add("API_BASE_URL", "URL base", required=True)
             .add("API_ACCESS_TOKEN", "Token de acesso para autenticação", required=True)
+            .add("PROJECT_ID", "ID do projeto Google Cloud", required=True)
+            .add("CRM_TYPE", "Nome da ferramenta", required=True)
+            .add("GOOGLE_APPLICATION_CREDENTIALS", "Credencial GCS", required=True)
             .parse())
 
 
@@ -407,6 +412,14 @@ def main():
 
         # 6. Gerar resumo final
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
+
+        with MemoryMonitor(logger):
+            BigQuery.process_csv_files()
+
+        tables = Utils.get_existing_folders(logger)
+        for table in tables:
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
+                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         # Se houver falhas, lançar exceção para o Airflow
         if not success:

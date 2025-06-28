@@ -15,7 +15,6 @@ from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
 
 logger = AppInitializer.initialize()
-Utils.clean_output_folder(logger)
 
 
 def get_arguments():
@@ -202,7 +201,7 @@ def flatten_json_to_csv():
             Utils.process_and_save_data(records, base_name)
 
         except Exception as e:
-            logger.error(f"❌ Erro ao converter {filename}: {e}")
+            logger.error(f"❌ CHAMAR NICOLAS OSMUNDO: {e}")
 
     logger.info("✅ Conversão JSON para CSV concluída!")
 
