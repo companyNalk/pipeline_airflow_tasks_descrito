@@ -332,19 +332,19 @@ WITH base_dados AS (
   FROM `nalk-app-demo.clickup.clientes`
 ),
 
--- ferramentas_principais AS (
---   SELECT
---     *,  -- Todos os campos da base_dados
---     TRIM(ferramenta_individual) AS Ferramenta,
---     'Ferramentas_Principais' AS Tipo_Campo
---   FROM base_dados,
---   UNNEST(SPLIT(REGEXP_REPLACE(Ferramentas__labels_, r'^\[|\]$', ''), ',')) AS ferramenta_individual
---   WHERE
---     Ferramentas__labels_ IS NOT NULL
---     AND LENGTH(TRIM(Ferramentas__labels_)) > 0
---     AND TRIM(Ferramentas__labels_) NOT IN ('[]', '', 'nan', 'null')
---     AND TRIM(ferramenta_individual) != ''
--- ),
+ferramentas_principais AS (
+  SELECT
+    *,  -- Todos os campos da base_dados
+    TRIM(ferramenta_individual) AS Ferramenta,
+    'Ferramentas_Principais' AS Tipo_Campo
+  FROM base_dados,
+  UNNEST(SPLIT(REGEXP_REPLACE(Ferramentas__labels_, r'^\[|\]$', ''), ',')) AS ferramenta_individual
+  WHERE
+    Ferramentas__labels_ IS NOT NULL
+    AND LENGTH(TRIM(Ferramentas__labels_)) > 0
+    AND TRIM(Ferramentas__labels_) NOT IN ('[]', '', 'nan', 'null')
+    AND TRIM(ferramenta_individual) != ''
+),
 
 ferramentas_suporte AS (
   SELECT
@@ -361,7 +361,7 @@ ferramentas_suporte AS (
 )
 
 -- Union das duas fontes mantendo TODOS os campos
--- SELECT * FROM ferramentas_principais
--- UNION ALL
+SELECT * FROM ferramentas_principais
+UNION ALL
 SELECT * FROM ferramentas_suporte
 ORDER BY Task_ID, Tipo_Campo, Ferramenta;
