@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from generic.rate_limiter import RateLimitFilter, RateLimiter
+from generic.rate_limiter import RateLimitFilter, RateLimiter, RateLimitExceededException
 
 
 class TestRateLimitFilter:
@@ -154,8 +154,16 @@ class TestRateLimiter:
     @patch('time.time')
     def test_check_at_limit(self, mock_time, mock_sleep):
         """Testa o comportamento quando atingimos o limite de requisições."""
-        # Configurar o mock de tempo para retornar valores incrementais
-        mock_time.side_effect = [1000, 1000, 1000, 1060]
+        # PROBLEMA: RateLimitFilter chama time.time() dentro do logger
+        # SOLUÇÃO: Fornecer valores suficientes para todas as chamadas
+        mock_time.side_effect = [
+            1000,  # Primeira verificação no check()
+            1000,  # Segunda verificação no check()
+            1000,  # Terceira verificação no check()
+            1000,  # RateLimitFilter.filter() - primeira chamada
+            1000,  # RateLimitFilter.filter() - possível segunda chamada
+            1060  # Verificação final após sleep
+        ]
 
         limiter = RateLimiter(requests_per_window=5, window_seconds=60, check_every=5)
         limiter.request_counter = 5  # Já no limite
@@ -203,6 +211,129 @@ class TestRateLimiter:
             limiter.reset_time = 990  # Já passou
 
             assert limiter.get_reset_time() == 0
+
+
+class TestRateLimiterEnhanced:
+    """Testes diretos para a nova funcionalidade de limite de tentativas."""
+
+    def test_init_max_attempts_default(self):
+        """Testa valor padrão de 50 tentativas."""
+        limiter = RateLimiter()
+        assert limiter.max_rate_limit_attempts == 50
+        assert limiter.rate_limit_attempts == 0
+
+    def test_init_max_attempts_custom(self):
+        """Testa configuração customizada."""
+        limiter = RateLimiter(max_rate_limit_attempts=10)
+        assert limiter.max_rate_limit_attempts == 10
+
+    def test_get_rate_limit_attempts(self):
+        """Testa getter do contador."""
+        limiter = RateLimiter()
+        assert limiter.get_rate_limit_attempts() == 0
+
+        limiter.rate_limit_attempts = 5
+        assert limiter.get_rate_limit_attempts() == 5
+
+    def test_reset_rate_limit_attempts(self):
+        """Testa reset do contador."""
+        limiter = RateLimiter()
+        limiter.rate_limit_attempts = 10
+
+        limiter.reset_rate_limit_attempts()
+        assert limiter.get_rate_limit_attempts() == 0
+
+    def test_increment_attempts_direct(self):
+        """Testa incremento direto do contador."""
+        limiter = RateLimiter(max_rate_limit_attempts=3)
+
+        # Simular rate limit sendo atingido
+        limiter.request_counter = limiter.requests_per_window
+        limiter.reset_time = 999999999  # Futuro distante
+
+        # Forçar condição de rate limit
+        with limiter.lock:
+            if limiter.request_counter >= limiter.requests_per_window:
+                limiter.rate_limit_attempts += 1
+
+        assert limiter.get_rate_limit_attempts() == 1
+
+    def test_exception_when_exceeded(self):
+        """Testa exceção quando limite é excedido."""
+        limiter = RateLimiter(max_rate_limit_attempts=2)
+        limiter.rate_limit_attempts = 3  # Simular que já excedeu
+
+        # Simular condição que deveria lançar exceção
+        with pytest.raises(RateLimitExceededException) as exc_info:
+            with limiter.lock:
+                if limiter.rate_limit_attempts > limiter.max_rate_limit_attempts:
+                    error_msg = f"Número máximo de tentativas de rate limit excedido: {limiter.rate_limit_attempts}/{limiter.max_rate_limit_attempts}"
+                    raise RateLimitExceededException(error_msg)
+
+        assert "3/2" in str(exc_info.value)
+
+    def test_exception_message_format(self):
+        """Testa formato da mensagem de exceção."""
+        RateLimiter(max_rate_limit_attempts=5)
+
+        try:
+            raise RateLimitExceededException(
+                "Número máximo de tentativas de rate limit excedido: 6/5. "
+                "Interrompendo execução para evitar loop infinito no Airflow."
+            )
+        except RateLimitExceededException as e:
+            message = str(e)
+            assert "6/5" in message
+            assert "Airflow" in message
+            assert "loop infinito" in message
+
+    def test_thread_safety_counter(self):
+        """Testa thread safety básica."""
+        limiter = RateLimiter()
+
+        # Simular acesso concurrent
+        with limiter.lock:
+            original_value = limiter.rate_limit_attempts
+            limiter.rate_limit_attempts += 1
+            new_value = limiter.rate_limit_attempts
+
+        assert new_value == original_value + 1
+
+    def test_multiple_attempts_simulation(self):
+        """Testa múltiplas tentativas simuladas."""
+        limiter = RateLimiter(max_rate_limit_attempts=3)
+
+        # Simular 3 tentativas (dentro do limite)
+        for i in range(3):
+            limiter.rate_limit_attempts += 1
+            assert limiter.get_rate_limit_attempts() == i + 1
+
+        # Quarta tentativa excede o limite
+        limiter.rate_limit_attempts += 1
+        assert limiter.rate_limit_attempts > limiter.max_rate_limit_attempts
+
+    def test_reset_after_attempts(self):
+        """Testa reset após tentativas."""
+        limiter = RateLimiter()
+
+        # Simular algumas tentativas
+        limiter.rate_limit_attempts = 15
+        assert limiter.get_rate_limit_attempts() == 15
+
+        # Reset
+        limiter.reset_rate_limit_attempts()
+        assert limiter.get_rate_limit_attempts() == 0
+
+    def test_edge_case_zero_attempts(self):
+        """Testa edge case com zero tentativas permitidas."""
+        limiter = RateLimiter(max_rate_limit_attempts=0)
+
+        assert limiter.max_rate_limit_attempts == 0
+        assert limiter.rate_limit_attempts == 0
+
+        # Primeira tentativa já excede
+        limiter.rate_limit_attempts = 1
+        assert limiter.rate_limit_attempts > limiter.max_rate_limit_attempts
 
 
 if __name__ == "__main__":

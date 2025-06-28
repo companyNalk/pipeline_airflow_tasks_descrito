@@ -4,6 +4,11 @@ import time
 from typing import Optional
 
 
+class RateLimitExceededException(Exception):
+    """Exceção lançada quando o número máximo de tentativas de rate limit é excedido."""
+    pass
+
+
 class RateLimitFilter(logging.Filter):
     last_logged = 0
 
@@ -28,10 +33,11 @@ class RateLimitFilter(logging.Filter):
 
 class RateLimiter:
     def __init__(self, requests_per_window: int = 100, window_seconds: int = 60, check_every: int = 5,
-                 logger: Optional[logging.Logger] = None):
+                 max_rate_limit_attempts: int = 50, logger: Optional[logging.Logger] = None):
         self.requests_per_window = requests_per_window
         self.window_seconds = window_seconds
         self.check_every = check_every
+        self.max_rate_limit_attempts = max_rate_limit_attempts
         self.logger = logger or logging.getLogger(__name__)
 
         # Aplicar o filtro de rate limit ao logger
@@ -48,10 +54,16 @@ class RateLimiter:
         self.request_counter = 0
         self.reset_time = time.time() + window_seconds
 
+        # Contador de tentativas de rate limit
+        self.rate_limit_attempts = 0
+
     def check(self) -> None:
         """
         Verifica se o limite de requisições foi atingido e aguarda se necessário.
         Esta função deve ser chamada antes de cada requisição.
+
+        Raises:
+            RateLimitExceededException: Quando o número máximo de tentativas de rate limit é excedido.
         """
         with self.lock:
             current_time = time.time()
@@ -65,10 +77,23 @@ class RateLimiter:
 
                 # Se atingiu o limite, aguarda até o final da janela
                 if self.request_counter >= self.requests_per_window:
+                    # Incrementa contador de tentativas de rate limit
+                    self.rate_limit_attempts += 1
+
+                    # Verifica se excedeu o limite máximo de tentativas
+                    if self.rate_limit_attempts > self.max_rate_limit_attempts:
+                        error_msg = (f"Número máximo de tentativas de rate limit excedido: "
+                                     f"{self.rate_limit_attempts}/{self.max_rate_limit_attempts}. "
+                                     f"Interrompendo execução para evitar loop infinito no Airflow.")
+                        self.logger.error(error_msg)
+                        raise RateLimitExceededException(error_msg)
+
                     wait_time = self.reset_time - current_time
                     wait_time = max(0.1, wait_time)  # Pelo menos 100ms para evitar busy-waiting
 
-                    self.logger.info(f"⏳ Rate limit atingido. Aguardando {wait_time:.2f}s...")
+                    self.logger.warning(
+                        f"⏳ Rate limit atingido (tentativa {self.rate_limit_attempts}/{self.max_rate_limit_attempts}). "
+                        f"Aguardando {wait_time:.2f}s...")
                     time.sleep(wait_time)
 
                     # Reinicia o contador e o timer
@@ -99,3 +124,19 @@ class RateLimiter:
         with self.lock:
             current_time = time.time()
             return max(0, self.reset_time - current_time)
+
+    def get_rate_limit_attempts(self) -> int:
+        """
+        Retorna o número atual de tentativas de rate limit.
+        """
+        with self.lock:
+            return self.rate_limit_attempts
+
+    def reset_rate_limit_attempts(self) -> None:
+        """
+        Reseta o contador de tentativas de rate limit.
+        Útil para reiniciar o contador após um período de sucesso.
+        """
+        with self.lock:
+            self.rate_limit_attempts = 0
+            self.logger.info("Contador de tentativas de rate limit foi resetado")
