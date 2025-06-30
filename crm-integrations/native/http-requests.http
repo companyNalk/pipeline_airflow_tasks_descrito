@@ -1,0 +1,31 @@
+### ========== TOKEN ==========
+# Obter token
+# DOCS: https://expoconecta.native-infinity.com.br/api/api-documentation/
+POST {{url_base}}/api/token
+Content-Type: application/json
+
+{
+  "username": "{{user_name}}",
+  "password": "{{password}}"
+}
+
+> {%
+  client.global.set("auth_token", "Bearer " + response.body.token);
+%}
+
+### ========== REPORT ==========
+# Relatorio por ID
+GET {{ url_base }}/api/apiReport/1
+Authorization: {{auth_token}}
+
+### ID 4
+GET {{ url_base }}/api/apiReport/4
+Authorization: {{auth_token}}
+
+### ID 5
+GET {{ url_base }}/api/apiReport/5
+Authorization: {{auth_token}}
+
+### ID 6
+GET {{ url_base }}/api/apiReport/6
+Authorization: {{auth_token}}
