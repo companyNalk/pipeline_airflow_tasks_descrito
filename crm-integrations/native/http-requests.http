@@ -1,6 +1,6 @@
-### ========== TOKEN ==========
-# Obter token
 # DOCS: https://expoconecta.native-infinity.com.br/api/api-documentation/
+
+### ========== TOKEN ==========
 POST {{url_base}}/api/token
 Content-Type: application/json
 
@@ -14,7 +14,6 @@ Content-Type: application/json
 %}
 
 ### ========== REPORT ==========
-# Relatorio por ID
 GET {{ url_base }}/api/apiReport/1
 Authorization: {{auth_token}}
 
