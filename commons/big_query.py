@@ -1,4 +1,3 @@
-import glob
 import json
 import logging
 import os
@@ -18,17 +17,10 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 
 
-class BigQuery:
-    DEFAULT_OUTPUT_DIR = './output'
-    LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
-    CSV_DELIMITER = ';'
+class DataTypeDetector:
+    """Handles data type detection and pattern matching logic."""
 
-    # Valores para classificação de tipos
-    BOOLEAN_VALUES = {
-        'true', 'false'
-    }
-
-    # Mapeamento de tipos para BigQuery
+    BOOLEAN_VALUES = {'true', 'false'}
     TYPE_MAPPING = {
         'integer': 'INT64',
         'numeric': 'NUMERIC',
@@ -41,212 +33,77 @@ class BigQuery:
         'string': 'STRING'
     }
 
-    def __init__(self, output_dir=DEFAULT_OUTPUT_DIR, log_level=logging.INFO, max_workers=None):
-        """Inicializa a classe BigQuery."""
-        self.output_dir = Path(output_dir)
-        self.max_workers = max_workers or cpu_count()
-        self._setup_logging(log_level)
-        self._lock = threading.Lock()  # Para thread-safe logging
-
-    def _setup_logging(self, log_level):
-        """Configura o sistema de logging."""
-        logging.basicConfig(
-            level=log_level,
-            format=self.LOG_FORMAT,
-            handlers=[
-                logging.StreamHandler(),
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
-
-    def _thread_safe_log(self, level, message):
-        """Thread-safe logging."""
-        with self._lock:
-            getattr(self.logger, level)(message)
+    WEEKDAY_NAMES = {
+        'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+        'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sabado', 'domingo',
+        'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun',
+        'seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'
+    }
 
     @classmethod
-    def process_csv_files(cls, output_dir=DEFAULT_OUTPUT_DIR, max_workers=None):
-        """Processa todos os arquivos CSV no diretório especificado."""
-        start_time = time.time()
-        generator = cls(output_dir, max_workers=max_workers)
-        generator.logger.info(f"INICINAOD PROCESSAMENTO DO CSV - COM {generator.max_workers} WORKERS")
-
-        generator._process_all_csv_files()
-
-        total_time = time.time() - start_time
-        generator.logger.info(
-            f"✅ Processamento completo finalizado em {total_time / 60:.2f} minutos ({total_time:.2f} segundos)")
-
-    def _find_csv_files(self):
-        """Encontra todos os arquivos CSV no diretório de saída."""
-        return [Path(f) for f in glob.glob(str(self.output_dir / "*" / "*.csv"), recursive=True)]
-
-    def _process_all_csv_files(self):
-        """Processamento paralelo de múltiplos arquivos CSV."""
-        files = self._find_csv_files()
-        if not files:
-            self.logger.warning(f"Nenhum arquivo CSV encontrado em {self.output_dir}")
-            return
-
-        self.logger.info(f"Encontrados {len(files)} arquivo(s). Processando com {self.max_workers} workers...")
-
-        # Processamento paralelo de arquivos
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_file = {
-                executor.submit(self._process_single_csv_safe, file_path): file_path
-                for file_path in files
-            }
-
-            for future in as_completed(future_to_file):
-                file_path = future_to_file[future]
-                try:
-                    future.result()
-                    self._thread_safe_log('info', f"✅ Concluído: {file_path.name}")
-                except Exception as e:
-                    self._thread_safe_log('error', f"❌ Erro ao processar {file_path}: {e}")
-
-    def _process_single_csv_safe(self, csv_path):
-        """Wrapper thread-safe para processamento de CSV individual."""
-        try:
-            self._process_single_csv(csv_path)
-        except Exception as e:
-            self._thread_safe_log('error', f"Erro ao processar {csv_path}: {e}")
-            raise
-
-    def _process_single_csv(self, csv_path):
-        """Processa um único arquivo CSV."""
-        try:
-            # Usar with para gerenciar recursos
-            df = pd.read_csv(csv_path, delimiter=self.CSV_DELIMITER, dtype=str, low_memory=False)
-            self._thread_safe_log('info',
-                                  f"Arquivo {csv_path.name} carregado: {len(df)} linhas, {len(df.columns)} colunas")
-
-            schema, report = self._generate_schema_parallel(df)
-            self._generate_inconsistency_report(report)
-
-            # Usar with para salvar o schema
-            schema_path = csv_path.parent / "schema.json"
-            self._save_schema(schema, schema_path)
-
-        except pd.errors.EmptyDataError:
-            self._thread_safe_log('error', f"Arquivo vazio: {csv_path}")
-            raise
-        except Exception as e:
-            self._thread_safe_log('error', f"Erro no processamento do arquivo {csv_path}: {str(e)}")
-            raise
-
-    def _generate_schema_parallel(self, df):
-        """Análise paralela de colunas usando multiprocessing."""
-        schema = []
-        report = []
-        optimized = 0
-        safe = 0
-        total_columns = len(df.columns)
-        start_time = time.time()
-
-        self.logger.info(f"Iniciando análise paralela de {total_columns} colunas com {self.max_workers} processes...")
-
-        # Preparar dados para processamento paralelo
-        column_data = [(col_name, df[col_name].to_list()) for col_name in df.columns]
-
-        # Usar ProcessPoolExecutor para análise intensiva de CPU
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submeter todas as tarefas
-            future_to_column = {
-                executor.submit(analyze_column_worker, col_name, col_data, self.BOOLEAN_VALUES,
-                                self.TYPE_MAPPING): col_name
-                for col_name, col_data in column_data
-            }
-
-            # Coletar resultados conforme completam
-            completed = 0
-            for future in as_completed(future_to_column):
-                col_name = future_to_column[future]
-                try:
-                    analysis = future.result()
-                    report.append(analysis)
-
-                    # Determinar tipo final
-                    if analysis['inconsistent_percent'] == 0:
-                        final_type = analysis['suggested_type']
-                        analysis['type_reason'] = "OTIMIZADO"
-                        optimized += 1
-                    else:
-                        final_type = 'STRING'
-                        analysis['type_reason'] = "SEGURO"
-                        safe += 1
-
-                    analysis['final_type'] = final_type
-                    schema.append({'name': col_name, 'type': final_type, 'mode': 'NULLABLE'})
-
-                    completed += 1
-                    if completed % 10 == 0:
-                        elapsed = time.time() - start_time
-                        eta = (elapsed / completed) * (total_columns - completed)
-                        self.logger.info(f"Progresso: {completed}/{total_columns} - ETA: {eta / 60:.1f} min")
-
-                except Exception as e:
-                    self.logger.error(f"Erro ao analisar coluna {col_name}: {e}")
-
-        # Ordenar resultados pela ordem original das colunas
-        column_order = {name: idx for idx, name in enumerate(df.columns)}
-        report.sort(key=lambda x: column_order[x['column']])
-        schema.sort(key=lambda x: column_order[x['name']])
-
-        self.logger.info(f"Análise paralela concluída em {(time.time() - start_time) / 60:.2f} minutos")
-        self.logger.info(f"RESUMO: {optimized} colunas otimizadas, {safe} colunas seguras (STRING)")
-        return schema, report
-
-    def _detect_pattern(self, value):
+    def detect_pattern(cls, value):
         """Detecta o padrão do valor e retorna o tipo correspondente."""
         if not isinstance(value, str):
             return 'string'
 
-        if re.match(r'^[A-Za-z]+/[A-Za-z_]+$', value):  # America/Sao_Paulo, Europe/London, etc.
+        value_stripped = value.strip()
+        value_lower = value_stripped.lower()
+
+        # Timezone patterns
+        if re.match(r'^[A-Za-z]+/[A-Za-z_]+$', value_stripped):  # America/Sao_Paulo
+            return 'string'
+        if re.match(r'^[+-]\d{2}:\d{2}$', value_stripped):  # -03:00, +02:00
             return 'string'
 
-        if re.match(r'^[+-]\d{2}:\d{2}$', value):  # -03:00, +02:00
-            return 'string'
+        # Numeric types
+        if cls._is_integer(value):
+            return 'integer'
+        if cls._is_numeric(value):
+            return 'numeric'
+        if cls._is_float(value):
+            return 'float'
 
-        value_lower = value.lower().strip()
-        try:
-            if self._is_integer(value):
-                return 'integer'
-            if self._is_numeric(value):
-                return 'numeric'
-            if self._is_float(value):
-                return 'float'
-            if value_lower in self.BOOLEAN_VALUES:
-                return 'boolean'
-            if self._is_time(value):
-                return 'time'
+        # Boolean
+        if value_lower in cls.BOOLEAN_VALUES:
+            return 'boolean'
 
-            date_type = self._detect_date(value)
-            if date_type:
-                return date_type
-        except Exception:
-            pass
+        # Time (with seconds required)
+        if cls._is_time(value):
+            return 'time'
+
+        # TIMESTAMP patterns - verificar ANTES da detecção genérica de data
+        # ISO 8601 com T (YYYY-MM-DDTHH:MM:SS) -> sempre TIMESTAMP
+        if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$', value_stripped):
+            return 'timestamp'
+
+        # Date/DateTime patterns
+        date_type = cls._detect_date(value)
+        if date_type:
+            return date_type
 
         return 'string'
 
-    def _is_integer(self, v):
+    @classmethod
+    def _is_integer(cls, v):
         """Verifica se o valor é um inteiro válido."""
         return bool(re.fullmatch(r"-?\d+", v)) and -9223372036854775808 <= int(v) <= 9223372036854775807
 
-    def _is_numeric(self, v):
+    @classmethod
+    def _is_numeric(cls, v):
         """Verifica se o valor é um numérico de precisão alta."""
         if not re.fullmatch(r"-?\d+\.\d+", v):
             return False
         d = Decimal(v)
         return len(str(d).split('.')[-1]) > 6 and len(str(d).replace('.', '').replace('-', '')) <= 38
 
-    def _is_float(self, v):
+    @classmethod
+    def _is_float(cls, v):
         """Verifica se o valor é um float válido."""
         return bool(re.fullmatch(r"-?\d+(\.\d+)?([eE][+-]?\d+)?", v))
 
-    def _is_time(self, v):
+    @classmethod
+    def _is_time(cls, v):
         """Verifica se o valor é um horário válido - VERSÃO CORRIGIDA."""
-        # Padrão mais flexível que aceita HH:MM e HH:MM:SS
         pattern_with_seconds = r"^([01]?\d|2[0-3]):([0-5]\d):([0-5]\d)(\.\d+)?$"
         pattern_without_seconds = r"^([01]?\d|2[0-3]):([0-5]\d)$"
 
@@ -262,24 +119,16 @@ class BigQuery:
                 return False
 
         # Se só tem HH:MM, retornar FALSE para forçar STRING
-        # BigQuery TIME precisa de segundos obrigatoriamente
         elif re.match(pattern_without_seconds, v):
             return False  # Força STRING em vez de TIME
 
         return False
 
-    def _detect_date(self, v):
+    @classmethod
+    def _detect_date(cls, v):
         """Detecta e classifica o tipo de data no valor - VERSÃO CORRIGIDA."""
-
-        weekday_names = {
-            'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-            'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sabado', 'domingo',
-            'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun',
-            'seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'
-        }
-
         # Se é só nome de dia da semana, retornar None (será STRING)
-        if v.lower().strip() in weekday_names:
+        if v.lower().strip() in cls.WEEKDAY_NAMES:
             return None
 
         # Filtrar outros valores problemáticos
@@ -292,6 +141,12 @@ class BigQuery:
             if re.match(pattern, v.strip()):
                 return None
 
+        # PADRÕES DE TIMESTAMP - VERIFICAR PRIMEIRO (mais específico)
+        # ISO 8601 com T (YYYY-MM-DDTHH:MM:SS) -> sempre TIMESTAMP
+        if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$', v.strip()):
+            return 'timestamp'
+
+        # US timestamp format (MM/DD/YYYY HH:MM:SS) -> sempre TIMESTAMP
         if re.match(r'^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2}$', v.strip()):
             return 'timestamp'
 
@@ -303,91 +158,23 @@ class BigQuery:
             dt = date_parser.parse(v, fuzzy=False)
 
             # Verificar se parsing resultou em algo válido
-            # Se ano está muito no futuro ou passado, provavelmente não é data real
             if dt.year < 1900 or dt.year > 2100:
                 return None
 
             if dt.tzinfo or 'z' in v.lower():
                 return 'timestamp'
             if dt.hour or dt.minute or dt.second:
-                # return 'datetime'
                 return 'timestamp'
             return 'date'
         except Exception:
             return None
 
-    def _generate_inconsistency_report(self, report, threshold=0.01):
-        """Gera um relatório detalhado de inconsistências."""
-        self.logger.info("=" * 100)
-        self.logger.info("RELATÓRIO DE INCONSISTÊNCIAS E TIPOS APLICADOS")
-        self.logger.info("=" * 100)
 
-        try:
-            # Estatísticas de tipos
-            type_stats = Counter(col['final_type'] for col in report)
-            optimized_count = len([col for col in report if col['type_reason'] == 'OTIMIZADO'])
-            safe_count = len([col for col in report if col['type_reason'] == 'SEGURO'])
-
-            self.logger.info("ESTATÍSTICAS DE TIPOS APLICADOS:")
-            for type_name, count in type_stats.most_common():
-                self.logger.info(f"  {type_name}: {count} colunas")
-            self.logger.info(f"  Total otimizado: {optimized_count} colunas")
-            self.logger.info(f"  Total seguro (STRING): {safe_count} colunas")
-            self.logger.info("-" * 100)
-
-            # Verificação de inconsistências
-            columns_with_issues = [col for col in report if col['inconsistent_percent'] >= threshold]
-
-            if not columns_with_issues:
-                self.logger.info("Nenhuma inconsistência significativa encontrada!")
-                return
-
-            # Resumo executivo
-            total_inconsistent = sum(col['inconsistent_count'] for col in columns_with_issues)
-            self.logger.info("RESUMO EXECUTIVO:")
-            self.logger.info(f"  Total de registros inconsistentes: {total_inconsistent:,}")
-            self.logger.info(f"  Colunas afetadas: {len(columns_with_issues)}")
-            self.logger.info(f"  Tipos mais afetados: {self._most_affected_types(columns_with_issues)}")
-            self.logger.info("-" * 100)
-
-            # Detalhes por coluna
-            for col in columns_with_issues:
-                self.logger.info(f"COLUNA: {col['column']}")
-                self.logger.info(
-                    f"  Tipo sugerido: {col['suggested_type']} → Aplicado: {col['final_type']} ({col['type_reason']})")
-                self.logger.info(f"  Registros: {col['non_null_records']:,} válidos, {col['null_records']:,} nulos")
-                self.logger.info(
-                    f"  Inconsistências: {col['inconsistent_count']:,} ({col['inconsistent_percent']:.4f}%)")
-                self.logger.info(f"  Confiança: {col['confidence_score']:.2f}%")
-                if col['inconsistent_values']:
-                    self.logger.info(f"  ⚠️  EXEMPLOS INCONSISTENTES: {col['inconsistent_values'][:5]}")
-                self.logger.info(f"  Ação sugerida: Verificar e corrigir {col['inconsistent_count']:,} registros\n")
-
-        except Exception as e:
-            self.logger.error(f"Erro ao gerar relatório de inconsistências: {e}")
-
-    def _most_affected_types(self, columns):
-        """Identifica os tipos mais afetados por inconsistências."""
-        try:
-            type_counts = Counter(col['suggested_type'] for col in columns)
-            return ', '.join(f"{t} ({c})" for t, c in type_counts.most_common(3))
-        except Exception as e:
-            self.logger.error(f"Erro ao calcular tipos mais afetados: {e}")
-            return "Erro ao calcular"
-
-    def _save_schema(self, schema, path):
-        """Salva o esquema em um arquivo JSON."""
-        try:
-            schema_simple = [{"name": f["name"], "type": f["type"]} for f in schema]
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(schema_simple, f, indent=2, ensure_ascii=False)
-            self.logger.info(f"📄 Schema salvo em {path}")
-        except Exception as e:
-            self.logger.error(f"Erro ao salvar schema: {e}")
-            raise
+class DataPreprocessor:
+    """Handles data preprocessing and cleaning operations."""
 
     @staticmethod
-    def _convert_date_br_to_iso(csv_path, schema_json, logger):
+    def convert_date_br_to_iso(csv_path, schema_json, logger):
         """
         Preprocessa dados do CSV para compatibilidade com BigQuery.
         Converte APENAS datas no formato D/MM/AAAA ou DD/MM/AAAA para AAAA-MM-DD.
@@ -485,21 +272,136 @@ class BigQuery:
             logger.error(f"❌ Erro no preprocessamento: {e}")
             raise
 
-    def _convert_timestamp_us_to_iso(csv_path, schema_json=None, logger=None, delimiter=';'):
+    @staticmethod
+    def convert_timestamp_br_to_iso(csv_path, schema_json=None, logger=None, delimiter=';'):
+        """
+        Converte timestamps no formato DD/MM/YYYY HH:MM:SS para YYYY-MM-DD HH:MM:SS
+        para compatibilidade com BigQuery (formato brasileiro).
+        """
+
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
+        try:
+            logger.info("🔄 Iniciando conversão de timestamps BR para ISO...")
+
+            # Carregar CSV
+            df = pd.read_csv(csv_path, delimiter=delimiter, dtype=str, low_memory=False)
+            logger.info(f"📄 Arquivo carregado: {len(df)} linhas, {len(df.columns)} colunas")
+
+            # Identificar campos de timestamp do schema (se fornecido)
+            timestamp_fields = []
+            if schema_json:
+                timestamp_fields = [
+                    field['name'] for field in schema_json
+                    if field['type'] in ['TIMESTAMP', 'DATETIME']
+                ]
+                logger.info(f"🕐 Campos TIMESTAMP identificados no schema: {timestamp_fields}")
+
+            # Se não tiver schema, detectar automaticamente colunas com timestamp
+            if not timestamp_fields:
+                timestamp_fields = []
+                for col in df.columns:
+                    # Verificar se a coluna tem padrão de timestamp BR
+                    sample_values = df[col].dropna().head(10)
+                    br_timestamp_count = 0
+
+                    for val in sample_values:
+                        if isinstance(val, str) and re.match(r'^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2}$',
+                                                             val.strip()):
+                            br_timestamp_count += 1
+
+                    # Se mais de 50% das amostras são timestamps BR, incluir
+                    if br_timestamp_count >= len(sample_values) * 0.5:
+                        timestamp_fields.append(col)
+
+                logger.info(f"🔍 Campos TIMESTAMP detectados automaticamente: {timestamp_fields}")
+
+            if not timestamp_fields:
+                logger.info("ℹ️  Nenhum campo de timestamp encontrado")
+                return 0
+
+            total_conversions = 0
+
+            # Processar cada campo de timestamp
+            for field in timestamp_fields:
+                if field not in df.columns:
+                    logger.warning(f"⚠️  Campo '{field}' não encontrado no CSV")
+                    continue
+
+                field_conversions = 0
+                logger.info(f"🔄 Processando campo: {field}")
+
+                for idx, timestamp_str in enumerate(df[field]):
+                    # Pular valores vazios/nulos
+                    if not timestamp_str or pd.isna(timestamp_str):
+                        continue
+
+                    timestamp_str = str(timestamp_str).strip()
+
+                    # Verificar se está no formato DD/MM/YYYY HH:MM:SS
+                    match = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4}) (\d{1,2}):(\d{2}):(\d{2})$', timestamp_str)
+
+                    if match:
+                        day, month, year, hour, minute, second = match.groups()
+
+                        # Validar valores
+                        try:
+                            day_int = int(day)
+                            month_int = int(month)
+                            year_int = int(year)
+                            hour_int = int(hour)
+                            minute_int = int(minute)
+                            second_int = int(second)
+
+                            # Verificar se os valores são válidos
+                            if not (
+                                    1 <= day_int <= 31 and 1 <= month_int <= 12 and 1900 <= year_int <= 2100 and 0 <= hour_int <= 23 and 0 <= minute_int <= 59 and 0 <= second_int <= 59):  # noqa
+                                continue
+
+                            # Converter para formato ISO: YYYY-MM-DD HH:MM:SS
+                            iso_timestamp = f"{year}-{month.zfill(2)}-{day.zfill(2)} {hour.zfill(2)}:{minute}:{second}"
+                            df.at[idx, field] = iso_timestamp
+                            field_conversions += 1
+
+                        except ValueError:
+                            # Se algum valor não puder ser convertido para int, pular
+                            continue
+
+                if field_conversions > 0:
+                    total_conversions += field_conversions
+                    logger.info(f"   ✅ {field}: {field_conversions} conversões realizadas")
+                else:
+                    logger.info(f"   ℹ️  {field}: nenhuma conversão necessária")
+
+            # Salvar arquivo se houve conversões
+            if total_conversions > 0:
+                # Fazer backup do arquivo original
+                backup_path = f"{csv_path}.backup_br"
+                if not Path(backup_path).exists():
+                    df_original = pd.read_csv(csv_path, delimiter=delimiter, dtype=str, low_memory=False)
+                    df_original.to_csv(backup_path, sep=delimiter, index=False, encoding='utf-8')
+                    logger.info(f"💾 Backup criado: {backup_path}")
+
+                # Salvar arquivo convertido
+                df.to_csv(csv_path, sep=delimiter, index=False, encoding='utf-8')
+                logger.info(f"✅ {total_conversions} timestamp(s) BR convertido(s) com sucesso!")
+                logger.info(f"📁 Arquivo atualizado: {csv_path}")
+            else:
+                logger.info("ℹ️  Nenhuma conversão de timestamp BR necessária")
+
+            return total_conversions
+
+        except Exception as e:
+            logger.error(f"❌ Erro na conversão de timestamps BR: {e}")
+            raise
+
+    @staticmethod
+    def convert_timestamp_us_to_iso(csv_path, schema_json=None, logger=None, delimiter=';'):
         """
         Converte timestamps no formato MM/DD/YYYY HH:MM:SS para YYYY-MM-DD HH:MM:SS
         para compatibilidade com BigQuery.
-
-        Args:
-            csv_path (str): Caminho para o arquivo CSV
-            schema_json (list, optional): Schema JSON com informações dos campos
-            logger (logging.Logger, optional): Logger para output
-            delimiter (str): Delimitador do CSV (padrão: ';')
-
-        Returns:
-            int: Número total de conversões realizadas
         """
-
         if logger is None:
             logger = logging.getLogger(__name__)
 
@@ -617,7 +519,7 @@ class BigQuery:
             raise
 
     @staticmethod
-    def _clean_null_values(csv_path, logger):
+    def clean_null_values(csv_path, logger):
         """Limpa valores 'null' string substituindo por NULL real."""
         try:
             logger.info("🧹 Limpando valores 'null' no CSV...")
@@ -637,45 +539,116 @@ class BigQuery:
             logger.error(f"❌ Erro na limpeza de nulls: {e}")
             raise
 
+
+class ReportGenerator:
+    """Handles generation of inconsistency reports."""
+
     @staticmethod
-    def _create_externa_table(project_id, tool_name, table_name, credentials_path):
-        """Carrega dados do CSV diretamente para uma tabela BigQuery."""
+    def generate_inconsistency_report(report, logger, threshold=0.01):
+        """Gera um relatório detalhado de inconsistências."""
+        logger.info("=" * 100)
+        logger.info("RELATÓRIO DE INCONSISTÊNCIAS E TIPOS APLICADOS")
+        logger.info("=" * 100)
+
+        try:
+            # Estatísticas de tipos
+            type_stats = Counter(col['final_type'] for col in report)
+            optimized_count = len([col for col in report if col['type_reason'] == 'OTIMIZADO'])
+            safe_count = len([col for col in report if col['type_reason'] == 'SEGURO'])
+
+            logger.info("ESTATÍSTICAS DE TIPOS APLICADOS:")
+            for type_name, count in type_stats.most_common():
+                logger.info(f"  {type_name}: {count} colunas")
+            logger.info(f"  Total otimizado: {optimized_count} colunas")
+            logger.info(f"  Total seguro (STRING): {safe_count} colunas")
+            logger.info("-" * 100)
+
+            # Verificação de inconsistências
+            columns_with_issues = [col for col in report if col['inconsistent_percent'] >= threshold]
+
+            if not columns_with_issues:
+                logger.info("Nenhuma inconsistência significativa encontrada!")
+                return
+
+            # Resumo executivo
+            total_inconsistent = sum(col['inconsistent_count'] for col in columns_with_issues)
+            logger.info("RESUMO EXECUTIVO:")
+            logger.info(f"  Total de registros inconsistentes: {total_inconsistent:,}")
+            logger.info(f"  Colunas afetadas: {len(columns_with_issues)}")
+            logger.info(f"  Tipos mais afetados: {ReportGenerator._most_affected_types(columns_with_issues, logger)}")
+            logger.info("-" * 100)
+
+            # Detalhes por coluna
+            for col in columns_with_issues:
+                logger.info(f"COLUNA: {col['column']}")
+                logger.info(
+                    f"  Tipo sugerido: {col['suggested_type']} → Aplicado: {col['final_type']} ({col['type_reason']})")
+                logger.info(f"  Registros: {col['non_null_records']:,} válidos, {col['null_records']:,} nulos")
+                logger.info(
+                    f"  Inconsistências: {col['inconsistent_count']:,} ({col['inconsistent_percent']:.4f}%)")
+                logger.info(f"  Confiança: {col['confidence_score']:.2f}%")
+                if col['inconsistent_values']:
+                    logger.info(f"  ⚠️  EXEMPLOS INCONSISTENTES: {col['inconsistent_values'][:5]}")
+                logger.info(f"  Ação sugerida: Verificar e corrigir {col['inconsistent_count']:,} registros\n")
+
+        except Exception as e:
+            logger.error(f"Erro ao gerar relatório de inconsistências: {e}")
+
+    @staticmethod
+    def _most_affected_types(columns, logger):
+        """Identifica os tipos mais afetados por inconsistências."""
+        try:
+            type_counts = Counter(col['suggested_type'] for col in columns)
+            return ', '.join(f"{t} ({c})" for t, c in type_counts.most_common(3))
+        except Exception as e:
+            logger.error(f"Erro ao calcular tipos mais afetados: {e}")
+            return "Erro ao calcular"
+
+
+class BigQueryTableManager:
+    """Handles BigQuery table operations."""
+
+    @staticmethod
+    def _get_credentials_and_client(project_id, credentials_path, logger):
+        """Helper method to get credentials and BigQuery client."""
         import warnings
-        # Suprimir warning específico do Google Auth sobre quota project
         warnings.filterwarnings("ignore", message="Your application has authenticated using end user credentials")
 
-        start_time = time.time()
+        logger.info(f"Carregando credenciais de: {credentials_path}")
 
-        # Setup de logging para método estático
+        # Ler arquivo para detectar o tipo
+        with open(credentials_path, 'r') as f:
+            cred_info = json.load(f)
+
+        cred_type = cred_info.get('type', 'unknown')
+        logger.info(f"Tipo de credencial detectado: {cred_type}")
+
+        # Carregar credenciais baseado no tipo
+        if cred_type == 'service_account':
+            credentials = service_account.Credentials.from_service_account_file(credentials_path)
+            client = bigquery.Client(project=project_id, credentials=credentials)
+            logger.info("Usando credenciais de Service Account")
+        elif cred_type == 'authorized_user':
+            credentials, _ = load_credentials_from_file(credentials_path)
+            credentials = credentials.with_quota_project(project_id)
+            client = bigquery.Client(project=project_id, credentials=credentials)
+            logger.info("Usando credenciais de Authorized User (OAuth2) com quota project")
+        else:
+            logger.warning(f"Tipo de credencial desconhecido: {cred_type}. Tentando carregamento genérico...")
+            credentials, _ = load_credentials_from_file(credentials_path)
+            client = bigquery.Client(project=project_id, credentials=credentials)
+
+        return client
+
+    @staticmethod
+    def create_external_table(project_id, tool_name, table_name, credentials_path):
+        """Carrega dados do CSV diretamente para uma tabela BigQuery."""
+        start_time = time.time()
         logger = logging.getLogger(__name__)
         logger.info(f"Iniciando criação da tabela externa: {project_id}.{tool_name}.{table_name}")
 
         try:
-            # Detectar tipo de credencial automaticamente
-            logger.info(f"Carregando credenciais de: {credentials_path}")
-
-            # Ler arquivo para detectar o tipo
-            with open(credentials_path, 'r') as f:
-                cred_info = json.load(f)
-
-            cred_type = cred_info.get('type', 'unknown')
-            logger.info(f"Tipo de credencial detectado: {cred_type}")
-
-            # Carregar credenciais baseado no tipo
-            if cred_type == 'service_account':
-                credentials = service_account.Credentials.from_service_account_file(credentials_path)
-                client = bigquery.Client(project=project_id, credentials=credentials)
-                logger.info("Usando credenciais de Service Account")
-            elif cred_type == 'authorized_user':
-                credentials, _ = load_credentials_from_file(credentials_path)
-                # Configurar quota project para evitar warnings
-                credentials = credentials.with_quota_project(project_id)
-                client = bigquery.Client(project=project_id, credentials=credentials)
-                logger.info("Usando credenciais de Authorized User (OAuth2) com quota project")
-            else:
-                logger.warning(f"Tipo de credencial desconhecido: {cred_type}. Tentando carregamento genérico...")
-                credentials, _ = load_credentials_from_file(credentials_path)
-                client = bigquery.Client(project=project_id, credentials=credentials)
+            client = BigQueryTableManager._get_credentials_and_client(project_id, credentials_path, logger)
 
             schema_path = os.path.join("./output", table_name, "schema.json")
             csv_path = os.path.join("./output", table_name, f"{table_name}.csv")
@@ -694,9 +667,10 @@ class BigQuery:
                 schema_json = json.load(f)
 
             # Reprocessamento
-            BigQuery._convert_date_br_to_iso(csv_path, schema_json, logger)
-            BigQuery._convert_timestamp_us_to_iso(csv_path, schema_json, logger)
-            BigQuery._clean_null_values(csv_path, logger)
+            DataPreprocessor.convert_date_br_to_iso(csv_path, schema_json, logger)
+            DataPreprocessor.convert_timestamp_br_to_iso(csv_path, schema_json, logger)
+            DataPreprocessor.convert_timestamp_us_to_iso(csv_path, schema_json, logger)
+            DataPreprocessor.clean_null_values(csv_path, logger)
 
             schema = [
                 bigquery.SchemaField(field["name"], field["type"], mode=field.get("mode", "NULLABLE"))
@@ -740,39 +714,14 @@ class BigQuery:
             raise
 
     @staticmethod
-    def _create_gold_table(project_id, tool_name, table_name, credentials_path):
+    def create_gold_table(project_id, tool_name, table_name, credentials_path):
         """Cria uma tabela gold no dataset 'vendas'."""
         start_time = time.time()
-
-        # Setup de logging para método estático
         logger = logging.getLogger(__name__)
         logger.info(f"Iniciando criação da tabela gold para: {tool_name}_{table_name}_gold")
 
         try:
-            # Detectar tipo de credencial automaticamente
-            logger.info(f"Carregando credenciais de: {credentials_path}")
-
-            # Ler arquivo para detectar o tipo
-            with open(credentials_path, 'r') as f:
-                cred_info = json.load(f)
-
-            cred_type = cred_info.get('type', 'unknown')
-            logger.info(f"Tipo de credencial detectado: {cred_type}")
-
-            # Carregar credenciais baseado no tipo
-            if cred_type == 'service_account':
-                credentials = service_account.Credentials.from_service_account_file(credentials_path)
-                client = bigquery.Client(project=project_id, credentials=credentials)
-                logger.info("Usando credenciais de Service Account")
-            elif cred_type == 'authorized_user':
-                credentials, _ = load_credentials_from_file(credentials_path)
-                credentials = credentials.with_quota_project(project_id)
-                client = bigquery.Client(project=project_id, credentials=credentials)
-                logger.info("Usando credenciais de Authorized User (OAuth2) com quota project")
-            else:
-                logger.warning(f"Tipo de credencial desconhecido: {cred_type}. Tentando carregamento genérico...")
-                credentials, _ = load_credentials_from_file(credentials_path)
-                client = bigquery.Client(project=project_id, credentials=credentials)
+            client = BigQueryTableManager._get_credentials_and_client(project_id, credentials_path, logger)
 
             source_table_id = f"{project_id}.{tool_name}.{table_name}"
             gold_table_id = f"{project_id}.vendas.{tool_name}_{table_name}_gold"
@@ -802,12 +751,191 @@ class BigQuery:
             logger.error(f"❌ Erro ao criar tabela gold após {total_time:.2f} segundos: {e}")
             raise
 
+
+class BigQuery:
+    """Main class for BigQuery schema generation and processing."""
+
+    DEFAULT_OUTPUT_DIR = './output'
+    LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
+    CSV_DELIMITER = ';'
+
+    def __init__(self, output_dir=DEFAULT_OUTPUT_DIR, log_level=logging.INFO, max_workers=None):
+        """Inicializa a classe BigQuery."""
+        self.output_dir = Path(output_dir)
+        self.max_workers = max_workers or cpu_count()
+        self._setup_logging(log_level)
+        self._lock = threading.Lock()  # Para thread-safe logging
+
+    def _setup_logging(self, log_level):
+        """Configura o sistema de logging."""
+        logging.basicConfig(
+            level=log_level,
+            format=self.LOG_FORMAT,
+            handlers=[
+                logging.StreamHandler(),
+            ]
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def _thread_safe_log(self, level, message):
+        """Thread-safe logging."""
+        with self._lock:
+            getattr(self.logger, level)(message)
+
+    @classmethod
+    def process_csv_files(cls, output_dir=DEFAULT_OUTPUT_DIR, max_workers=None):
+        """Processa todos os arquivos CSV no diretório especificado."""
+        start_time = time.time()
+        generator = cls(output_dir, max_workers=max_workers)
+        generator.logger.info(f"INICIANDO PROCESSAMENTO DO CSV - COM {generator.max_workers} WORKERS")
+
+        generator._process_all_csv_files()
+
+        total_time = time.time() - start_time
+        generator.logger.info(
+            f"✅ Processamento completo finalizado em {total_time / 60:.2f} minutos ({total_time:.2f} segundos)")
+
+    def _find_csv_files(self):
+        """Encontra todos os arquivos CSV no diretório de saída."""
+        import glob
+        return [Path(f) for f in glob.glob(str(self.output_dir / "*" / "*.csv"), recursive=True)]
+
+    def _process_all_csv_files(self):
+        """Processamento paralelo de múltiplos arquivos CSV."""
+        files = self._find_csv_files()
+        if not files:
+            self.logger.warning(f"Nenhum arquivo CSV encontrado em {self.output_dir}")
+            return
+
+        self.logger.info(f"Encontrados {len(files)} arquivo(s). Processando com {self.max_workers} workers...")
+
+        # Processamento paralelo de arquivos
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            future_to_file = {
+                executor.submit(self._process_single_csv_safe, file_path): file_path
+                for file_path in files
+            }
+
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                try:
+                    future.result()
+                    self._thread_safe_log('info', f"✅ Concluído: {file_path.name}")
+                except Exception as e:
+                    self._thread_safe_log('error', f"❌ Erro ao processar {file_path}: {e}")
+
+    def _process_single_csv_safe(self, csv_path):
+        """Wrapper thread-safe para processamento de CSV individual."""
+        try:
+            self._process_single_csv(csv_path)
+        except Exception as e:
+            self._thread_safe_log('error', f"Erro ao processar {csv_path}: {e}")
+            raise
+
+    def _process_single_csv(self, csv_path):
+        """Processa um único arquivo CSV."""
+        try:
+            # Usar with para gerenciar recursos
+            df = pd.read_csv(csv_path, delimiter=self.CSV_DELIMITER, dtype=str, low_memory=False)
+            self._thread_safe_log('info',
+                                  f"Arquivo {csv_path.name} carregado: {len(df)} linhas, {len(df.columns)} colunas")
+
+            schema, report = self._generate_schema_parallel(df)
+            ReportGenerator.generate_inconsistency_report(report, self.logger)
+
+            # Usar with para salvar o schema
+            schema_path = csv_path.parent / "schema.json"
+            self._save_schema(schema, schema_path)
+
+        except pd.errors.EmptyDataError:
+            self._thread_safe_log('error', f"Arquivo vazio: {csv_path}")
+            raise
+        except Exception as e:
+            self._thread_safe_log('error', f"Erro no processamento do arquivo {csv_path}: {str(e)}")
+            raise
+
+    def _generate_schema_parallel(self, df):
+        """Análise paralela de colunas usando multiprocessing."""
+        schema = []
+        report = []
+        optimized = 0
+        safe = 0
+        total_columns = len(df.columns)
+        start_time = time.time()
+
+        self.logger.info(f"Iniciando análise paralela de {total_columns} colunas com {self.max_workers} processes...")
+
+        # Preparar dados para processamento paralelo
+        column_data = [(col_name, df[col_name].to_list()) for col_name in df.columns]
+
+        # Usar ProcessPoolExecutor para análise intensiva de CPU
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submeter todas as tarefas
+            future_to_column = {
+                executor.submit(
+                    analyze_column_worker,
+                    col_name,
+                    col_data,
+                    DataTypeDetector.BOOLEAN_VALUES,
+                    DataTypeDetector.TYPE_MAPPING
+                ): col_name
+                for col_name, col_data in column_data
+            }
+
+            # Coletar resultados conforme completam
+            completed = 0
+            for future in as_completed(future_to_column):
+                col_name = future_to_column[future]
+                try:
+                    analysis = future.result()
+                    report.append(analysis)
+
+                    # Determinar tipo final
+                    if analysis['inconsistent_percent'] == 0:
+                        final_type = analysis['suggested_type']
+                        analysis['type_reason'] = "OTIMIZADO"
+                        optimized += 1
+                    else:
+                        final_type = 'STRING'
+                        analysis['type_reason'] = "SEGURO"
+                        safe += 1
+
+                    analysis['final_type'] = final_type
+                    schema.append({'name': col_name, 'type': final_type, 'mode': 'NULLABLE'})
+
+                    completed += 1
+                    if completed % 10 == 0:
+                        elapsed = time.time() - start_time
+                        eta = (elapsed / completed) * (total_columns - completed)
+                        self.logger.info(f"Progresso: {completed}/{total_columns} - ETA: {eta / 60:.1f} min")
+
+                except Exception as e:
+                    self.logger.error(f"Erro ao analisar coluna {col_name}: {e}")
+
+        # Ordenar resultados pela ordem original das colunas
+        column_order = {name: idx for idx, name in enumerate(df.columns)}
+        report.sort(key=lambda x: column_order[x['column']])
+        schema.sort(key=lambda x: column_order[x['name']])
+
+        self.logger.info(f"Análise paralela concluída em {(time.time() - start_time) / 60:.2f} minutos")
+        self.logger.info(f"RESUMO: {optimized} colunas otimizadas, {safe} colunas seguras (STRING)")
+        return schema, report
+
+    def _save_schema(self, schema, path):
+        """Salva o esquema em um arquivo JSON."""
+        try:
+            schema_simple = [{"name": f["name"], "type": f["type"]} for f in schema]
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(schema_simple, f, indent=2, ensure_ascii=False)
+            self.logger.info(f"📄 Schema salvo em {path}")
+        except Exception as e:
+            self.logger.error(f"Erro ao salvar schema: {e}")
+            raise
+
     @staticmethod
     def start_pipeline(project_id, tool_name, table_name, credentials_path):
         """Pipeline para criar as tabelas no BQ."""
         start_time = time.time()
-
-        # Setup de logging para método estático
         logger = logging.getLogger(__name__)
 
         # Log de início com destaque
@@ -820,11 +948,11 @@ class BigQuery:
 
         try:
             logger.info("📥 [1/2] Criando tabela externa...")
-            BigQuery._create_externa_table(project_id, tool_name, table_name, credentials_path)
+            BigQueryTableManager.create_external_table(project_id, tool_name, table_name, credentials_path)
             logger.info("✅ Tabela externa criada com sucesso")
 
             logger.info("🏆 [2/2] Criando tabela gold...")
-            BigQuery._create_gold_table(project_id, tool_name, table_name, credentials_path)
+            BigQueryTableManager.create_gold_table(project_id, tool_name, table_name, credentials_path)
             logger.info("✅ Tabela gold criada com sucesso")
 
             total_time = time.time() - start_time
@@ -844,91 +972,8 @@ class BigQuery:
             raise
 
 
-# Função worker para processamento paralelo de colunas - VERSÃO CORRIGIDA
 def analyze_column_worker(column_name, column_data, boolean_values, type_mapping):
     """Worker function para análise paralela de colunas - VERSÃO CORRIGIDA."""
-
-    def detect_pattern(value, boolean_values):
-        """Função auxiliar para detectar padrões - VERSÃO CORRIGIDA."""
-        if not isinstance(value, str):
-            return 'string'
-
-        value_stripped = value.strip()
-        value_lower = value_stripped.lower()
-
-        # Detectar timezone patterns primeiro
-        if re.match(r'^[A-Za-z]+/[A-Za-z_]+$', value_stripped):  # America/Sao_Paulo
-            return 'string'
-
-        if re.match(r'^[+-]\d{2}:\d{2}$', value_stripped):  # -03:00, +02:00
-            return 'string'
-
-        # Verificar se é inteiro
-        if bool(re.fullmatch(r"-?\d+", value)) and -9223372036854775808 <= int(value) <= 9223372036854775807:
-            return 'integer'
-
-        # Verificar se é numérico
-        if re.fullmatch(r"-?\d+\.\d+", value):
-            d = Decimal(value)
-            if len(str(d).split('.')[-1]) > 6 and len(str(d).replace('.', '').replace('-', '')) <= 38:
-                return 'numeric'
-
-        # Verificar se é float
-        if bool(re.fullmatch(r"-?\d+(\.\d+)?([eE][+-]?\d+)?", value)):
-            return 'float'
-
-        # Verificar se é booleano
-        if value_lower in boolean_values:
-            return 'boolean'
-
-        # CORREÇÃO: Verificar TIME com segundos obrigatórios
-        time_pattern_valid = r"^([01]?\d|2[0-3]):([0-5]\d):([0-5]\d)(\.\d+)?$"
-        if re.match(time_pattern_valid, value):
-            return 'time'
-
-        if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$', value.strip()):
-            return 'timestamp'
-
-        # CORREÇÃO: Filtrar dias da semana e HH:MM
-        weekday_names = {
-            'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-            'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sabado', 'domingo',
-            'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun',
-            'seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom'
-        }
-
-        # Se é nome de dia da semana, é STRING
-        if value_lower in weekday_names:
-            return 'string'
-
-        # Se é só HH:MM (sem segundos), é STRING
-        if re.match(r'^\d{1,2}:\d{2}$', value):
-            return 'string'
-
-        if re.match(r'^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}:\d{2}$', value.strip()):
-            return 'timestamp'
-
-        if re.match(r'^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2}$', value.strip()):
-            return 'timestamp'
-
-        # Detecção de data filtrada
-        try:
-            dt = date_parser.parse(value, fuzzy=False)
-            # Validar se é uma data realista
-            if dt.year < 1900 or dt.year > 2100:
-                return 'string'
-
-            if dt.tzinfo or 'z' in value.lower():
-                return 'timestamp'
-            if dt.hour or dt.minute or dt.second:
-                # return 'datetime'
-                return 'timestamp'
-            return 'date'
-        except Exception:
-            return 'string'
-
-        return 'string'
-
     try:
         # Análise da coluna
         total = len(column_data)
@@ -948,8 +993,8 @@ def analyze_column_worker(column_name, column_data, boolean_values, type_mapping
                 'inconsistent_values': []
             }
 
-        # Contar padrões e identificar o dominante
-        patterns = Counter(detect_pattern(val, boolean_values) for val in non_null)
+        # Contar padrões e identificar o dominante usando a classe DataTypeDetector
+        patterns = Counter(DataTypeDetector.detect_pattern(val) for val in non_null)
         dominant, count = patterns.most_common(1)[0]
 
         # Calcular inconsistências
@@ -958,7 +1003,7 @@ def analyze_column_worker(column_name, column_data, boolean_values, type_mapping
         confidence = (count / len(non_null)) * 100
 
         # Coletar amostras de valores inconsistentes
-        inconsistent_samples = [v for v in non_null if detect_pattern(v, boolean_values) != dominant][:20]
+        inconsistent_samples = [v for v in non_null if DataTypeDetector.detect_pattern(v) != dominant][:20]
 
         # Retornar análise completa
         return {
