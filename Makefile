@@ -34,3 +34,20 @@ clean:
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	rm -rf .pytest_cache .mypy_cache .coverage output/
+
+# Executa todos os main.py em crm-integration/**/main.py
+run-all-crm:
+	@echo "🚀 Executando todos os main.py em crm-integrations com seus respectivos .env..."
+	@find crm-integrations -type f -name "main.py" | while read file; do \
+		dir=$$(dirname "$$file"); \
+		echo "➡️ Executando $$file..."; \
+		( cd "$$dir" && PYTHONPATH=../.. python main.py ); \
+	done
+
+run-all-crm-parallel:
+	@echo "🚀 Executando main.py de todas integrações em paralelo (até 4 ao mesmo tempo)..."
+	@find crm-integrations -type f -name "main.py" | \
+		xargs -I {} -P 12 bash -c ' \
+			echo "➡️ Executando {}"; \
+			cd "`dirname {}`" && PYTHONPATH=../.. python main.py \
+		'

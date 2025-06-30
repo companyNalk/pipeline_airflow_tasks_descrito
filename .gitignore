@@ -61,6 +61,7 @@ coverage.xml
 # Arquivos CSV e JSON como solicitado
 *.csv
 *.json
+!http-client.env.json
 
 # Arquivos específicos do GCP
 *.pem
