@@ -1,667 +1,524 @@
 import json
 import os
-import shutil
+import tempfile
 from pathlib import Path
-from unittest.mock import patch, mock_open, MagicMock, ANY
+from unittest.mock import Mock, patch, mock_open
 
 import pandas as pd
 import pytest
 
-from commons.big_query import BigQuery, analyze_column_worker
+from commons.big_query import DataTypeDetector, DataPreprocessor, BigQuery, analyze_column_worker, BigQueryTableManager, \
+    ReportGenerator
 
 
-@pytest.fixture(autouse=True)
-def cleanup_output_directory():
-    """Fixture que limpa o diretório output antes e depois de cada teste."""
-    output_dir = "./output"
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    yield
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
+class TestDataTypeDetectorCoverage:
+    """Testes para garantir cobertura completa da classe DataTypeDetector."""
+
+    def test_constants_defined(self):
+        """Testa se todas as constantes estão definidas."""
+        # GIVEN & WHEN & THEN
+        assert 'true' in DataTypeDetector.BOOLEAN_VALUES
+        assert 'false' in DataTypeDetector.BOOLEAN_VALUES
+        assert 'monday' in DataTypeDetector.WEEKDAY_NAMES
+        assert 'seg' in DataTypeDetector.WEEKDAY_NAMES
+        assert DataTypeDetector.TYPE_MAPPING['integer'] == 'INT64'
+        assert DataTypeDetector.TYPE_MAPPING['string'] == 'STRING'
+
+    def test_detect_pattern_timezone_strings(self):
+        """Testa detecção de padrões de timezone."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector.detect_pattern("America/Sao_Paulo") == 'string'
+        assert DataTypeDetector.detect_pattern("Europe/London") == 'string'
+        assert DataTypeDetector.detect_pattern("-03:00") == 'string'
+        assert DataTypeDetector.detect_pattern("+02:00") == 'string'
+
+    def test_detect_pattern_numeric_types(self):
+        """Testa detecção de tipos numéricos."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector.detect_pattern("123") == 'integer'
+        assert DataTypeDetector.detect_pattern("-456") == 'integer'
+        assert DataTypeDetector.detect_pattern("123.4567890") == 'numeric'
+        assert DataTypeDetector.detect_pattern("1.5e10") == 'float'
+
+    def test_detect_pattern_boolean_and_time(self):
+        """Testa detecção de booleanos e horários."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector.detect_pattern("true") == 'boolean'
+        assert DataTypeDetector.detect_pattern("FALSE") == 'boolean'
+        assert DataTypeDetector.detect_pattern("14:30:45") == 'time'
+        assert DataTypeDetector.detect_pattern("14:30") == 'string'  # Sem segundos
+
+    def test_detect_pattern_dates_and_timestamps(self):
+        """Testa detecção de datas e timestamps."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector.detect_pattern("2023-12-25") == 'date'
+        assert DataTypeDetector.detect_pattern("12/25/2023 14:30:45") == 'timestamp'
+        assert DataTypeDetector.detect_pattern("2023-12-25T14:30:45") == 'timestamp'
+        assert DataTypeDetector.detect_pattern("monday") == 'string'
+
+    def test_detect_pattern_edge_cases(self):
+        """Testa casos extremos."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector.detect_pattern(123) == 'string'  # Não-string
+        assert DataTypeDetector.detect_pattern("") == 'string'
+        assert DataTypeDetector.detect_pattern("  ") == 'string'
+        assert DataTypeDetector.detect_pattern("invalid_date") == 'string'
+
+    def test_is_integer_bounds(self):
+        """Testa limites de inteiros."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector._is_integer("9223372036854775807")
+        assert DataTypeDetector._is_integer("-9223372036854775808")
+        assert not DataTypeDetector._is_integer("9223372036854775808")
+        assert not DataTypeDetector._is_integer("abc")
+
+    def test_is_numeric_precision(self):
+        """Testa detecção de numéricos de alta precisão."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector._is_numeric("123.1234567890")  # Mais de 6 dígitos decimais
+        assert not DataTypeDetector._is_numeric("123.12")  # Menos de 6 dígitos decimais
+        assert not DataTypeDetector._is_numeric("123")  # Sem ponto decimal
+
+    def test_is_float_patterns(self):
+        """Testa padrões de float."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector._is_float("123.45")
+        assert DataTypeDetector._is_float("1.5e10")
+        assert DataTypeDetector._is_float("-2.3E-5")
+        assert not DataTypeDetector._is_float("abc")
+
+    def test_is_time_validation(self):
+        """Testa validação de horários."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector._is_time("23:59:59")
+        assert DataTypeDetector._is_time("00:00:00.123")
+        assert not DataTypeDetector._is_time("25:00:00")  # Hora inválida
+        assert not DataTypeDetector._is_time("12:60:00")  # Minuto inválido
+        assert not DataTypeDetector._is_time("12:30")  # Sem segundos
+
+    def test_detect_date_filtering(self):
+        """Testa filtragem de datas."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector._detect_date("segunda") is None  # Dia da semana
+        assert DataTypeDetector._detect_date("14:30") is None  # Só horário
+        assert DataTypeDetector._detect_date("abc") is None  # Só letras
+        assert DataTypeDetector._detect_date("2023-12-25") == 'date'
 
 
-class TestBigQueryInit:
-    """Testes para inicialização da classe BigQuery."""
+class TestDataPreprocessorCoverage:
+    """Testes para garantir cobertura completa da classe DataPreprocessor."""
 
-    def test_init_default_values(self):
-        """Testa inicialização com valores padrão."""
+    def test_convert_date_br_to_iso_no_fields(self):
+        """Testa conversão quando não há campos de data."""
         # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("col1;col2\n1;2\n")
+            csv_path = f.name
+
+        schema_json = [{'name': 'col1', 'type': 'STRING'}]
+        logger = Mock()
 
         # WHEN
+        DataPreprocessor.convert_date_br_to_iso(csv_path, schema_json, logger)
+
+        # THEN
+        logger.info.assert_any_call("ℹ️  Nenhum campo de data/datetime encontrado")
+        os.unlink(csv_path)
+
+    def test_convert_timestamp_br_to_iso_basic(self):
+        """Testa conversão básica de timestamp BR."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("timestamp_col;other_col\n25/12/2023 14:30:45;data\n")
+            csv_path = f.name
+
+        schema_json = [{'name': 'timestamp_col', 'type': 'TIMESTAMP'}]
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.convert_timestamp_br_to_iso(csv_path, schema_json, logger)
+
+        # THEN
+        assert result > 0
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "2023-12-25 14:30:45"
+        os.unlink(csv_path)
+
+    def test_convert_timestamp_us_to_iso_basic(self):
+        """Testa conversão básica de timestamp US."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("timestamp_col;other_col\n12/25/2023 14:30:45;data\n")
+            csv_path = f.name
+
+        schema_json = [{'name': 'timestamp_col', 'type': 'TIMESTAMP'}]
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.convert_timestamp_us_to_iso(csv_path, schema_json, logger)
+
+        # THEN
+        assert result > 0
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "2023-12-25 14:30:45"
+        os.unlink(csv_path)
+
+    def test_convert_timestamp_auto_detection(self):
+        """Testa detecção automática de campos de timestamp."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("timestamp_col;normal_col\n12/25/2023 14:30:45;abc\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.convert_timestamp_us_to_iso(csv_path, None, logger)
+
+        # THEN
+        assert result > 0
+        os.unlink(csv_path)
+
+    def test_clean_null_values_all_variants(self):
+        """Testa limpeza de todas as variantes de null."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("col1;col2\nnull;NULL\nNull;valid\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        DataPreprocessor.clean_null_values(csv_path, logger)
+
+        # THEN
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str, na_filter=False)
+        assert df.iloc[0, 0] == ''
+        assert df.iloc[0, 1] == ''
+        assert df.iloc[1, 1] == 'valid'
+        os.unlink(csv_path)
+
+
+class TestReportGeneratorCoverage:
+    """Testes para garantir cobertura completa da classe ReportGenerator."""
+
+    def test_generate_inconsistency_report_no_issues(self):
+        """Testa relatório quando não há inconsistências."""
+        # GIVEN
+        report = [
+            {'inconsistent_percent': 0, 'final_type': 'INT64', 'type_reason': 'OTIMIZADO'}
+        ]
+        logger = Mock()
+
+        # WHEN
+        ReportGenerator.generate_inconsistency_report(report, logger)
+
+        # THEN
+        logger.info.assert_any_call("Nenhuma inconsistência significativa encontrada!")
+
+    def test_generate_inconsistency_report_with_issues(self):
+        """Testa relatório com inconsistências."""
+        # GIVEN
+        report = [
+            {
+                'inconsistent_percent': 5.0, 'final_type': 'STRING', 'type_reason': 'SEGURO',
+                'column': 'test_col', 'suggested_type': 'INT64', 'non_null_records': 100,
+                'null_records': 0, 'inconsistent_count': 5, 'confidence_score': 95.0,
+                'inconsistent_values': ['abc', 'def']
+            }
+        ]
+        logger = Mock()
+
+        # WHEN
+        ReportGenerator.generate_inconsistency_report(report, logger, threshold=1.0)
+
+        # THEN
+        logger.info.assert_any_call("COLUNA: test_col")
+
+    def test_most_affected_types_error_handling(self):
+        """Testa tratamento de erro no cálculo de tipos afetados."""
+        # GIVEN
+        columns = [{'suggested_type': None}]
+        logger = Mock()
+
+        # WHEN
+        result = ReportGenerator._most_affected_types(columns, logger)
+
+        # THEN
+        assert "None (1)" in result
+
+
+class TestBigQueryTableManagerCoverage:
+    """Testes para garantir cobertura completa da classe BigQueryTableManager."""
+
+    @patch('commons.big_query.service_account')
+    @patch('commons.big_query.bigquery')
+    @patch('builtins.open', new_callable=mock_open, read_data='{"type": "service_account"}')
+    def test_get_credentials_and_client_service_account(self, mock_file, mock_bq, mock_sa):
+        """Testa criação de cliente com service account."""
+        # GIVEN
+        logger = Mock()
+        mock_credentials = Mock()
+        mock_sa.Credentials.from_service_account_file.return_value = mock_credentials
+
+        # WHEN
+        BigQueryTableManager._get_credentials_and_client("project", "path", logger)
+
+        # THEN
+        mock_sa.Credentials.from_service_account_file.assert_called_once()
+        logger.info.assert_any_call("Usando credenciais de Service Account")
+
+    @patch('commons.big_query.load_credentials_from_file')
+    @patch('commons.big_query.bigquery')
+    @patch('builtins.open', new_callable=mock_open, read_data='{"type": "authorized_user"}')
+    def test_get_credentials_and_client_authorized_user(self, mock_file, mock_bq, mock_load_creds):
+        """Testa criação de cliente com authorized user."""
+        # GIVEN
+        logger = Mock()
+        mock_credentials = Mock()
+        mock_credentials.with_quota_project.return_value = mock_credentials
+        mock_load_creds.return_value = (mock_credentials, None)
+
+        # WHEN
+        BigQueryTableManager._get_credentials_and_client("project", "path", logger)
+
+        # THEN
+        mock_credentials.with_quota_project.assert_called_once_with("project")
+        logger.info.assert_any_call("Usando credenciais de Authorized User (OAuth2) com quota project")
+
+    @patch('commons.big_query.load_credentials_from_file')
+    @patch('commons.big_query.bigquery')
+    @patch('builtins.open', new_callable=mock_open, read_data='{"type": "unknown"}')
+    def test_get_credentials_and_client_unknown_type(self, mock_file, mock_bq, mock_load_creds):
+        """Testa criação de cliente com tipo desconhecido."""
+        # GIVEN
+        logger = Mock()
+        mock_credentials = Mock()
+        mock_load_creds.return_value = (mock_credentials, None)
+
+        # WHEN
+        BigQueryTableManager._get_credentials_and_client("project", "path", logger)
+
+        # THEN
+        logger.warning.assert_called_once()
+
+    @patch('commons.big_query.BigQueryTableManager._get_credentials_and_client')
+    @patch('os.path.exists')
+    def test_create_external_table_missing_files(self, mock_exists, mock_client):
+        """Testa criação de tabela externa com arquivos ausentes."""
+        # GIVEN
+        mock_exists.return_value = False
+
+        # WHEN & THEN
+        with pytest.raises(FileNotFoundError):
+            BigQueryTableManager.create_external_table("project", "tool", "table", "creds.json")
+
+
+class TestBigQueryMainClassCoverage:
+    """Testes para garantir cobertura completa da classe BigQuery principal."""
+
+    def test_constants_defined(self):
+        """Testa se todas as constantes estão definidas."""
+        # GIVEN & WHEN & THEN
+        assert BigQuery.DEFAULT_OUTPUT_DIR == './output'
+        assert BigQuery.CSV_DELIMITER == ';'
+        assert BigQuery.LOG_FORMAT is not None
+
+    def test_initialization_with_defaults(self):
+        """Testa inicialização com valores padrão."""
+        # GIVEN & WHEN
         bq = BigQuery()
 
         # THEN
         assert bq.output_dir == Path('./output')
         assert bq.max_workers > 0
-        assert hasattr(bq, 'logger')
+        assert bq._lock is not None
 
-    def test_init_custom_values(self):
-        """Testa inicialização com valores personalizados."""
-        # GIVEN
-        custom_dir = "/custom/path"
-        custom_workers = 4
-
-        # WHEN
-        bq = BigQuery(output_dir=custom_dir, max_workers=custom_workers)
+    def test_initialization_with_custom_values(self):
+        """Testa inicialização com valores customizados."""
+        # GIVEN & WHEN
+        bq = BigQuery(output_dir='/custom', max_workers=4)
 
         # THEN
-        assert bq.output_dir == Path(custom_dir)
-        assert bq.max_workers == custom_workers
+        assert bq.output_dir == Path('/custom')
+        assert bq.max_workers == 4
 
-    def test_thread_safe_logging(self):
-        """Testa se o logging é thread-safe."""
+    def test_thread_safe_log(self):
+        """Testa logging thread-safe."""
         # GIVEN
         bq = BigQuery()
+        bq.logger = Mock()
 
         # WHEN
-        with patch.object(bq.logger, 'info') as mock_log:
-            bq._thread_safe_log('info', 'test message')
+        bq._thread_safe_log('info', 'test message')
 
         # THEN
-        mock_log.assert_called_once_with('test message')
-
-
-class TestPatternDetection:
-    """Testes para detecção de padrões em dados."""
-
-    def test_pattern_detection_basic_types(self):
-        """Testa detecção de tipos básicos."""
-        # GIVEN
-        bq = BigQuery()
-
-        # WHEN & THEN
-        assert bq._detect_pattern("123") == "integer"
-        assert bq._detect_pattern("-456") == "integer"
-        assert bq._detect_pattern("123.456789") == "float"
-        assert bq._detect_pattern("123.45") == "float"
-        assert bq._detect_pattern("123.45e2") == "float"
-        assert bq._detect_pattern("true") == "boolean"
-        assert bq._detect_pattern("false") == "boolean"
-        assert bq._detect_pattern("yes") == "string"
-        assert bq._detect_pattern("12:30:45") == "time"
-        assert bq._detect_pattern("hello") == "string"
-
-    def test_integer_validation(self):
-        """Testa validação específica de inteiros."""
-        # GIVEN
-        bq = BigQuery()
-
-        # WHEN & THEN
-        assert bq._is_integer("123")
-        assert bq._is_integer("-456")
-        assert bq._is_integer("0")
-        assert not bq._is_integer("123.45")
-        assert not bq._is_integer("abc")
-        assert not bq._is_integer("9223372036854775808")
-
-    def test_numeric_validation(self):
-        """Testa validação de números de alta precisão."""
-        # GIVEN
-        bq = BigQuery()
-
-        # WHEN & THEN
-        assert bq._is_numeric("123.1234567")
-        assert not bq._is_numeric("123.123")
-        assert not bq._is_numeric("123")
-        assert not bq._is_numeric("abc.123")
-
-    def test_boolean_detection(self):
-        """Testa detecção de valores booleanos."""
-        # GIVEN
-        bq = BigQuery()
-        text_booleans = ['true', 'false']
-        numeric_values = ['1', '0']
-
-        # WHEN & THEN
-        for value in text_booleans:
-            assert bq._detect_pattern(value) == 'boolean'
-
-        for value in numeric_values:
-            assert bq._detect_pattern(value) in ['integer', 'boolean']
-
-    def test_date_detection(self):
-        """Testa detecção de diferentes tipos de data."""
-        # GIVEN
-        bq = BigQuery()
-        test_cases = [
-            ("2023-01-01", "date"),
-            ("2023-01-01 12:30:45", "timestamp"),
-            ("2023-01-01T12:30:45Z", "timestamp"),
-            ("2023-01-01T12:30:45+00:00", "timestamp"),
-        ]
-
-        # WHEN & THEN
-        for value, expected_type in test_cases:
-            assert bq._detect_pattern(value) == expected_type
-
-    def test_time_validation(self):
-        """Testa validação de horários."""
-        # GIVEN
-        bq = BigQuery()
-        valid_times = ["12:30:45", "23:59:59", "12:30:45.123"]
-        invalid_times = ["abc:30:45", "12:70:45"]
-
-        # WHEN & THEN
-        for time_val in valid_times:
-            assert bq._is_time(time_val)
-
-        for time_val in invalid_times:
-            assert not bq._is_time(time_val)
-
-
-class TestColumnAnalysis:
-    """Testes para análise de colunas."""
-
-    def test_analyze_column_worker_integers(self):
-        """Testa análise de coluna com inteiros."""
-        # GIVEN
-        column_data = ["1", "2", "3", "4", "5"]
-
-        # WHEN
-        result = analyze_column_worker(
-            "test_col", column_data,
-            BigQuery.BOOLEAN_VALUES, BigQuery.TYPE_MAPPING
-        )
-
-        # THEN
-        assert result['column'] == 'test_col'
-        assert result['suggested_type'] == 'INT64'
-        assert result['non_null_records'] == 5
-        assert result['inconsistent_count'] == 0
-        assert result['confidence_score'] == 100.0
-
-    def test_analyze_column_worker_empty_data(self):
-        """Testa análise de coluna vazia."""
-        # GIVEN
-        column_data = [None, None, None]
-
-        # WHEN
-        result = analyze_column_worker(
-            "empty_col", column_data,
-            BigQuery.BOOLEAN_VALUES, BigQuery.TYPE_MAPPING
-        )
-
-        # THEN
-        assert result['suggested_type'] == 'STRING'
-        assert result['non_null_records'] == 0
-        assert result['null_records'] == 3
-        assert result['confidence_score'] == 0
-
-    def test_analyze_column_worker_with_nulls(self):
-        """Testa análise de coluna com valores nulos misturados."""
-        # GIVEN
-        column_data = ["1", "2", None, "4", None]
-
-        # WHEN
-        result = analyze_column_worker(
-            "with_nulls", column_data,
-            BigQuery.BOOLEAN_VALUES, BigQuery.TYPE_MAPPING
-        )
-
-        # THEN
-        assert result['suggested_type'] == 'INT64'
-        assert result['non_null_records'] == 3
-        assert result['null_records'] == 2
-        assert result['inconsistent_count'] == 0
-
-
-class TestCsvProcessing:
-    """Testes para processamento de arquivos CSV."""
+        bq.logger.info.assert_called_once_with('test message')
 
     def test_find_csv_files_empty_directory(self):
-        """Testa busca em diretório vazio."""
+        """Testa busca de arquivos CSV em diretório vazio."""
         # GIVEN
-        bq = BigQuery()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bq = BigQuery(output_dir=temp_dir)
 
-        # WHEN
-        with patch('glob.glob', return_value=[]):
+            # WHEN
             files = bq._find_csv_files()
 
-        # THEN
-        assert files == []
-
-    def test_find_csv_files_with_files(self):
-        """Testa busca com arquivos presentes."""
-        # GIVEN
-        bq = BigQuery()
-        mock_files = ["/path/file1.csv", "/path/file2.csv"]
-
-        # WHEN
-        with patch('glob.glob', return_value=mock_files):
-            files = bq._find_csv_files()
-
-        # THEN
-        assert len(files) == 2
-        assert all(isinstance(f, Path) for f in files)
-
-    def test_process_single_csv_success(self):
-        """Testa processamento bem-sucedido de um CSV."""
-        # GIVEN
-        bq = BigQuery()
-        csv_path = Path("test.csv")
-        mock_df = pd.DataFrame({
-            "col1": ["1", "2", "3"],
-            "col2": ["a", "b", "c"]
-        })
-        mock_schema = [{"name": "col1", "type": "INT64", "mode": "NULLABLE"}]
-        mock_report = [{"column": "col1", "suggested_type": "INT64"}]
-
-        # WHEN
-        with patch('pandas.read_csv', return_value=mock_df), \
-                patch.object(bq, '_generate_schema_parallel', return_value=(mock_schema, mock_report)), \
-                patch.object(bq, '_generate_inconsistency_report'), \
-                patch.object(bq, '_save_schema'), \
-                patch.object(bq, '_thread_safe_log'):
-            bq._process_single_csv(csv_path)
-
-        # THEN - Não há erros se chegou aqui
-
-    def test_process_single_csv_empty_file(self):
-        """Testa processamento de arquivo vazio."""
-        # GIVEN
-        bq = BigQuery()
-        csv_path = Path("empty.csv")
-
-        # WHEN & THEN
-        with patch('pandas.read_csv', side_effect=pd.errors.EmptyDataError()), \
-                patch.object(bq, '_thread_safe_log'):
-            with pytest.raises(pd.errors.EmptyDataError):
-                bq._process_single_csv(csv_path)
+            # THEN
+            assert len(files) == 0
 
     def test_process_all_csv_files_no_files(self):
-        """Testa processamento quando não há arquivos CSV."""
+        """Testa processamento quando não há arquivos."""
         # GIVEN
-        bq = BigQuery()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bq = BigQuery(output_dir=temp_dir)
 
-        # WHEN
-        with patch.object(bq, '_find_csv_files', return_value=[]):
+            # WHEN
             bq._process_all_csv_files()
 
-        # THEN - Deve completar sem erro
+            # THEN - Deve completar sem erro
 
-    def test_process_all_csv_files_with_files(self):
-        """Testa processamento paralelo de múltiplos arquivos."""
-        # GIVEN
-        bq = BigQuery()
-        mock_files = [Path("file1.csv"), Path("file2.csv")]
-
-        # WHEN
-        with patch.object(bq, '_find_csv_files', return_value=mock_files), \
-                patch.object(bq, '_process_single_csv_safe') as mock_process:
-            bq._process_all_csv_files()
-
-        # THEN
-        assert mock_process.call_count == 2
-
-
-class TestSchemaGeneration:
-    """Testes para geração de esquemas."""
-
-    def test_generate_schema_parallel_simple(self):
-        """Testa geração de schema com dados simples."""
-        # GIVEN
-        bq = BigQuery()
-        df = pd.DataFrame({
-            "int_col": ["1", "2", "3"],
-            "str_col": ["a", "b", "c"]
-        })
-        mock_results = [
-            {"column": "int_col", "suggested_type": "INT64", "inconsistent_percent": 0, "type_reason": "OTIMIZADO"},
-            {"column": "str_col", "suggested_type": "STRING", "inconsistent_percent": 10, "type_reason": "SEGURO"}
-        ]
-
-        # WHEN
-        with patch('concurrent.futures.ProcessPoolExecutor') as mock_executor:
-            mock_future = MagicMock()
-            mock_future.result.side_effect = mock_results
-            mock_executor.return_value.__enter__.return_value.submit.return_value = mock_future
-            mock_executor.return_value.__enter__.return_value.__iter__ = lambda self: iter([mock_future, mock_future])
-            schema, report = bq._generate_schema_parallel(df)
-
-        # THEN
-        assert len(schema) == 2
-        assert len(report) == 2
-        assert schema[0]['name'] == 'int_col'
-        assert schema[0]['type'] == 'INT64'
-
-    def test_save_schema_success(self):
-        """Testa salvamento bem-sucedido do schema."""
+    def test_save_schema_format(self):
+        """Testa formato de salvamento do schema."""
         # GIVEN
         bq = BigQuery()
         schema = [
-            {"name": "col1", "type": "INT64", "mode": "NULLABLE"},
-            {"name": "col2", "type": "STRING", "mode": "NULLABLE"}
-        ]
-        expected_content = [
-            {"name": "col1", "type": "INT64"},
-            {"name": "col2", "type": "STRING"}
+            {'name': 'col1', 'type': 'STRING', 'mode': 'NULLABLE'},
+            {'name': 'col2', 'type': 'INT64', 'mode': 'NULLABLE'}
         ]
 
-        # WHEN
-        with patch('builtins.open', mock_open()), \
-                patch('json.dump') as mock_json_dump:
-            bq._save_schema(schema, "test_schema.json")
-
-        # THEN
-        mock_json_dump.assert_called_once_with(
-            expected_content, ANY, indent=2, ensure_ascii=False
-        )
-
-    def test_save_schema_error(self):
-        """Testa tratamento de erro no salvamento do schema."""
-        # GIVEN
-        bq = BigQuery()
-        schema = [{"name": "col1", "type": "INT64"}]
-
-        # WHEN & THEN
-        with patch('builtins.open', side_effect=IOError("Permission denied")):
-            with pytest.raises(IOError):
-                bq._save_schema(schema, "test_schema.json")
-
-
-class TestReporting:
-    """Testes para geração de relatórios."""
-
-    def test_generate_inconsistency_report_no_issues(self):
-        """Testa relatório quando não há inconsistências."""
-        # GIVEN
-        bq = BigQuery()
-        report = [
-            {
-                "column": "col1", "final_type": "INT64", "type_reason": "OTIMIZADO",
-                "inconsistent_percent": 0, "inconsistent_count": 0
-            }
-        ]
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            schema_path = f.name
 
         # WHEN
-        with patch.object(bq.logger, 'info') as mock_log:
-            bq._generate_inconsistency_report(report)
-            log_messages = [call[0][0] for call in mock_log.call_args_list]
+        bq._save_schema(schema, schema_path)
 
         # THEN
-        assert any("Nenhuma inconsistência" in msg for msg in log_messages)
+        with open(schema_path, 'r') as f:
+            saved_schema = json.load(f)
 
-    def test_generate_inconsistency_report_with_issues(self):
-        """Testa relatório com inconsistências encontradas."""
-        # GIVEN
-        bq = BigQuery()
-        report = [
-            {
-                "column": "problematic_col", "final_type": "STRING", "type_reason": "SEGURO",
-                "suggested_type": "INT64", "inconsistent_percent": 15.5,
-                "inconsistent_count": 100, "non_null_records": 1000, "null_records": 50,
-                "confidence_score": 84.5, "inconsistent_values": ["abc", "def"]
-            }
-        ]
+        assert len(saved_schema) == 2
+        assert saved_schema[0]['name'] == 'col1'
+        assert saved_schema[0]['type'] == 'STRING'
+        assert 'mode' not in saved_schema[0]  # Deve ser removido
 
-        # WHEN
-        with patch.object(bq.logger, 'info') as mock_log:
-            bq._generate_inconsistency_report(report, threshold=10.0)
-            log_messages = [call[0][0] for call in mock_log.call_args_list]
-
-        # THEN
-        assert any("problematic_col" in msg for msg in log_messages)
-        assert any("15.5" in str(msg) for msg in log_messages)
-
-    def test_most_affected_types(self):
-        """Testa identificação dos tipos mais afetados."""
-        # GIVEN
-        bq = BigQuery()
-        columns = [
-            {"suggested_type": "INT64"},
-            {"suggested_type": "INT64"},
-            {"suggested_type": "FLOAT64"},
-        ]
-
-        # WHEN
-        result = bq._most_affected_types(columns)
-
-        # THEN
-        assert "INT64 (2)" in result
-        assert "FLOAT64 (1)" in result
+        os.unlink(schema_path)
 
 
-class TestBigQueryOperations:
-    """Testes para operações do BigQuery."""
+class TestAnalyzeColumnWorkerCoverage:
+    """Testes para garantir cobertura completa da função analyze_column_worker."""
 
-    def test_create_externa_table_success(self):
-        """Testa criação bem-sucedida de tabela externa."""
-        # GIVEN
-        schema_content = [{"name": "col1", "type": "INT64"}]
-        credentials_content = {"type": "service_account", "project_id": "test-project"}
-
-        os.makedirs("output/test_table", exist_ok=True)
-
-        # WHEN
-        with patch('os.path.exists', return_value=True), \
-                patch('builtins.open') as mock_open_file, \
-                patch('google.oauth2.service_account.Credentials.from_service_account_file'), \
-                patch('google.cloud.bigquery.Client') as mock_client:
-
-            def side_effect(file_path, *args, **kwargs):
-                if 'credentials.json' in str(file_path):
-                    return mock_open(read_data=json.dumps(credentials_content))()
-                else:
-                    return mock_open(read_data=json.dumps(schema_content))()
-
-            mock_open_file.side_effect = side_effect
-
-            mock_job = MagicMock()
-            mock_table = MagicMock()
-            mock_table.num_rows = 1000
-
-            mock_client_instance = mock_client.return_value
-            mock_client_instance.load_table_from_file.return_value = mock_job
-            mock_client_instance.get_table.return_value = mock_table
-
-            BigQuery._create_externa_table(
-                "test-project", "test_tool", "test_table", "credentials.json"
-            )
-
-        # THEN
-        mock_client_instance.delete_table.assert_called_once()
-        mock_client_instance.load_table_from_file.assert_called_once()
-        mock_job.result.assert_called_once()
-
-    def test_create_externa_table_missing_files(self):
-        """Testa erro quando arquivos estão ausentes."""
-        # GIVEN & WHEN & THEN
-        with patch('os.path.exists', return_value=False):
-            with pytest.raises(FileNotFoundError):
-                BigQuery._create_externa_table(
-                    "test-project", "test_tool", "test_table", "credentials.json"
-                )
-
-    def test_create_gold_table_success(self):
-        """Testa criação bem-sucedida de tabela gold."""
-        # GIVEN
-        credentials_content = {"type": "service_account", "project_id": "test-project"}
-
-        # WHEN
-        with patch('builtins.open', mock_open(read_data=json.dumps(credentials_content))), \
-                patch('google.oauth2.service_account.Credentials.from_service_account_file'), \
-                patch('google.cloud.bigquery.Client') as mock_client:
-            mock_job = MagicMock()
-            mock_table = MagicMock()
-            mock_table.num_rows = 1000
-            mock_table.schema = ["col1", "col2"]
-
-            mock_client_instance = mock_client.return_value
-            mock_client_instance.query.return_value = mock_job
-            mock_client_instance.get_table.return_value = mock_table
-
-            BigQuery._create_gold_table(
-                "test-project", "test_tool", "test_table", "credentials.json"
-            )
-
-        # THEN
-        mock_client_instance.query.assert_called_once()
-        mock_job.result.assert_called_once()
-
-    def test_start_pipeline_success(self):
-        """Testa pipeline completo bem-sucedido."""
+    def test_analyze_column_worker_empty_data(self):
+        """Testa worker com dados vazios."""
         # GIVEN & WHEN
-        with patch.object(BigQuery, '_create_externa_table') as mock_externa, \
-                patch.object(BigQuery, '_create_gold_table') as mock_gold:
-            BigQuery.start_pipeline(
-                "test-project", "test_tool", "test_table", "credentials.json"
-            )
+        result = analyze_column_worker("empty_col", [],
+                                       DataTypeDetector.BOOLEAN_VALUES,
+                                       DataTypeDetector.TYPE_MAPPING)
 
         # THEN
-        mock_externa.assert_called_once()
-        mock_gold.assert_called_once()
-
-    def test_start_pipeline_failure(self):
-        """Testa falha no pipeline."""
-        # GIVEN & WHEN & THEN
-        with patch.object(BigQuery, '_create_externa_table', side_effect=Exception("BigQuery error")):
-            with pytest.raises(Exception):
-                BigQuery.start_pipeline(
-                    "test-project", "test_tool", "test_table", "credentials.json"
-                )
-
-
-class TestStaticMethods:
-    """Testes para métodos estáticos."""
-
-    def test_process_csv_files_class_method(self):
-        """Testa método de classe para processar arquivos CSV."""
-        # GIVEN & WHEN
-        with patch.object(BigQuery, '_process_all_csv_files') as mock_process:
-            BigQuery.process_csv_files("./test_output", max_workers=2)
-
-        # THEN
-        mock_process.assert_called_once()
-
-
-class TestExceptionHandling:
-    """Testes para verificar tratamento de exceções."""
-
-    def test_pattern_detection_exception(self):
-        """Testa tratamento de exceção na detecção de padrões."""
-        # GIVEN
-        bq = BigQuery()
-
-        # WHEN
-        with patch.object(bq, '_is_integer', side_effect=Exception("Parse error")):
-            result = bq._detect_pattern("123")
-
-        # THEN
-        assert result == 'string'
-
-    def test_analyze_column_worker_exception(self):
-        """Testa tratamento de exceção no worker de análise."""
-        # GIVEN & WHEN
-        with patch('pandas.notna', side_effect=Exception("Pandas error")):
-            result = analyze_column_worker(
-                "error_col", ["1", "2", "3"],
-                BigQuery.BOOLEAN_VALUES, BigQuery.TYPE_MAPPING
-            )
-
-        # THEN
+        assert result['column'] == 'empty_col'
         assert result['suggested_type'] == 'STRING'
-        assert 'error' in result
+        assert result['total_records'] == 0
+        assert result['inconsistent_count'] == 0
 
-    def test_generate_inconsistency_report_exception(self):
-        """Testa tratamento de exceção no relatório de inconsistências."""
-        # GIVEN
-        bq = BigQuery()
-        invalid_report = [{"invalid": "data"}]
-
-        # WHEN
-        with patch.object(bq.logger, 'error') as mock_error:
-            bq._generate_inconsistency_report(invalid_report)
-
-        # THEN
-        mock_error.assert_called()
-
-    def test_most_affected_types_exception(self):
-        """Testa tratamento de exceção na identificação de tipos afetados."""
-        # GIVEN
-        bq = BigQuery()
-        invalid_columns = [{"wrong_key": "value"}]
-
-        # WHEN
-        result = bq._most_affected_types(invalid_columns)
-
-        # THEN
-        assert result == "Erro ao calcular"
-
-    def test_bigquery_operations_exceptions(self):
-        """Testa tratamento de exceções nas operações do BigQuery."""
-        # GIVEN & WHEN & THEN
-        with patch('os.path.exists', return_value=True), \
-                patch('builtins.open', mock_open(read_data='[{"name": "col1", "type": "INT64"}]')), \
-                patch('google.oauth2.service_account.Credentials.from_service_account_file'), \
-                patch('google.cloud.bigquery.Client', side_effect=Exception("BigQuery connection error")):
-            with pytest.raises(Exception):
-                BigQuery._create_externa_table(
-                    "test-project", "test_tool", "test_table", "credentials.json"
-                )
-
-        with patch('google.oauth2.service_account.Credentials.from_service_account_file'), \
-                patch('google.cloud.bigquery.Client', side_effect=Exception("BigQuery error")):
-            with pytest.raises(Exception):
-                BigQuery._create_gold_table(
-                    "test-project", "test_tool", "test_table", "credentials.json"
-                )
-
-
-class TestAdditionalCoverage:
-    """Testes para garantir cobertura completa."""
-
-    def test_csv_delimiter_constant(self):
-        """Testa se a constante do delimitador está definida."""
-        # GIVEN & WHEN & THEN
-        assert BigQuery.CSV_DELIMITER == ';'
-
-    def test_type_mapping_constant(self):
-        """Testa se o mapeamento de tipos está completo."""
-        # GIVEN
-        expected_types = [
-            'integer', 'numeric', 'float', 'date', 'datetime',
-            'timestamp', 'time', 'boolean', 'string'
-        ]
-
-        # WHEN & THEN
-        for type_name in expected_types:
-            assert type_name in BigQuery.TYPE_MAPPING
-
-    def test_boolean_values_constant(self):
-        """Testa se os valores booleanos estão definidos."""
-        # GIVEN & WHEN & THEN
-        assert 'true' in BigQuery.BOOLEAN_VALUES
-        assert 'false' in BigQuery.BOOLEAN_VALUES
-
-    def test_edge_case_integer_bounds(self):
-        """Testa limites de inteiros."""
-        # GIVEN
-        bq = BigQuery()
-
-        # WHEN & THEN
-        assert bq._is_integer("9223372036854775807")
-        assert bq._is_integer("-9223372036854775808")
-        assert not bq._is_integer("9223372036854775808")
-
-    def test_edge_case_empty_strings(self):
-        """Testa comportamento com strings vazias."""
-        # GIVEN
-        bq = BigQuery()
-
-        # WHEN & THEN
-        assert bq._detect_pattern("") == 'string'
-        assert bq._detect_pattern("   ") == 'string'
-
-    def test_worker_function_direct_call(self):
-        """Testa chamada direta da função worker."""
+    def test_analyze_column_worker_all_null(self):
+        """Testa worker com todos valores nulos."""
         # GIVEN & WHEN
-        result = analyze_column_worker(
-            "direct_test", ["1", "2", "3"],
-            BigQuery.BOOLEAN_VALUES, BigQuery.TYPE_MAPPING
-        )
+        result = analyze_column_worker("null_col", [None, pd.NA, ''],
+                                       DataTypeDetector.BOOLEAN_VALUES,
+                                       DataTypeDetector.TYPE_MAPPING)
 
         # THEN
-        assert result['column'] == 'direct_test'
+        assert result['column'] == 'null_col'
+        assert result['suggested_type'] == 'STRING'
+        assert result['null_records'] > 0
+
+    def test_analyze_column_worker_consistent_integers(self):
+        """Testa worker com inteiros consistentes."""
+        # GIVEN & WHEN
+        result = analyze_column_worker("int_col", ["1", "2", "3", "4"],
+                                       DataTypeDetector.BOOLEAN_VALUES,
+                                       DataTypeDetector.TYPE_MAPPING)
+
+        # THEN
+        assert result['column'] == 'int_col'
         assert result['suggested_type'] == 'INT64'
         assert result['inconsistent_count'] == 0
+        assert result['confidence_score'] == 100.0
+
+    def test_analyze_column_worker_mixed_data(self):
+        """Testa worker com dados mistos."""
+        # GIVEN & WHEN
+        result = analyze_column_worker("mixed_col", ["1", "2", "abc", "4"],
+                                       DataTypeDetector.BOOLEAN_VALUES,
+                                       DataTypeDetector.TYPE_MAPPING)
+
+        # THEN
+        assert result['column'] == 'mixed_col'
+        assert result['inconsistent_count'] == 1
+        assert 'abc' in result['inconsistent_values']
+        assert result['confidence_score'] < 100.0
+
+    def test_analyze_column_worker_error_handling(self):
+        """Testa worker com tratamento de erro."""
+        # GIVEN & WHEN
+        result = analyze_column_worker("robust_col", [object()],
+                                       DataTypeDetector.BOOLEAN_VALUES,
+                                       DataTypeDetector.TYPE_MAPPING)
+
+        # THEN
+        assert result['column'] == 'robust_col'
+        assert result['suggested_type'] == 'STRING'  # Fallback seguro
+
+
+class TestEdgeCasesAndErrorHandling:
+    """Testes para casos extremos e tratamento de erros."""
+
+    def test_process_csv_files_class_method(self):
+        """Testa método de classe process_csv_files."""
+        # GIVEN
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # WHEN & THEN - Deve completar sem erro
+            BigQuery.process_csv_files(output_dir=temp_dir, max_workers=1)
+
+    @patch('commons.big_query.BigQueryTableManager.create_external_table')
+    @patch('commons.big_query.BigQueryTableManager.create_gold_table')
+    def test_start_pipeline_success(self, mock_gold, mock_external):
+        """Testa pipeline completo com sucesso."""
+        # GIVEN
+        mock_external.return_value = None
+        mock_gold.return_value = None
+
+        # WHEN & THEN - Deve completar sem erro
+        BigQuery.start_pipeline("project", "tool", "table", "creds.json")
+
+    @patch('commons.big_query.BigQueryTableManager.create_external_table')
+    def test_start_pipeline_failure(self, mock_external):
+        """Testa pipeline com falha."""
+        # GIVEN
+        mock_external.side_effect = Exception("Test error")
+
+        # WHEN & THEN
+        with pytest.raises(Exception, match="Test error"):
+            BigQuery.start_pipeline("project", "tool", "table", "creds.json")
+
+    def test_data_type_detector_with_invalid_numeric(self):
+        """Testa DataTypeDetector com valor numérico inválido."""
+        # GIVEN & WHEN & THEN
+        assert DataTypeDetector._is_numeric("invalid_decimal") is False
+
+    def test_timestamp_conversion_invalid_values(self):
+        """Testa conversão de timestamp com valores inválidos."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("timestamp_col\n32/12/2023 14:30:45\n")  # Data inválida
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.convert_timestamp_br_to_iso(csv_path, None, logger)
+
+        # THEN
+        assert result == 0  # Nenhuma conversão realizada
+        os.unlink(csv_path)
