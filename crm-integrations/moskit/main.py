@@ -60,9 +60,135 @@ def get_auth_headers(api_key):
     }
 
 
+def get_response_headers(http_client, endpoint, headers, params=None):
+    """Faz requisição e captura headers usando requests diretamente."""
+    import requests
+
+    # Construir URL completa
+    url = f"{http_client.base_url}/{endpoint}"
+
+    # Aplicar rate limiting se disponível
+    if http_client.rate_limiter:
+        http_client.rate_limiter.check()
+
+    # Fazer requisição direta
+    response = requests.get(url, headers=headers, params=params, timeout=http_client.default_timeout)
+    response.raise_for_status()
+
+    return response.json(), dict(response.headers)
+
+
+def fetch_page(http_client, endpoint, headers, next_page_token=None, params=None):
+    """Busca uma página específica usando token ou offset."""
+    try:
+        # Configurar parâmetros base
+        req_params = {"quantity": QUANTITY}
+        if params:
+            req_params.update(params)
+
+        # Usar token se disponível, senão usar offset
+        if next_page_token:
+            req_params["nextPageToken"] = next_page_token
+        else:
+            req_params["offset"] = 0
+
+        # Buscar dados com headers
+        data, headers_dict = get_response_headers(http_client, endpoint, headers, req_params)
+
+        # Extrair itens da resposta
+        if isinstance(data, list):
+            items = data
+        else:
+            items = data.get('data', [])
+
+        # Extrair informações de paginação dos headers
+        next_token = headers_dict.get("X-Moskit-Listing-Next-Page-Token")
+        total_count = headers_dict.get("X-Moskit-Listing-Total")
+
+        # Converter total para int se disponível
+        try:
+            total_count = int(total_count) if total_count else None
+        except:
+            total_count = None
+
+        has_more = bool(next_token)
+
+        return {
+            'items': items,
+            'has_more': has_more,
+            'next_page_token': next_token,
+            'total_count': total_count
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar página de {endpoint}: {str(e)}")
+        raise
+
+
+def fetch_all_pages(http_client, endpoint, headers, params=None):
+    """Busca todas as páginas de um endpoint."""
+    logger.info(f"📚 Coletando dados de: {endpoint}")
+    start_time = time.time()
+
+    all_items = []
+    next_token = None
+    page_count = 0
+    last_log_time = start_time
+
+    while True:
+        try:
+            page_count += 1
+
+            # Buscar página atual
+            page_result = fetch_page(http_client, endpoint, headers, next_token, params)
+            items = page_result['items']
+
+            # Se não há itens, parar
+            if not items:
+                logger.info(f"📄 Página {page_count} vazia, finalizando coleta")
+                break
+
+            all_items.extend(items)
+
+            # Log de progresso inicial
+            if page_count == 1:
+                total = page_result.get('total_count')
+                if total:
+                    logger.info(f"📊 {endpoint}: {total:,} registros disponíveis")
+
+            # Log de progresso periódico
+            current_time = time.time()
+            if page_count % 20 == 0 or (current_time - last_log_time) > 30:
+                logger.info(f"📄 {endpoint}: {len(all_items):,} itens coletados em {page_count} páginas")
+                last_log_time = current_time
+
+            # Verificar se há mais páginas
+            if not page_result['has_more']:
+                break
+
+            next_token = page_result['next_page_token']
+            if not next_token:
+                break
+
+            # Pausa entre requisições
+            time.sleep(0.1)
+
+        except Exception as e:
+            logger.error(f"❌ Erro na página {page_count} de {endpoint}: {str(e)}")
+            # Tentar algumas vezes antes de desistir
+            if page_count == 1:
+                raise  # Se falha na primeira página, é erro crítico
+            time.sleep(2)
+            continue
+
+    duration = time.time() - start_time
+    logger.info(f"✅ {endpoint}: {len(all_items):,} registros em {page_count} páginas ({duration:.1f}s)")
+
+    return all_items
+
+
 def fetch_data(http_client, endpoint, headers, offset=0, params=None, debug_info=None):
-    """Busca dados de um endpoint específico."""
-    # Parâmetros padrão com possibilidade de override
+    """Busca dados de um endpoint específico (compatibilidade)."""
     params = params or {}
     default_params = {"quantity": QUANTITY}
 
@@ -72,95 +198,9 @@ def fetch_data(http_client, endpoint, headers, offset=0, params=None, debug_info
         default_params["nextPageToken"] = offset.replace("token:", "")
 
     default_params.update(params)
-
-    # Usar debug_info fornecido ou gerar um padrão
     req_debug = debug_info or f"{endpoint}:o{offset}"
 
     return http_client.get(endpoint, headers=headers, params=default_params, debug_info=req_debug)
-
-
-def fetch_page(http_client, endpoint, headers, offset, params=None):
-    """Busca uma página específica de um endpoint."""
-    try:
-        data = fetch_data(http_client, endpoint, headers, offset, params)
-
-        # Verificar se a resposta é uma lista ou um objeto com campo 'data'
-        if isinstance(data, list):
-            items = data
-        else:
-            items = data.get('data', [])
-
-        # Verificar o token de próxima página nas headers da resposta
-        next_page_token = None
-        if hasattr(data, 'headers'):
-            next_page_token = data.headers.get("X-Moskit-Listing-Next-Page-Token")
-
-        has_more = bool(next_page_token)
-        total_count = len(items)  # A API Moskit não fornece contagem total
-
-        # Determinar número da página atual (aproximado)
-        current_page = 1
-        if isinstance(offset, int):
-            limit = params.get('quantity', QUANTITY) if params else QUANTITY
-            current_page = (offset // limit) + 1
-
-        # Log condicional para reduzir verbosidade
-        if current_page == 1 or not has_more or current_page % 20 == 0:
-            logger.info(f"📄 Endpoint {endpoint}: página {current_page} com {len(items)} itens")
-
-        return {
-            'items': items,
-            'has_more': has_more,
-            'next_page_token': next_page_token,
-            'total_count': total_count,
-            'current_page': current_page
-        }
-    except Exception as e:
-        logger.error(f"❌ Erro ao buscar offset {offset} para {endpoint}: {str(e)}")
-        raise
-
-
-def fetch_all_pages(http_client, endpoint, headers, params=None):
-    """Busca todas as páginas de um endpoint."""
-    logger.info(f"📚 Buscando todas as páginas para: {endpoint}")
-    start_time = time.time()
-
-    # Buscar primeira página
-    first_page = fetch_page(http_client, endpoint, headers, 0, params)
-    all_items = first_page['items'].copy()  # Uso de .copy() para evitar referências
-    has_more = first_page['has_more']
-    next_token = first_page.get('next_page_token')
-
-    # Inicializar contadores
-    page_count = 1
-
-    # Continuar buscando enquanto houver mais páginas
-    while has_more and next_token:
-        try:
-            page_count += 1
-
-            # Usar o token para a próxima página
-            page_data = fetch_page(http_client, endpoint, headers, f"token:{next_token}", params)
-            all_items.extend(page_data['items'])
-
-            # Atualizar controles de paginação
-            has_more = page_data['has_more']
-            next_token = page_data.get('next_page_token')
-
-            # Log de progresso periódico
-            if page_count % 10 == 0:
-                logger.info(f"📊 Progresso {endpoint}: {len(all_items)} itens coletados em {page_count} páginas")
-                time.sleep(0.5)  # Pausa para respeitar rate limit
-
-        except Exception as e:
-            logger.error(f"❌ Erro ao buscar página {page_count} de {endpoint}: {str(e)}")
-            # Tentar novamente após uma pausa
-            time.sleep(2)
-            continue
-
-    duration = time.time() - start_time
-    logger.info(f"✅ Endpoint {endpoint}: {page_count} páginas com {len(all_items)} itens obtidos em {duration:.2f}s")
-    return all_items
 
 
 def fetch_with_id(http_client, template, id_value, headers, params=None, no_pagination=False):
@@ -174,30 +214,24 @@ def fetch_with_id(http_client, template, id_value, headers, params=None, no_pagi
             result = fetch_data(http_client, endpoint, headers, debug_info=debug_info, params=params)
 
             if isinstance(result, dict) and result:
-                # Se for um único objeto, adicionar o ID do pai
                 if "object" in result and result["object"] != "list":
                     result["parent_id"] = id_value
                     return [result]
-                # Se for uma lista mas não no formato padrão
                 elif "data" in result and isinstance(result["data"], list):
                     for item in result["data"]:
                         item["parent_id"] = id_value
                     return result["data"]
-                # Para o caso de retornar um objeto direto
                 else:
                     result["parent_id"] = id_value
                     return [result]
             elif isinstance(result, list):
-                # Se já for uma lista, adicionar parent_id a cada item
                 for item in result:
                     item["parent_id"] = id_value
                 return result
-
             return []
         else:
             # Endpoint com paginação
             items = fetch_all_pages(http_client, endpoint, headers, params)
-            # Adicionar ID do pai a cada item
             for item in items:
                 item["parent_id"] = id_value
             return items
@@ -208,221 +242,138 @@ def fetch_with_id(http_client, template, id_value, headers, params=None, no_pagi
 
 
 def process_dependent_endpoints(http_client, parent_data, config, headers):
-    """Processa endpoints dependentes de IDs usando ThreadPoolExecutor."""
+    """Processa endpoints dependentes de IDs."""
     endpoint_name = config.get("name", "")
     endpoint_template = config.get("endpoint", "")
     id_field = config.get("id_field", "id")
     no_pagination = config.get("no_pagination", False)
     params = config.get("params", {})
 
-    logger.info(f"\n{'=' * 30} PROCESSANDO ENDPOINT DEPENDENTE: {endpoint_name.upper()} {'=' * 30}")
+    logger.info(f"🔗 Processando endpoint dependente: {endpoint_name}")
 
-    # Verificar se há dados de parent
     if not parent_data:
-        logger.warning(f"⚠️ Sem dados de parent para processar {endpoint_name}")
+        logger.warning(f"⚠️ Sem dados parent para {endpoint_name}")
         return []
 
-    # Limitar número de IDs para processamento
-    limited_data = parent_data[:MAX_IDS] if len(parent_data) > MAX_IDS else parent_data
+    # Limitar processamento
+    limited_data = parent_data[:MAX_IDS]
     if len(parent_data) > MAX_IDS:
-        logger.warning(f"⚠️ Limitando processamento para {MAX_IDS} de {len(parent_data)} itens para {endpoint_name}")
+        logger.warning(f"⚠️ Limitando para {MAX_IDS} de {len(parent_data)} itens")
 
     all_items = []
-    errors = {'rate_limit': 0, 'other': []}
-
-    # Processar em lotes para melhor controle
     batch_size = 5
-    total_batches = (len(limited_data) + batch_size - 1) // batch_size
-    start_time = time.time()
 
-    logger.info(f"🔄 Processando {len(limited_data)} IDs em {total_batches} lotes para {endpoint_name}")
-
-    for batch_num, i in enumerate(range(0, len(limited_data), batch_size), 1):
+    for i in range(0, len(limited_data), batch_size):
         batch = limited_data[i:i + batch_size]
-        batch_start_time = time.time()
 
-        # Log condicional para reduzir verbosidade
-        if batch_num == 1 or batch_num == total_batches or batch_num % 20 == 0:
-            progress = (batch_num / total_batches) * 100
-            logger.info(f"📦 Lote {batch_num}/{total_batches} ({progress:.1f}%) para {endpoint_name} ({len(batch)} IDs)")
-
-        # Função para processar cada item do lote
         def process_item(item):
             id_value = item.get(id_field)
             if not id_value:
                 return []
+            return fetch_with_id(http_client, endpoint_template, str(id_value), headers, params, no_pagination)
 
-            try:
-                return fetch_with_id(http_client, endpoint_template, str(id_value), headers, params, no_pagination)
-            except Exception as e:
-                error_msg = str(e)
-                # Categorizar erros
-                if "429" in error_msg:
-                    errors['rate_limit'] += 1
-                else:
-                    errors['other'].append(f"ID {id_value}: {error_msg}")
-                return []
-
-        # Processar lote em paralelo
+        # Processar lote
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(batch)) as executor:
             batch_results = list(executor.map(process_item, batch))
 
-        # Coletar resultados do lote
-        batch_count = 0
+        # Coletar resultados
         for result in batch_results:
-            batch_count += len(result)
             all_items.extend(result)
 
-        # Log de desempenho do lote
-        batch_duration = time.time() - batch_start_time
-        if batch_num % 10 == 0 or batch_num == total_batches:
-            logger.info(f"✓ Lote {batch_num} concluído: {batch_count} itens em {batch_duration:.2f}s")
+        # Pausa entre lotes
+        time.sleep(0.5)
 
-        # Pausa entre lotes para controle de requisições
-        if batch_num < total_batches:
-            time.sleep(0.5)
-
-    # Gerar resumo de processamento
-    duration = time.time() - start_time
-    logger.info(f"{'~' * 50}")
-    logger.info(f"📊 RESUMO ENDPOINT {endpoint_name}:")
-    logger.info(f"✓ IDs processados: {len(limited_data)}")
-    logger.info(f"✓ Registros obtidos: {len(all_items)}")
-    logger.info(f"⏱️ Tempo total: {duration:.2f}s ({duration / len(limited_data):.2f}s por ID)")
-
-    # Relatório de erros
-    if errors['rate_limit'] > 0:
-        logger.warning(f"⚠️ Rate limit atingido {errors['rate_limit']} vezes")
-
-    if errors['other']:
-        if len(errors['other']) <= 3:
-            for error in errors['other']:
-                logger.error(f"❌ Erro: {error}")
-        else:
-            logger.error(f"❌ {len(errors['other'])} erros. Primeiros 3: {'; '.join(errors['other'][:3])}")
-
-    logger.info(f"{'~' * 50}")
+    logger.info(f"✅ {endpoint_name}: {len(all_items)} registros coletados")
     return all_items
 
 
 def process_primary_endpoint(http_client, endpoint_name, endpoint_path, headers, params=None):
-    """Processa um endpoint principal e retorna os dados e estatísticas."""
+    """Processa um endpoint principal."""
     try:
-        logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO ENDPOINT: {endpoint_name.upper()}\n{'=' * 50}")
+        logger.info(f"\n{'=' * 20} {endpoint_name.upper()} {'=' * 20}")
 
-        endpoint_start = time.time()
+        start_time = time.time()
         raw_data = fetch_all_pages(http_client, endpoint_path, headers, params)
 
-        # Processar e salvar dados
-        logger.info(f"💾 Processando e salvando {len(raw_data)} registros para {endpoint_name}")
+        logger.info(f"💾 Salvando {len(raw_data)} registros de {endpoint_name}")
         processed_data = Utils.process_and_save_data(raw_data, endpoint_name)
 
-        endpoint_duration = time.time() - endpoint_start
-
-        # Estatísticas de processamento
+        duration = time.time() - start_time
         stats = {
             "registros": len(processed_data),
             "status": "Sucesso",
-            "tempo": endpoint_duration
+            "tempo": duration
         }
-
-        logger.info(f"✅ {endpoint_name}: {len(processed_data)} registros em {endpoint_duration:.2f}s")
 
         return processed_data, stats
 
     except Exception as e:
-        logger.exception(f"❌ Falha no endpoint {endpoint_name}")
-
-        # Estatísticas em caso de erro
-        stats = {
+        logger.exception(f"❌ Falha em {endpoint_name}")
+        return [], {
             "registros": 0,
-            "status": f"Falha: {type(e).__name__}: {str(e)}",
+            "status": f"Falha: {str(e)}",
             "tempo": 0
         }
 
-        return [], stats
-
 
 def process_dependent_endpoint(http_client, endpoint_name, config, parent_data, headers):
-    """Processa um endpoint dependente e retorna estatísticas."""
+    """Processa um endpoint dependente."""
     parent_name = config["parent"]
 
-    # Verificar se temos dados do pai
     if not parent_data:
-        logger.warning(f"⚠️ Sem dados do pai '{parent_name}' para {endpoint_name}")
         return {
             "registros": 0,
-            "status": f"Ignorado: sem dados do pai '{parent_name}'",
+            "status": f"Sem dados de {parent_name}",
             "tempo": 0
         }
 
     try:
-        # Configurar dados completos
-        full_config = {
-            "name": endpoint_name,
-            **config
-        }
+        full_config = {"name": endpoint_name, **config}
+        start_time = time.time()
 
-        endpoint_start = time.time()
+        dependent_data = process_dependent_endpoints(http_client, parent_data, full_config, headers)
 
-        # Processar endpoint dependente
-        dependent_data = process_dependent_endpoints(
-            http_client,
-            parent_data,
-            full_config,
-            headers
-        )
-
-        # Processar e salvar resultado
-        logger.info(f"💾 Processando e salvando {len(dependent_data)} registros para {endpoint_name}")
+        logger.info(f"💾 Salvando {len(dependent_data)} registros de {endpoint_name}")
         Utils.process_and_save_data(dependent_data, endpoint_name)
 
-        endpoint_duration = time.time() - endpoint_start
-
-        # Estatísticas de processamento
-        stats = {
+        duration = time.time() - start_time
+        return {
             "registros": len(dependent_data),
             "status": "Sucesso",
-            "tempo": endpoint_duration
+            "tempo": duration
         }
 
-        logger.info(f"✅ {endpoint_name}: {len(dependent_data)} registros em {endpoint_duration:.2f}s")
-        return stats
-
     except Exception as e:
-        logger.exception(f"❌ Falha no endpoint dependente {endpoint_name}")
+        logger.exception(f"❌ Falha em {endpoint_name}")
         return {
             "registros": 0,
-            "status": f"Falha: {type(e).__name__}: {str(e)}",
+            "status": f"Falha: {str(e)}",
             "tempo": 0
         }
 
 
 def main():
-    """Função principal para coleta de dados."""
-    # Iniciar relatório de processamento
+    """Função principal."""
     global_start_time = ReportGenerator.init_report(logger)
 
     try:
-        # 1. Obter configurações
+        # Configurações
         args = get_arguments()
-
         api_base_url = args.API_BASE_URL.rstrip('/')
         api_key = args.API_KEY
 
-        # 2. Configurar cliente HTTP e rate limiter
+        # Cliente HTTP
         rate_limiter = RateLimiter(requests_per_window=RATE_LIMIT, logger=logger)
         http_client = HttpClient(base_url=api_base_url, rate_limiter=rate_limiter, logger=logger)
 
-        # 3. Preparar headers de autenticação
+        # Headers
         auth_headers = get_auth_headers(api_key)
-        logger.info("✅ Headers de autenticação preparados com sucesso")
 
-        # 4. Processamento de endpoints principais
+        # Dados e estatísticas
         parent_data = {}
         endpoint_stats = {}
 
-        # Configuração de parâmetros específicos para cada endpoint
+        # Parâmetros por endpoint
         endpoint_params = {
             "deals": {"sort": "dateCreated", "order": "ASC"},
             "custom_fields": {},
@@ -432,7 +383,7 @@ def main():
             "users": {}
         }
 
-        # Ordem de processamento para garantir que dados de referência estejam disponíveis primeiro
+        # Processar endpoints principais
         endpoint_order = ["custom_fields", "pipelines", "lost_reasons", "users", "stages", "deals"]
 
         for endpoint_name in endpoint_order:
@@ -446,7 +397,7 @@ def main():
             parent_data[endpoint_name] = processed_data
             endpoint_stats[endpoint_name] = stats
 
-        # 5. Processamento de endpoints dependentes
+        # Processar endpoints dependentes
         for endpoint_name, config in DEPENDENT_ENDPOINTS.items():
             parent_name = config["parent"]
             endpoint_stats[endpoint_name] = process_dependent_endpoint(
@@ -457,9 +408,10 @@ def main():
                 auth_headers
             )
 
-        # 6. Gerar resumo final
+        # Resumo final
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
 
+        # BigQuery
         with MemoryMonitor(logger):
             BigQuery.process_csv_files()
 
@@ -468,12 +420,11 @@ def main():
             BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
                                     credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
-        # Se houver falhas, lançar exceção para o Airflow
         if not success:
             raise Exception(f"Falhas nos endpoints: {success}")
 
     except Exception as e:
-        logger.exception(f"❌ ERRO CRÍTICO NA EXECUÇÃO: {e}")
+        logger.exception(f"❌ ERRO CRÍTICO: {e}")
         raise
 
 
