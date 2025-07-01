@@ -1,0 +1,31 @@
+# DOCS: https://moskit.stoplight.io/
+
+### ========== CUSTOM FIELDS ==========
+GET {{url_base}}/v2/customFields?quantity=50&offset=0
+Accept: application/json
+apikey: {{api_key}}
+
+### ========== PIPELINES ==========
+GET {{url_base}}/v2/pipelines?quantity=50&offset=0
+Accept: application/json
+apikey: {{api_key}}
+
+### ========== LOST REASONS ==========
+GET {{url_base}}/v2/lostReasons?quantity=50&offset=0
+Accept: application/json
+apikey: {{api_key}}
+
+### ========== USERS ==========
+GET {{url_base}}/v2/users?quantity=50&offset=0
+Accept: application/json
+apikey: {{api_key}}
+
+### ========== STAGES ==========
+GET {{url_base}}/v2/stages?quantity=50&offset=0
+Accept: application/json
+apikey: {{api_key}}
+
+### ========== DEALS ==========
+GET {{url_base}}/v2/deals?quantity=50&offset=0&sort=dateCreated&order=ASC
+Accept: application/json
+apikey: {{api_key}}
