@@ -108,7 +108,7 @@ def fetch_page(http_client, endpoint, headers, next_page_token=None, params=None
         # Converter total para int se disponível
         try:
             total_count = int(total_count) if total_count else None
-        except:
+        except Exception:
             total_count = None
 
         has_more = bool(next_token)
