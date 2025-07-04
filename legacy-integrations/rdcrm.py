@@ -153,7 +153,7 @@ def run(customer):
             for k, v in deal.items():
                 if k not in ["campaign", "contacts", "deal_custom_fields", "deal_lost_reason", "deal_products",
                              "deal_source", "deal_stage", "organization", "user", "next_task", "_id", "markup",
-                             "markup_created", "markup_last_activities", "prediction_date", "rating", "stop_time_limit",
+                             "markup_created", "markup_last_activities", "prediction_date", "stop_time_limit",
                              "user_changed", "amount_monthly"]:
                     new_key = rename_map.get(k, k)  # Renomeia a coluna se necessário
 
