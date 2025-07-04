@@ -17,13 +17,12 @@ from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
 
 logger = AppInitializer.initialize()
-Utils.clean_output_folder(logger)
 
 MAX_IDS = 100
 RATE_LIMIT = 100
 MAX_WORKERS = min(6, os.cpu_count() or 4)
 MAX_PROPERTIES_PER_REQUEST = 250
-LIMIT_PER_PAGE = 100
+LIMIT_PER_PAGE = 200
 
 
 def get_arguments():
@@ -135,7 +134,6 @@ FIELDS_PROPERTIES = parse_env_list(args.FIELDS_PROPERTIES)
 START_DATE = args.START_DATE
 INTERVAL_DAYS = int(args.INTERVAL_DAYS)
 
-logger.info(f"📅 Configuração temporal:")
 logger.info(f"   • Data inicial: {START_DATE}")
 logger.info(f"   • Intervalo: {INTERVAL_DAYS} dias")
 
@@ -939,7 +937,7 @@ async def process_contacts_with_config_and_date(client, access_token, endpoint_n
                         if batch_count % 5 == 0:
                             logger.info(f"📊 Progresso: {len(all_contacts)} contatos coletados")
 
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.5)
 
                 logger.info(f"📊 Intervalo concluído. Total acumulado: {len(all_contacts)} contatos")
     else:
@@ -1067,7 +1065,7 @@ async def process_contacts_original(client, access_token, endpoint_name, log_det
                 if batch_count % 5 == 0:
                     logger.info(f"📊 Progresso: {len(all_contacts)} contatos coletados")
 
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
 
     return all_contacts, current_after
 
@@ -1325,7 +1323,6 @@ def process_properties_endpoint(client, endpoint_name="properties", object_type=
             "total_properties": 0
         }
 
-
 def main():
     global_start_time = ReportGenerator.init_report(logger)
 
@@ -1465,13 +1462,13 @@ def main():
 
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
 
-        with MemoryMonitor(logger):
-            BigQuery.process_csv_files()
-
-        tables = Utils.get_existing_folders(logger)
-        for table in tables:
-            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
-                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
+        # with MemoryMonitor(logger):
+        #     BigQuery.process_csv_files()
+        #
+        # tables = Utils.get_existing_folders(logger)
+        # for table in tables:
+        #     BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
+        #                             credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         if not success:
             failed_endpoints = [name for name, stats in endpoint_stats.items() if 'Falha' in stats['status']]
