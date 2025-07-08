@@ -30,8 +30,7 @@ def run(customer):
         "leads_sold": "LeadsSold",
         "stages": "Stages",
         "custom_fields_leads": "CustomFieldsLeads",
-        "pipelines": "Pipelines",
-        "persons": "Persons"
+        "pipelines": "Pipelines"
     }
 
     # Configurações da API
@@ -83,6 +82,7 @@ def run(customer):
             print(f"Colunas normalizadas: {', '.join(df.columns.tolist())}")
         except Exception as e:
             print(f"Erro ao enviar o arquivo para o GCS: {e}")
+            raise
 
     def coletar_dados_com_paginacao(url, headers, page_size=500, max_retries=5, backoff_time=5):
         todos_os_dados = []
@@ -220,6 +220,7 @@ def run(customer):
                 print("Nenhum Lead foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Leads: {str(e)}")
+            raise
 
         end_time = datetime.now()
         print(f"Tempo de execução para Leads: {end_time - start_time}")
@@ -241,6 +242,7 @@ def run(customer):
                 print("Nenhum Lead Perdido foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Leads Perdidos: {str(e)}")
+            raise
 
         end_time = datetime.now()
         print(f"Tempo de execução para Leads Perdidos: {end_time - start_time}")
@@ -263,6 +265,7 @@ def run(customer):
                 print("Nenhum Lead Vendido foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Leads Vendidos: {str(e)}")
+            raise
 
         end_time = datetime.now()
         print(f"Tempo de execução para Leads Vendidos: {end_time - start_time}")
@@ -288,6 +291,7 @@ def run(customer):
                 print(f"Erro na requisição de Stages: {response.status_code}, Mensagem: {response.text}")
         except Exception as e:
             print(f"Erro ao processar Stages: {str(e)}")
+            raise
 
         end_time = datetime.now()
         print(f"Tempo de execução para Stages: {end_time - start_time}")
@@ -314,10 +318,12 @@ def run(customer):
                 print("Nenhum Campo Personalizado foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Campos Personalizados: {str(e)}")
+            raise
 
         end_time = datetime.now()
         print(f"Tempo de execução para Campos Personalizados: {end_time - start_time}")
 
+    # Função para coletar Pipelines (Funnels)
     def coletar_pipelines():
         print("Iniciando coleta de Pipelines")
         start_time = datetime.now()
@@ -335,44 +341,23 @@ def run(customer):
                 print("Nenhum Pipeline foi coletado.")
         except Exception as e:
             print(f"Erro ao processar Pipelines: {str(e)}")
+            raise
 
         end_time = datetime.now()
         print(f"Tempo de execução para Pipelines: {end_time - start_time}")
-
-    def coletar_persons():
-        print("Iniciando coleta de Persons")
-        start_time = datetime.now()
-
-        endpoint = "/Persons"
-        url = f"{URL_BASE}{endpoint}"
-
-        try:
-            dados = coletar_dados_com_paginacao(url, HEADERS)
-            if dados:
-                df = pd.DataFrame(dados)
-                upload_df_to_gcs(df, FOLDERS["persons"], "persons.csv")
-                print(f"Processamento de Persons concluído. {len(dados)} registros processados.")
-            else:
-                print("Nenhuma Person foi coletada.")
-        except Exception as e:
-            print(f"Erro ao processar Persons: {str(e)}")
-
-        end_time = datetime.now()
-        print(f"Tempo de execução para Persons: {end_time - start_time}")
 
     def main():
         print("Iniciando processo de coleta de dados da API Exact Spotter")
         start_time = datetime.now()
         print(f"Iniciando coleta de dados às {start_time}")
 
-        # Coletando dados de todos os endpoints
+        # Coletar dados de cada endpoint
         coletar_leads()
         coletar_leads_perdidos()
         coletar_leads_vendidos()
         coletar_stages()
         coletar_campos_personalizados_leads()
-        coletar_pipelines()
-        coletar_persons()
+        coletar_pipelines()  # Coleta de pipelines adicionada
 
         end_time = datetime.now()
         execution_time = end_time - start_time
