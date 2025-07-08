@@ -264,6 +264,115 @@ def run_emails(customer):
     main()
 
 
+def run_webhook_register(customer):
+    import requests
+
+    # Configurações Iniciais
+    BASE_URL = 'https://webhook-rd.nalk.com.br'
+    API_KEY = customer['x_api_key']
+
+    # Dados da empresa
+    name = customer['name']
+    alias = customer['alias']
+    company_id = customer['company_id']
+    project_id = customer['project_id']
+    bucket_name = customer['bucket_name']
+
+    # Dados RD Station
+    rd_client_id = customer['client_id']
+    rd_client_secret = customer['client_secret']
+    rd_refresh_token = customer['refresh_token']
+
+    headers = {
+        'X-API-KEY': API_KEY,
+        'accept': 'application/json',
+        'Content-Type': 'application/json'
+    }
+
+    def check_company_exists(alias):
+        """Verifica se a empresa existe e retorna o ID."""
+
+        def make_check_request():
+            url = f"{BASE_URL}/api/v1/company?alias={alias}"
+            return requests.get(url, headers={'X-API-KEY': API_KEY, 'accept': 'application/json'})
+
+        try:
+            response = make_request_with_retry(make_check_request)
+            if response.status_code == 200:
+                return response.json().get('id')
+            return None
+        except Exception as e:
+            print(f"Erro ao verificar empresa: {str(e)}")
+            return None
+
+    def create_company():
+        """Cadastra a empresa e retorna o ID."""
+
+        def make_create_request():
+            url = f"{BASE_URL}/api/v1/company"
+            data = {
+                'name': name,
+                'alias': alias,
+                'google_company_id': company_id,
+                'google_project_id': project_id,
+                'google_bucket_name': bucket_name
+            }
+            return requests.post(url, headers=headers, json=data)
+
+        response = make_request_with_retry(make_create_request)
+        return response.json().get('id')
+
+    def register_webhook(company_id, event_type):
+        """Registra um webhook para um tipo de evento específico."""
+
+        def make_webhook_request():
+            url = f"{BASE_URL}/api/v1/rd-station/register-webhook/{company_id}"
+            webhook_headers = {
+                'X-API-KEY': API_KEY,
+                'accept': 'application/json',
+                'rd-client-id': rd_client_id,
+                'rd-client-secrect': rd_client_secret,
+                'rd-refresh-token': rd_refresh_token,
+                'Content-Type': 'application/json'
+            }
+            data = {
+                'event_type': event_type,
+                'entity_type': 'CONTACT',
+                'http_method': 'POST',
+                'use_queue': True
+            }
+            return requests.post(url, headers=webhook_headers, json=data)
+
+        response = make_request_with_retry(make_webhook_request)
+        print(f"Webhook registrado para {event_type}: {response.status_code}")
+        return response
+
+    def main():
+        """Função principal para registro de webhooks."""
+        print(f"Verificando empresa: {alias}")
+
+        # Verifica se a empresa existe
+        company_db_id = check_company_exists(alias)
+
+        if not company_db_id:
+            print("Empresa não encontrada. Criando nova empresa...")
+            company_db_id = create_company()
+            print(f"Empresa criada com ID: {company_db_id}")
+        else:
+            print(f"Empresa encontrada com ID: {company_db_id}")
+
+        # Registra os webhooks
+        event_types = ['WEBHOOK.CONVERTED', 'WEBHOOK.MARKED_OPPORTUNITY']
+
+        for event_type in event_types:
+            print(f"Registrando webhook para {event_type}")
+            register_webhook(company_db_id, event_type)
+
+        return 'Webhook registration completed'
+
+    main()
+
+
 def get_extraction_tasks():
     """
     Get the list of data extraction tasks for RD Marketing.
@@ -279,5 +388,9 @@ def get_extraction_tasks():
         {
             'task_id': 'run_emails',
             'python_callable': run_emails
+        },
+        {
+            'task_id': 'run_emails',
+            'python_callable': run_webhook_register
         }
     ]
