@@ -290,7 +290,7 @@ def run_webhook_register(customer):
     }
 
     def check_company_exists(alias):
-        """Verifica se a empresa existe e retorna o ID."""
+        """Verifica se a empresa existe e retorna o alias."""
 
         def make_check_request():
             url = f"{BASE_URL}/api/v1/company?alias={alias}"
@@ -299,7 +299,7 @@ def run_webhook_register(customer):
         try:
             response = make_request_with_retry(make_check_request)
             if response.status_code == 200:
-                return response.json().get('id')
+                return response.json().get('alias')
             return None
         except Exception as e:
             print(f"Erro ao verificar empresa: {str(e)}")
@@ -320,13 +320,13 @@ def run_webhook_register(customer):
             return requests.post(url, headers=headers, json=data)
 
         response = make_request_with_retry(make_create_request)
-        return response.json().get('id')
+        return response.json().get('alias')
 
-    def register_webhook(company_id, event_type):
+    def register_webhook(alias, event_type):
         """Registra um webhook para um tipo de evento específico."""
 
         def make_webhook_request():
-            url = f"{BASE_URL}/api/v1/rd-station/register-webhook/{company_id}"
+            url = f"{BASE_URL}/api/v1/rd-station/register-webhook/{alias}"
             webhook_headers = {
                 'X-API-KEY': API_KEY,
                 'accept': 'application/json',
@@ -349,24 +349,25 @@ def run_webhook_register(customer):
 
     def main():
         """Função principal para registro de webhooks."""
+        alias = customer['alias']
         print(f"Verificando empresa: {alias}")
 
         # Verifica se a empresa existe
-        company_db_id = check_company_exists(alias)
+        existed_alias = check_company_exists(alias)
 
-        if not company_db_id:
+        if not existed_alias:
             print("Empresa não encontrada. Criando nova empresa...")
-            company_db_id = create_company()
-            print(f"Empresa criada com ID: {company_db_id}")
+            alias = create_company()
+            print(f"Empresa criada com ID: {alias}")
         else:
-            print(f"Empresa encontrada com ID: {company_db_id}")
+            print(f"Empresa encontrada com ID: {alias}")
 
         # Registra os webhooks
         event_types = ['WEBHOOK.CONVERTED', 'WEBHOOK.MARKED_OPPORTUNITY']
 
         for event_type in event_types:
             print(f"Registrando webhook para {event_type}")
-            register_webhook(company_db_id, event_type)
+            register_webhook(alias, event_type)
 
         return 'Webhook registration completed'
 
@@ -390,7 +391,7 @@ def get_extraction_tasks():
             'python_callable': run_emails
         },
         {
-            'task_id': 'run_emails',
+            'task_id': 'run_webhook_register',
             'python_callable': run_webhook_register
         }
     ]
