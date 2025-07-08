@@ -21,6 +21,9 @@ def make_request_with_retry(func, max_retries=10, base_delay=1, max_delay=300):
             if response.status_code == 200:
                 return response
 
+            if response.status_code == 409:
+                return response
+
             # Se for rate limit (429), tenta novamente
             elif response.status_code == 429:
                 if attempt < max_retries:
@@ -299,7 +302,7 @@ def run_webhook_register(customer):
         try:
             response = make_request_with_retry(make_check_request)
             if response.status_code == 200:
-                return response.json().get('alias')
+                return response.json()[0].get('alias')
             return None
         except Exception as e:
             print(f"Erro ao verificar empresa: {str(e)}")
@@ -331,7 +334,7 @@ def run_webhook_register(customer):
                 'X-API-KEY': API_KEY,
                 'accept': 'application/json',
                 'rd-client-id': rd_client_id,
-                'rd-client-secrect': rd_client_secret,
+                'rd-client-secret': rd_client_secret,
                 'rd-refresh-token': rd_refresh_token,
                 'Content-Type': 'application/json'
             }
@@ -344,7 +347,6 @@ def run_webhook_register(customer):
             return requests.post(url, headers=webhook_headers, json=data)
 
         response = make_request_with_retry(make_webhook_request)
-        print(f"Webhook registrado para {event_type}: {response.status_code}")
         return response
 
     def main():
