@@ -376,6 +376,188 @@ def run_webhook_register(customer):
     main()
 
 
+def run_webhook_leads(customer):
+    import requests
+    import pandas as pd
+    from typing import Any, Dict, List
+
+    # Configurações Iniciais
+    BASE_URL = 'https://webhook-rd.nalk.com.br'
+    API_KEY = customer['x_api_key']
+    BUCKET_NAME = customer['bucket_name']
+    SAVE_DIR = customer.get('save_dir_webhook', 'webhook_users')
+
+    # Dados da empresa
+    alias = customer['alias']
+
+    headers = {
+        'X-API-KEY': API_KEY,
+        'accept': 'application/json'
+    }
+
+    def flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '_') -> Dict[str, Any]:
+        """
+        Achata um dicionário recursivamente, incluindo listas.
+        """
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            elif isinstance(v, list):
+                if v:  # Se a lista não estiver vazia
+                    for i, item in enumerate(v):
+                        if isinstance(item, dict):
+                            items.extend(flatten_dict(item, f"{new_key}_{i + 1}", sep=sep).items())
+                        else:
+                            items.append((f"{new_key}_{i + 1}", item))
+                else:
+                    items.append((new_key, None))
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
+    def fetch_webhook_leads(limit: int = 500, offset: int = 0) -> Dict[str, Any]:
+        """
+        Busca dados de leads do webhook com retry.
+        """
+
+        def make_leads_request():
+            url = f"{BASE_URL}/api/v1/raw-data/by-company"
+            params = {
+                'company_alias': alias,
+                'limit': limit,
+                'offset': offset
+            }
+            return requests.get(url, headers=headers, params=params)
+
+        response = make_request_with_retry(make_leads_request)
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Erro na requisição: Status {response.status_code}")
+            return {}
+
+    def get_all_webhook_leads() -> List[Dict[str, Any]]:
+        """
+        Busca todos os dados de leads paginando até a última página.
+        """
+        all_leads = []
+        offset = 0
+        limit = 500
+        total_count = None
+
+        while True:
+            print(f"Buscando dados - Offset: {offset}, Limit: {limit}")
+
+            # Adiciona um pequeno delay entre requisições para evitar rate limiting
+            time.sleep(0.5)
+
+            response = fetch_webhook_leads(limit=limit, offset=offset)
+
+            # Verifica se há dados na resposta
+            if not response or 'data' not in response:
+                print("Nenhum dado encontrado na resposta.")
+                break
+
+            # Obtém informações de paginação
+            if total_count is None:
+                total_count = response.get('total_count', 0)
+                print(f"Total de registros disponíveis: {total_count}")
+
+            returned_count = response.get('returned_count', 0)
+            leads_batch = response['data']
+
+            print(f"Registros retornados nesta página: {returned_count}")
+
+            # Se não há dados nesta página, para o loop
+            if not leads_batch or returned_count == 0:
+                print("Nenhum dado encontrado nesta página ou fim da paginação alcançado.")
+                break
+
+            all_leads.extend(leads_batch)
+            print(f"Total de registros coletados até agora: {len(all_leads)}")
+
+            # Se coletamos todos os registros ou se o número retornado é menor que o limit
+            if len(all_leads) >= total_count or returned_count < limit:
+                print(f"Coleta finalizada. Total de registros coletados: {len(all_leads)}")
+                break
+
+            offset += limit
+
+        return all_leads
+
+    def save_leads_to_csv_and_upload(leads_data: List[Dict[str, Any]], bucket_name: str, destination_blob_name: str):
+        """
+        Achata os dados de leads, salva em CSV e faz upload para o GCS.
+        """
+        try:
+            if not leads_data:
+                print("Nenhum dado de leads para salvar.")
+                return
+
+            # Achata todos os registros
+            flattened_leads = []
+            for lead in leads_data:
+                flattened_lead = flatten_dict(lead)
+                flattened_leads.append(flattened_lead)
+
+            # Cria DataFrame
+            df = pd.DataFrame(flattened_leads)
+
+            if not df.empty:
+                print(f"Processando {len(df)} registros de leads...")
+
+                # Salva localmente
+                credentials = gcs.load_credentials_from_env()
+                local_file_path = f"/tmp/{customer['project_id']}.rdmkt.run_webhook_leads.csv"
+                df.to_csv(local_file_path, index=False)
+
+                # Upload para GCS
+                gcs.write_file_to_gcs(
+                    bucket_name=bucket_name,
+                    local_file_path=local_file_path,
+                    destination_name=destination_blob_name,
+                    credentials=credentials
+                )
+
+                print(f"Arquivo salvo no GCS: {destination_blob_name}")
+                print(f"Total de colunas: {len(df.columns)}")
+                print(f"Total de registros: {len(df)}")
+            else:
+                print("DataFrame está vazio. Nenhum dado para salvar.")
+
+        except Exception as e:
+            print(f"Erro ao salvar dados de leads no GCS: {str(e)}")
+            raise
+
+    def main():
+        """
+        Função principal para extração de leads do webhook.
+        """
+        print(f"Iniciando extração de leads do webhook para empresa: {alias}")
+
+        # Busca todos os leads
+        all_leads = get_all_webhook_leads()
+
+        if not all_leads:
+            print("Nenhum lead encontrado.")
+            return 'No leads found'
+
+        # Nome do arquivo
+        file_name = f"webhook_users.csv"
+        destination_blob_name = f"{SAVE_DIR}/{file_name}"
+
+        # Salva e faz upload
+        save_leads_to_csv_and_upload(all_leads, BUCKET_NAME, destination_blob_name)
+
+        return f'Webhook leads extraction completed. Total leads: {len(all_leads)}'
+
+    main()
+
+
 def get_extraction_tasks():
     """
     Get the list of data extraction tasks for RD Marketing.
@@ -395,5 +577,9 @@ def get_extraction_tasks():
         {
             'task_id': 'run_webhook_register',
             'python_callable': run_webhook_register
+        },
+        {
+            'task_id': 'run_webhook_leads',
+            'python_callable': run_webhook_leads
         }
     ]
