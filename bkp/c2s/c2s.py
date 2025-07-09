@@ -2,6 +2,7 @@
 Contact2Sale module for data extraction functions.
 This module contains functions specific to the Contact2Sale integration.
 """
+from datetime import timedelta
 
 from core import gcs
 
@@ -16,14 +17,13 @@ def run(customer):
     import tracemalloc
     import unicodedata
     import re
+    import concurrent.futures
     import pathlib
-
     # Variáveis compartilhadas
     BUCKET_NAME = customer['bucket_name']
     FOLDER_NAME = customer['folder_name']
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     API_TOKEN = customer['api_token']
-    START_DATE = customer['start_date']
     API_HEADERS = {
         "Authorization": f"Bearer {API_TOKEN}",
         "Content-Type": "application/json"
@@ -110,50 +110,31 @@ def run(customer):
         base_url = "https://api.contact2sale.com/integration/me"
 
         print("[INFO] Iniciando a coleta de empresas...")
+        response = requests.get(base_url, headers=API_HEADERS)
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = requests.get(base_url, headers=API_HEADERS, timeout=30)
+        if response.status_code != 200:
+            print(f"[ERROR] Erro na requisição: {response.status_code} - {response.text}")
+            return []
 
-                if response.status_code == 200:
-                    data = response.json().get("data", {})
+        data = response.json().get("data", {})
 
-                    # Processando a empresa principal e as subempresas
-                    companies = []
-                    main_company = {
-                        "company_name": data.get("company_name", ""),
-                        "company_id": data.get("company_id", "")
-                    }
-                    companies.append(main_company)
+        # Processando a empresa principal e as subempresas
+        companies = []
+        main_company = {
+            "company_name": data.get("company_name", ""),
+            "company_id": data.get("company_id", "")
+        }
+        companies.append(main_company)
 
-                    sub_companies = data.get("sub_companies", [])
-                    for sub in sub_companies:
-                        companies.append({
-                            "company_name": sub.get("company_name", ""),
-                            "company_id": sub.get("company_id", "")
-                        })
+        sub_companies = data.get("sub_companies", [])
+        for sub in sub_companies:
+            companies.append({
+                "company_name": sub.get("company_name", ""),
+                "company_id": sub.get("company_id", "")
+            })
 
-                    print(f"[SUCCESS] Coleta de empresas finalizada. Total: {len(companies)}")
-                    return companies
-
-                elif response.status_code == 429:  # Rate limit
-                    print(f"[WARNING] Rate limit atingido. Aguardando 10 segundos...")
-                    time.sleep(10)
-                    continue
-
-                else:
-                    print(f"[ERROR] Erro na requisição: {response.status_code} - {response.text}")
-                    if attempt == max_retries - 1:
-                        return []
-
-            except Exception as e:
-                print(f"[ERROR] Tentativa {attempt + 1} falhou: {str(e)}")
-                if attempt == max_retries - 1:
-                    return []
-                time.sleep(5)
-
-        return []
+        print(f"[SUCCESS] Coleta de empresas finalizada. Total: {len(companies)}")
+        return companies
 
     def collect_leads():
         base_url = "https://api.contact2sale.com/integration/leads"
@@ -162,12 +143,10 @@ def run(customer):
         per_page = 50
         all_leads = []
 
-        start_date = f"{START_DATE}T00:00:00Z"
+        # COLETA DOS ULTIMOS 365 DIAS
+        start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         print("[INFO] Iniciando a coleta de leads...")
-        print(f"[DEBUG] Coletando leads desde: {start_date}")
-        print(f"[DEBUG] Data atual: {datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')}")
-
         while True:
             params = {
                 "page": page,
@@ -176,62 +155,25 @@ def run(customer):
                 "created_gte": start_date
             }
 
-            max_retries = 3
-            success = False
+            response = requests.get(base_url, headers=API_HEADERS, params=params)
 
-            for attempt in range(max_retries):
-                try:
-                    response = requests.get(base_url, headers=API_HEADERS, params=params, timeout=30)
-
-                    if response.status_code == 200:
-                        data = response.json()
-                        leads = data.get("data", [])
-
-                        if not leads:
-                            print("[INFO] Todas as páginas foram coletadas.")
-                            success = True
-                            break
-
-                        all_leads.extend(leads)
-                        print(
-                            f"[INFO] Página {page} coletada com {len(leads)} leads. Total acumulado: {len(all_leads)}")
-                        success = True
-                        break
-
-                    elif response.status_code == 429:  # Rate limit
-                        print(f"[WARNING] Rate limit atingido. Aguardando 10 segundos...")
-                        time.sleep(10)
-                        continue
-
-                    else:
-                        print(f"[ERROR] Erro na requisição: {response.status_code} - {response.text}")
-                        if attempt == max_retries - 1:
-                            print(f"[ERROR] Falha após {max_retries} tentativas. Parando coleta.")
-                            break
-                        time.sleep(5)
-
-                except Exception as e:
-                    print(f"[ERROR] Tentativa {attempt + 1} falhou: {str(e)}")
-                    if attempt == max_retries - 1:
-                        print(f"[ERROR] Falha após {max_retries} tentativas. Parando coleta.")
-                        break
-                    time.sleep(5)
-
-            # Se não conseguiu coletar esta página, para o processo
-            if not success:
+            if response.status_code != 200:
+                print(f"[ERROR] Erro na requisição: {response.status_code} - {response.text}")
                 break
 
-            # Se coletou uma página vazia, para o processo
+            data = response.json()
+            leads = data.get("data", [])
+
             if not leads:
+                print("[INFO] Todas as páginas foram coletadas.")
                 break
 
+            all_leads.extend(leads)
+            print(f"[INFO] Página {page} coletada com {len(leads)} leads. Total acumulado: {len(all_leads)}")
             page += 1
-            time.sleep(2)  # Aumentado de 1 para 2 segundos entre requisições
+            time.sleep(1)  # Intervalo para evitar sobrecarga na API
 
         print(f"[SUCCESS] Coleta de leads finalizada. Total: {len(all_leads)}")
-
-        if not all_leads:
-            return [], []
 
         # Processar os dados para extração apenas dos atributos
         processed_leads = []
@@ -257,69 +199,32 @@ def run(customer):
         base_url = "https://api.contact2sale.com/integration/sellers"
 
         print("[INFO] Iniciando a coleta de sellers...")
+        response = requests.get(base_url, headers=API_HEADERS)
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = requests.get(base_url, headers=API_HEADERS, timeout=30)
+        if response.status_code != 200:
+            print(f"[ERROR] Erro na requisição: {response.status_code} - {response.text}")
+            return []
 
-                if response.status_code == 200:
-                    # Resposta esperada como lista
-                    sellers = response.json()
-                    print(f"[SUCCESS] Coleta de sellers finalizada. Total: {len(sellers)}")
-                    return sellers
-
-                elif response.status_code == 429:  # Rate limit
-                    print(f"[WARNING] Rate limit atingido. Aguardando 10 segundos...")
-                    time.sleep(10)
-                    continue
-
-                else:
-                    print(f"[ERROR] Erro na requisição: {response.status_code} - {response.text}")
-                    if attempt == max_retries - 1:
-                        return []
-
-            except Exception as e:
-                print(f"[ERROR] Tentativa {attempt + 1} falhou: {str(e)}")
-                if attempt == max_retries - 1:
-                    return []
-                time.sleep(5)
-
-        return []
+        # Resposta esperada como lista
+        sellers = response.json()
+        print(f"[SUCCESS] Coleta de sellers finalizada. Total: {len(sellers)}")
+        return sellers
 
     def collect_tags():
         base_url = "https://api.contact2sale.com/integration/tags"
 
         print("[INFO] Iniciando a coleta de tags...")
+        response = requests.get(base_url, headers=API_HEADERS)
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = requests.get(base_url, headers=API_HEADERS, timeout=30)
+        if response.status_code != 200:
+            print(f"[ERROR] Erro na requisição: {response.status_code} - {response.text}")
+            return []
 
-                if response.status_code == 200:
-                    data = response.json()
-                    tags = data.get("data", [])
-                    print(f"[SUCCESS] Coleta de tags finalizada. Total: {len(tags)}")
-                    return tags
+        data = response.json()
+        tags = data.get("data", [])
 
-                elif response.status_code == 429:  # Rate limit
-                    print(f"[WARNING] Rate limit atingido. Aguardando 10 segundos...")
-                    time.sleep(10)
-                    continue
-
-                else:
-                    print(f"[ERROR] Erro na requisição: {response.status_code} - {response.text}")
-                    if attempt == max_retries - 1:
-                        return []
-
-            except Exception as e:
-                print(f"[ERROR] Tentativa {attempt + 1} falhou: {str(e)}")
-                if attempt == max_retries - 1:
-                    return []
-                time.sleep(5)
-
-        return []
+        print(f"[SUCCESS] Coleta de tags finalizada. Total: {len(tags)}")
+        return tags
 
     # Funções para processamento de cada endpoint
     def process_companies():
@@ -370,6 +275,24 @@ def run(customer):
         process_leads()
         process_sellers()
         process_tags()
+
+        global_end = time.time()
+        print(f"\n[COMPLETE] Processo finalizado. Tempo total: {global_end - global_start:.2f} segundos")
+
+    # Função principal para execução paralela
+    def run_parallel():
+        print("[START] Iniciando coleta paralela dos dados do Contact2Sale")
+        global_start = time.time()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [
+                executor.submit(process_companies),
+                executor.submit(process_leads),
+                executor.submit(process_sellers),
+                executor.submit(process_tags)
+            ]
+
+            concurrent.futures.wait(futures)
 
         global_end = time.time()
         print(f"\n[COMPLETE] Processo finalizado. Tempo total: {global_end - global_start:.2f} segundos")
