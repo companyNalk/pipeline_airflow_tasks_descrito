@@ -493,6 +493,11 @@ def collect_lead_fields():
     return fetch_and_save('leadFields', 'lead_fields', 'v1')
 
 
+def collect_lead_labels():
+    """06.1. GET /api/v1/leadLabels"""
+    return fetch_and_save('leadLabels', 'lead_labels', 'v1')
+
+
 def collect_pipelines():
     """07. GET /api/v2/pipelines"""
     return fetch_and_save('pipelines', 'pipelines', 'v2')
@@ -557,6 +562,7 @@ def main():
         collect_activity_fields,
         collect_product_fields,
         collect_lead_fields,
+        collect_lead_labels,
         collect_pipelines,
         collect_stages,
         collect_organizations,
