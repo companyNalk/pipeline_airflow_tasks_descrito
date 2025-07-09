@@ -429,6 +429,560 @@ def run(customer):
     main()
 
 
+def run_contacts(customer):
+    import csv
+    import os
+    import requests
+    import string
+    import time
+    import tracemalloc
+    from datetime import datetime
+    from google.cloud import storage
+    from io import StringIO
+    import pathlib
+
+    # Configuração da chave de serviço
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    TOKEN = customer['token']
+    API_URL = "https://crm.rdstation.com/api/v1/contacts"
+    LIMIT = 200  # Máximo permitido pela API
+    BUCKET_NAME = customer['bucket_name']
+    MAX_RESULT_WINDOW = 9500  # Margem de segurança abaixo de 10k
+
+    def clean_name(name):
+        """Limpa espaços extras e caracteres especiais de strings."""
+        if name is None:
+            return ''
+        return " ".join(name.replace("\t", " ").split()).replace("•", "")
+
+    def extract_contact_data(contact):
+        """
+        Extrai e processa dados de um contato, incluindo campos aninhados.
+        Retorna um dicionário com os dados achatados.
+        """
+        contact_data = {}
+
+        try:
+            # Dados básicos do contato
+            contact_data['contact_id'] = contact.get('id', '')
+            contact_data['contact_name'] = clean_name(contact.get('name', ''))
+            contact_data['contact_title'] = clean_name(contact.get('title', ''))
+            contact_data['contact_notes'] = clean_name(contact.get('notes', ''))
+            contact_data['contact_birthday'] = contact.get('birthday', '')
+            contact_data['contact_facebook'] = contact.get('facebook', '')
+            contact_data['contact_linkedin'] = contact.get('linkedin', '')
+            contact_data['contact_skype'] = contact.get('skype', '')
+            contact_data['organization_id'] = contact.get('organization_id', '')
+            contact_data['contact_created_at'] = contact.get('created_at', '')
+            contact_data['contact_updated_at'] = contact.get('updated_at', '')
+
+            # Processamento de emails
+            emails = contact.get('emails', [])
+            if emails:
+                contact_data['primary_email'] = emails[0].get('email', '')
+                contact_data['primary_email_id'] = emails[0].get('id', '')
+                all_emails = [email.get('email', '') for email in emails if email.get('email')]
+                contact_data['all_emails'] = '; '.join(all_emails)
+                contact_data['emails_count'] = len(all_emails)
+            else:
+                contact_data['primary_email'] = ''
+                contact_data['primary_email_id'] = ''
+                contact_data['all_emails'] = ''
+                contact_data['emails_count'] = 0
+
+            # Processamento de telefones
+            phones = contact.get('phones', [])
+            if phones:
+                main_phone = phones[0]
+                contact_data['primary_phone'] = main_phone.get('phone', '')
+                contact_data['primary_phone_id'] = main_phone.get('id', '')
+                contact_data['primary_phone_type'] = main_phone.get('type', '')
+                contact_data['primary_phone_whatsapp'] = main_phone.get('whatsapp', False)
+                contact_data['primary_whatsapp_url'] = main_phone.get('whatsapp_url_web', '')
+                contact_data['primary_whatsapp_international'] = main_phone.get('whatsapp_full_internacional', '')
+
+                all_phones = [phone.get('phone', '') for phone in phones if phone.get('phone')]
+                contact_data['all_phones'] = '; '.join(all_phones)
+                contact_data['phones_count'] = len(all_phones)
+
+                whatsapp_phones = [phone for phone in phones if phone.get('whatsapp')]
+                contact_data['whatsapp_phones_count'] = len(whatsapp_phones)
+            else:
+                contact_data['primary_phone'] = ''
+                contact_data['primary_phone_id'] = ''
+                contact_data['primary_phone_type'] = ''
+                contact_data['primary_phone_whatsapp'] = False
+                contact_data['primary_whatsapp_url'] = ''
+                contact_data['primary_whatsapp_international'] = ''
+                contact_data['all_phones'] = ''
+                contact_data['phones_count'] = 0
+                contact_data['whatsapp_phones_count'] = 0
+
+            # Processamento de bases legais
+            legal_bases = contact.get('legal_bases', [])
+            if legal_bases:
+                main_legal_base = legal_bases[0]
+                contact_data['legal_base_category'] = main_legal_base.get('category', '')
+                contact_data['legal_base_type'] = main_legal_base.get('type', '')
+                contact_data['legal_base_status'] = main_legal_base.get('status', '')
+                contact_data['legal_bases_count'] = len(legal_bases)
+
+                all_categories = [lb.get('category', '') for lb in legal_bases if lb.get('category')]
+                contact_data['all_legal_categories'] = '; '.join(all_categories)
+            else:
+                contact_data['legal_base_category'] = ''
+                contact_data['legal_base_type'] = ''
+                contact_data['legal_base_status'] = ''
+                contact_data['legal_bases_count'] = 0
+                contact_data['all_legal_categories'] = ''
+
+            # Processamento de campos personalizados
+            custom_fields = contact.get('contact_custom_fields', [])
+            contact_data['custom_fields_count'] = len(custom_fields)
+
+            for i, field in enumerate(custom_fields, 1):
+                if 'custom_field' in field and 'label' in field['custom_field']:
+                    label = clean_name(field['custom_field']['label'])
+                    if label:
+                        safe_label = label.replace(' ', '_').replace('-', '_')[:50]
+                        value = field.get('value', '')
+                        if isinstance(value, list):
+                            value = '; '.join(str(v) for v in value)
+                        contact_data[f'custom_field_{safe_label}'] = str(value)
+
+            # Processamento de deals associados
+            deals = contact.get('deals', [])
+            contact_data['deals_count'] = len(deals)
+
+            if deals:
+                deal_names = []
+                deal_ids = []
+                deal_wins = []
+                deal_statuses = []
+
+                for deal in deals:
+                    deal_names.append(clean_name(deal.get('name', '')))
+                    deal_ids.append(deal.get('id', ''))
+
+                    win_status = deal.get('win')
+                    if win_status is True:
+                        deal_wins.append('Won')
+                    elif win_status is False:
+                        deal_wins.append('Lost')
+                    else:
+                        deal_wins.append('Open')
+
+                    if deal.get('closed_at'):
+                        deal_statuses.append('Closed')
+                    else:
+                        deal_statuses.append('Open')
+
+                contact_data['deal_names'] = '; '.join(deal_names)
+                contact_data['deal_ids'] = '; '.join(deal_ids)
+                contact_data['deal_win_statuses'] = '; '.join(deal_wins)
+                contact_data['deal_statuses'] = '; '.join(deal_statuses)
+                contact_data['won_deals_count'] = deal_wins.count('Won')
+                contact_data['lost_deals_count'] = deal_wins.count('Lost')
+                contact_data['open_deals_count'] = deal_wins.count('Open')
+                contact_data['closed_deals_count'] = deal_statuses.count('Closed')
+            else:
+                contact_data['deal_names'] = ''
+                contact_data['deal_ids'] = ''
+                contact_data['deal_win_statuses'] = ''
+                contact_data['deal_statuses'] = ''
+                contact_data['won_deals_count'] = 0
+                contact_data['lost_deals_count'] = 0
+                contact_data['open_deals_count'] = 0
+                contact_data['closed_deals_count'] = 0
+
+        except Exception as e:
+            print(f"Erro ao processar contato {contact.get('id', 'unknown')}: {str(e)}")
+            contact_data = {
+                'contact_id': contact.get('id', ''),
+                'contact_name': clean_name(contact.get('name', '')),
+                'error': str(e)
+            }
+
+        return contact_data
+
+    def get_ultra_granular_chunks():
+        """
+        Gera chunks ultra-granulares para contornar a limitação de 10k.
+        Estratégia: combinações de 2 e 3 caracteres para máxima granularidade.
+        """
+        chunks = []
+
+        # 1. Chunks por duas letras (AA, AB, AC, ..., ZZ)
+        print("Gerando chunks de duas letras...")
+        for first in string.ascii_uppercase:
+            for second in string.ascii_uppercase:
+                chunks.append({
+                    'type': 'double_letter',
+                    'query': first + second,
+                    'description': f'Nomes iniciados com "{first + second}"'
+                })
+
+        # 2. Chunks por letra + número (A0, A1, ..., Z9)
+        print("Gerando chunks de letra + número...")
+        for letter in string.ascii_uppercase:
+            for digit in string.digits:
+                chunks.append({
+                    'type': 'letter_digit',
+                    'query': letter + digit,
+                    'description': f'Nomes iniciados com "{letter + digit}"'
+                })
+
+        # 3. Chunks por número + letra (0A, 0B, ..., 9Z)
+        print("Gerando chunks de número + letra...")
+        for digit in string.digits:
+            for letter in string.ascii_uppercase:
+                chunks.append({
+                    'type': 'digit_letter',
+                    'query': digit + letter,
+                    'description': f'Nomes iniciados com "{digit + letter}"'
+                })
+
+        # 4. Chunks por dois números (00, 01, ..., 99)
+        print("Gerando chunks de dois números...")
+        for first in string.digits:
+            for second in string.digits:
+                chunks.append({
+                    'type': 'double_digit',
+                    'query': first + second,
+                    'description': f'Nomes iniciados com "{first + second}"'
+                })
+
+        # 5. Chunks especiais para caracteres comuns em emails
+        print("Gerando chunks especiais...")
+        special_patterns = [
+            '@gmail', '@hotmail', '@yahoo', '@outlook', '@uol', '@terra',
+            '@live', '@msn', '@bol', '@ig', '@globo', '@r7', '@oi',
+            '.com', '.br', '.org', '.net', 'admin', 'contact', 'info',
+            'suporte', 'vendas', 'comercial', 'financeiro', 'rh'
+        ]
+
+        for pattern in special_patterns:
+            chunks.append({
+                'type': 'special_pattern',
+                'query': pattern,
+                'description': f'Nomes contendo "{pattern}"'
+            })
+
+        # 6. Chunks por símbolos únicos
+        symbols = ['.', '-', '_', '@', '+', '(', ')', '[', ']', '{', '}', '&', '#', '*']
+        for symbol in symbols:
+            chunks.append({
+                'type': 'symbol',
+                'query': symbol,
+                'description': f'Nomes contendo "{symbol}"'
+            })
+
+        # 7. Chunks para espaços em branco e caracteres especiais
+        space_patterns = [' ', '%20', '+', '_']
+        for pattern in space_patterns:
+            chunks.append({
+                'type': 'space_pattern',
+                'query': pattern,
+                'description': f'Nomes contendo espaços/caracteres especiais'
+            })
+
+        print(f"Total de chunks gerados: {len(chunks)}")
+        return chunks
+
+    def test_chunk_size(chunk_query):
+        """
+        Testa quantos resultados um chunk retornaria (apenas primeira página).
+        Usado para estimar se o chunk pode exceder 10k.
+        """
+        url = f"{API_URL}?token={TOKEN}&limit={LIMIT}&page=1&q={chunk_query}"
+
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                total = data.get('total', 0)
+                return total
+            else:
+                return -1
+        except:
+            return -1
+
+    def fetch_contacts_for_chunk(chunk_query, chunk_description, max_contacts=MAX_RESULT_WINDOW):
+        """
+        Busca contatos para um chunk específico com limitação inteligente.
+        """
+        contacts_chunk = []
+        page = 1
+        has_more = True
+
+        # Testa o tamanho do chunk primeiro
+        estimated_total = test_chunk_size(chunk_query)
+        if estimated_total > max_contacts:
+            print(f"  Chunk muito grande ({estimated_total} estimados). Limitando a {max_contacts} contatos.")
+
+        print(f"  Processando: {chunk_description} (estimativa: {estimated_total} contatos)")
+
+        while has_more and len(contacts_chunk) < max_contacts:
+            url = f"{API_URL}?token={TOKEN}&limit={LIMIT}&page={page}&order=created_at&direction=asc&q={chunk_query}"
+
+            try:
+                response = requests.get(url, timeout=30)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    contacts = data.get('contacts', [])
+
+                    if not contacts:
+                        break
+
+                    # Processa os contatos da página atual
+                    for contact in contacts:
+                        if len(contacts_chunk) >= max_contacts:
+                            break
+                        processed_contact = extract_contact_data(contact)
+                        contacts_chunk.append(processed_contact)
+
+                    if page % 10 == 0:  # Log a cada 10 páginas
+                        print(f"    Página {page}: {len(contacts_chunk)} contatos acumulados")
+
+                    # Verifica se há mais páginas
+                    has_more = data.get('has_more', False) and len(contacts) == LIMIT
+                    page += 1
+
+                    # Pausa para evitar rate limiting
+                    time.sleep(0.05)
+
+                elif response.status_code == 429:
+                    print("    Rate limit atingido. Aguardando 60 segundos...")
+                    time.sleep(60)
+
+                elif response.status_code == 400:
+                    print(f"    Erro 400 - Limitação atingida ou chunk inválido.")
+                    break
+
+                else:
+                    print(f"    Erro na requisição: {response.status_code}")
+                    break
+
+            except requests.exceptions.RequestException as e:
+                print(f"    Erro de conexão: {str(e)}")
+                time.sleep(30)
+
+            except Exception as e:
+                print(f"    Erro inesperado: {str(e)}")
+                break
+
+        print(f"  Chunk concluído: {len(contacts_chunk)} contatos coletados")
+        return contacts_chunk
+
+    def remove_duplicates(all_contacts):
+        """Remove contatos duplicados baseado no contact_id."""
+        seen_ids = set()
+        unique_contacts = []
+        duplicates_count = 0
+
+        for contact in all_contacts:
+            contact_id = contact.get('contact_id')
+            if contact_id and contact_id not in seen_ids:
+                seen_ids.add(contact_id)
+                unique_contacts.append(contact)
+            else:
+                duplicates_count += 1
+
+        print(f"Duplicatas removidas: {duplicates_count}")
+        return unique_contacts
+
+    def compile_fieldnames(contacts_data):
+        """Compila todos os nomes de campos únicos encontrados nos dados."""
+        base_fields = [
+            'contact_id', 'contact_name', 'contact_title', 'contact_notes',
+            'contact_birthday', 'contact_facebook', 'contact_linkedin', 'contact_skype',
+            'organization_id', 'contact_created_at', 'contact_updated_at',
+            'primary_email', 'primary_email_id', 'all_emails', 'emails_count',
+            'primary_phone', 'primary_phone_id', 'primary_phone_type',
+            'primary_phone_whatsapp', 'primary_whatsapp_url', 'primary_whatsapp_international',
+            'all_phones', 'phones_count', 'whatsapp_phones_count',
+            'legal_base_category', 'legal_base_type', 'legal_base_status',
+            'legal_bases_count', 'all_legal_categories',
+            'custom_fields_count',
+            'deals_count', 'deal_names', 'deal_ids', 'deal_win_statuses', 'deal_statuses',
+            'won_deals_count', 'lost_deals_count', 'open_deals_count', 'closed_deals_count'
+        ]
+
+        custom_fields = set()
+        other_fields = set()
+
+        for contact in contacts_data:
+            for field_name in contact.keys():
+                if field_name.startswith('custom_field_'):
+                    custom_fields.add(field_name)
+                elif field_name not in base_fields:
+                    other_fields.add(field_name)
+
+        return base_fields + sorted(custom_fields) + sorted(other_fields)
+
+    def upload_to_gcs(bucket_name, destination_blob_name, content):
+        """Faz o upload do conteúdo para o Google Cloud Storage."""
+        try:
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(destination_blob_name)
+
+            blob.upload_from_string(content, 'text/csv')
+            print(f"Arquivo {destination_blob_name} enviado para o bucket {bucket_name}.")
+        except Exception as e:
+            print(f"Erro ao fazer upload para GCS: {str(e)}")
+            backup_filename = f"backup_{destination_blob_name.replace('/', '_')}"
+            with open(backup_filename, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print(f"Arquivo salvo localmente como backup: {backup_filename}")
+
+    def fetch_all_contacts_ultra_chunked():
+        """
+        Busca todos os contatos usando estratégia ultra-granular de chunks.
+        """
+        all_contacts = []
+        chunks = get_ultra_granular_chunks()
+
+        print(f"\nEstratégia Ultra-Granular: {len(chunks)} chunks")
+        print("Iniciando coleta com chunks de alta granularidade...")
+
+        successful_chunks = 0
+        failed_chunks = 0
+        empty_chunks = 0
+
+        for i, chunk in enumerate(chunks, 1):
+            print(f"\n--- Chunk {i}/{len(chunks)} ---")
+
+            try:
+                chunk_contacts = fetch_contacts_for_chunk(
+                    chunk['query'],
+                    chunk['description'],
+                    max_contacts=9000  # Margem de segurança ainda maior
+                )
+
+                if chunk_contacts:
+                    all_contacts.extend(chunk_contacts)
+                    successful_chunks += 1
+                else:
+                    empty_chunks += 1
+
+            except Exception as e:
+                print(f"Erro no chunk {i}: {str(e)}")
+                failed_chunks += 1
+                continue
+
+            # Status report a cada 50 chunks (mais frequente devido ao maior número)
+            if i % 50 == 0:
+                unique_so_far = len(remove_duplicates(all_contacts))
+                print(f"\n=== PROGRESSO INTERMEDIÁRIO ===")
+                print(f"Chunks processados: {i}/{len(chunks)} ({i / len(chunks) * 100:.1f}%)")
+                print(f"Contatos brutos: {len(all_contacts)}")
+                print(f"Contatos únicos estimados: {unique_so_far}")
+                print(f"Chunks bem-sucedidos: {successful_chunks}")
+                print(f"Chunks vazios: {empty_chunks}")
+                print(f"Chunks falharam: {failed_chunks}")
+
+        print(f"\n=== COLETA ULTRA-GRANULAR FINALIZADA ===")
+        print(f"Total de contatos antes da deduplicação: {len(all_contacts)}")
+
+        # Remove duplicatas
+        unique_contacts = remove_duplicates(all_contacts)
+
+        print(f"Total de contatos únicos: {len(unique_contacts)}")
+        print(f"Chunks bem-sucedidos: {successful_chunks}/{len(chunks)}")
+        print(f"Chunks vazios: {empty_chunks}")
+        print(f"Taxa de sucesso: {successful_chunks / len(chunks) * 100:.1f}%")
+
+        return unique_contacts
+
+    def main():
+        """Função principal que coordena todo o processo."""
+        tracemalloc.start()
+        start_time = time.time()
+
+        print("=== COLETOR DE CONTATOS RD STATION CRM - VERSÃO ULTRA-GRANULAR ===")
+        print(f"Início da execução: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Meta: Coletar todos os ~62.696 contatos com chunks ultra-granulares")
+        print(f"Limitação da API: 10.000 registros por consulta")
+        print(f"Estratégia: Chunks de 2-3 caracteres + padrões especiais")
+
+        # Coleta todos os contatos usando chunks ultra-granulares
+        all_contacts_data = fetch_all_contacts_ultra_chunked()
+
+        if not all_contacts_data:
+            print("Nenhum contato foi coletado. Encerrando execução.")
+            return
+
+        print(f"\nTotal de contatos únicos processados: {len(all_contacts_data)}")
+
+        # Compila os nomes dos campos
+        fieldnames = compile_fieldnames(all_contacts_data)
+        print(f"Total de campos identificados: {len(fieldnames)}")
+
+        # Cria o CSV em memória
+        csv_file = StringIO()
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction='ignore')
+        writer.writeheader()
+
+        # Escreve os dados
+        for contact in all_contacts_data:
+            writer.writerow(contact)
+
+        # Prepara para upload
+        csv_content = csv_file.getvalue()
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        destination_blob_name = f'Contacts/rd_crm_contacts_ultra_complete_{timestamp}.csv'
+
+        # Faz upload para GCS
+        upload_to_gcs(BUCKET_NAME, destination_blob_name, csv_content)
+
+        # Estatísticas finais
+        end_time = time.time()
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        print(f"\n=== ESTATÍSTICAS FINAIS ===")
+        print(f"Contatos únicos coletados: {len(all_contacts_data):,}")
+        print(f"Tempo de execução: {end_time - start_time:.2f} segundos ({(end_time - start_time) / 60:.1f} minutos)")
+        print(f"Pico de uso de memória: {peak / 1024 ** 2:.2f} MB")
+        print(f"Arquivo gerado: {destination_blob_name}")
+        print(f"Tamanho do CSV: {len(csv_content) / 1024:.2f} KB")
+
+        # Cobertura estimada
+        coverage_percentage = (len(all_contacts_data) / 62696) * 100
+        print(f"Cobertura estimada: {coverage_percentage:.1f}% dos contatos totais")
+
+        if coverage_percentage >= 90:
+            print("EXCELENTE! Cobertura superior a 90%")
+        elif coverage_percentage >= 80:
+            print("BOM! Cobertura superior a 80%")
+        elif coverage_percentage >= 70:
+            print("REGULAR. Cobertura superior a 70%")
+        else:
+            print("BAIXA cobertura. Considere ajustar a estratégia.")
+
+        # Estatísticas dos dados
+        contacts_with_email = sum(1 for c in all_contacts_data if c.get('primary_email'))
+        contacts_with_phone = sum(1 for c in all_contacts_data if c.get('primary_phone'))
+        contacts_with_deals = sum(1 for c in all_contacts_data if c.get('deals_count', 0) > 0)
+
+        print(f"\n=== ESTATÍSTICAS DOS DADOS ===")
+        print(
+            f"Contatos com email: {contacts_with_email:,} ({contacts_with_email / len(all_contacts_data) * 100:.1f}%)")
+        print(
+            f"Contatos com telefone: {contacts_with_phone:,} ({contacts_with_phone / len(all_contacts_data) * 100:.1f}%)")
+        print(
+            f"Contatos com deals: {contacts_with_deals:,} ({contacts_with_deals / len(all_contacts_data) * 100:.1f}%)")
+
+        print(f"\nMISSÃO CUMPRIDA! Dados extraídos com sucesso.")
+
+    # START
+    main()
+
+
 def get_extraction_tasks():
     """
     Get the list of data extraction tasks for RDCRM.
@@ -440,5 +994,9 @@ def get_extraction_tasks():
         {
             'task_id': 'run',
             'python_callable': run
+        },
+        {
+            'task_id': 'run_contacts',
+            'python_callable': run_contacts
         }
     ]
