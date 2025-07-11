@@ -72,6 +72,12 @@ def run_extract_data(customer):
         'group.id': 'group_id',
         'group.name': 'group_name'
     })
+    print("=== Primeiras 5 linhas do df_origins ===")
+    print(df_origins.head())
+
+    # 3. Verificar valores únicos na coluna group_name
+    print("\n=== Valores únicos em group_name ===")
+    print(df_origins['group_name'].unique())
 
     df_lost_status = pd.json_normalize(data["lost_status"]).rename(columns={
         "id": "lost_status_id_ref",
