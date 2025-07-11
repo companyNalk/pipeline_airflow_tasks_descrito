@@ -52,7 +52,7 @@ def run_extract_data(customer):
                     f"Erro na requisição {endpoint} página {page}: {response.status_code} - {response.text}")
             json_data = response.json()
             all_data.extend(json_data.get("data", []))
-            if not json_data.get("hasNext", False) or page == 5:
+            if not json_data.get("hasNext", False):
                 break
             page += 1
         return all_data
