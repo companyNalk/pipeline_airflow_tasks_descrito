@@ -13,14 +13,37 @@ logger = AppInitializer.initialize()
 
 CONFIG = {
     "rate_limit": 100,
-    "tenant_ids": ["01,00", "01,01", "01,09"],
+    "default_tenant_ids": ["01,00", "01,01", "01,09"],
     "endpoints": {
-        "clientes": {"path": "WSGETCLI", "data_key": "CLIENTES"},
-        # "pedidos": {"path": "WSGETPV", "data_key": "PEDIDOS"},
-        # "produtos": {"path": "WSGETPRD", "data_key": "PRODUTOS"},
-        # "vendedores_vnd": {"path": "WSGETVND", "data_key": "VENDEDORES"},
-        # "vendedores_sd2": {"path": "WSGETSD2", "data_key": "DADOS"},
-        # "itens_nf": {"path": "WSGETSFT", "data_key": "DADOS"},
+        "clientes": {
+            "path": "WSGETCLI",
+            "data_key": "CLIENTES",
+            "tenant_ids": ["01,00"]
+        },
+        # "pedidos": {
+        #     "path": "WSGETPV",
+        #     "data_key": "PEDIDOS",
+        #     "tenant_ids": ["01,01"]
+        # },
+        "produtos": {
+            "path": "WSGETPRD",
+            "data_key": "PRODUTOS",
+            "tenant_ids": ["01,00"]
+        },
+        # "vendedores_vnd": {
+        #     "path": "WSGETVND",
+        #     "data_key": "VENDEDORES"
+        # },
+        # "vendedores_sd2": {
+        #     "path": "WSGETSD2",
+        #     "data_key": "DADOS",
+        #     "tenant_ids": ["01,01", "01,09"]
+        # },
+        # "itens_nf": {
+        #     "path": "WSGETSFT",
+        #     "data_key": "DADOS",
+        #     "tenant_ids": ["01,00"]
+        # },
     }
 }
 
@@ -89,7 +112,6 @@ def process_endpoint_with_tenant(endpoint_name, endpoint_config, tenant_id, args
         rate_limiter = RateLimiter(requests_per_window=CONFIG["rate_limit"], logger=logger)
         http_client = HttpClient(base_url=base_url, rate_limiter=rate_limiter, logger=logger)
 
-        # Headers de autenticação incluindo TenantId
         headers = {
             "Authorization": f"Basic {auth_token}",
             "TenantId": tenant_id
@@ -121,16 +143,29 @@ def process_endpoint_with_tenant(endpoint_name, endpoint_config, tenant_id, args
         }
 
 
+def get_tenant_ids_for_endpoint(endpoint_config):
+    """Retorna os TenantIds para um endpoint específico."""
+    # Se o endpoint tem tenant_ids definidos, usa eles
+    if "tenant_ids" in endpoint_config:
+        return endpoint_config["tenant_ids"]
+
+    # Caso contrário, usa os TenantIds padrão
+    return CONFIG["default_tenant_ids"]
+
+
 def process_endpoint(endpoint_name, endpoint_config, args):
-    """Processa um endpoint para todos os TenantIds configurados."""
-    logger.info(f"\n{'=' * 70}\n🚀 INICIANDO PROCESSAMENTO DO ENDPOINT: {endpoint_name.upper()}\n{'=' * 70}")
+    """Processa um endpoint para seus TenantIds específicos."""
+    # Obter TenantIds específicos para este endpoint
+    tenant_ids = get_tenant_ids_for_endpoint(endpoint_config)
+
+    logger.info(f"\n{'=' * 70}\n🚀 INICIANDO PROCESSAMENTO DO ENDPOINT: {endpoint_name.upper()}")
+    logger.info(f"📋 TenantIds configurados: {tenant_ids}\n{'=' * 70}")
 
     endpoint_stats = {}
     total_records = 0
     total_time = 0
 
-    # Processar para cada TenantId
-    for tenant_id in CONFIG["tenant_ids"]:
+    for tenant_id in tenant_ids:
         tenant_key = f"{endpoint_name}_{tenant_id.replace(',', '_')}"
         endpoint_stats[tenant_key] = process_endpoint_with_tenant(endpoint_name, endpoint_config, tenant_id, args)
 
