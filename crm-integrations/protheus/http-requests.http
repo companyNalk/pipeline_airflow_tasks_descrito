@@ -1,0 +1,42 @@
+# DOCS: http://192.169.0.6:8084/rest/
+# NECESARIO ESTAR CONECTADO NA VPN .ovpn
+# EMPRESAS = 00 - Matriz | 01 - Filial SP | 09 - Filial JF
+
+#### ========== CURRENT-USER ==========
+#GET {{url_base}}/api/framework/current-user
+#Authorization: Basic {{secret}}
+
+### ========== CLIENTES ==========
+GET {{url_base}}/WSGETCLI?pagesize=10&page=1
+Authorization: Basic {{secret}}
+TenantId: 01
+
+### ========== PEDIDOS VENDA ==========
+GET {{url_base}}/WSGETPV?pagesize=10&page=1
+Authorization: Basic {{secret}}
+TenantId: 01
+
+### ========== PRODUTOS ==========
+GET {{url_base}}/WSGETPRD?pagesize=10&page=1
+Authorization: Basic {{secret}}
+TenantId: 01
+
+### ========== VENDEDORES ==========
+GET {{url_base}}/WSGETVND?pagesize=10&page=1
+Authorization: Basic {{secret}}
+TenantId: 01
+
+#### ========== ITENS NOTA FISCAL ==========
+#GET {{url_base}}/WSGETSFT?pagesize=100&page=1
+#Authorization: Basic {{secret}}
+#TenantId: 01
+#
+#### ========== VENDEDORES ==========
+#GET {{url_base}}/WSGETSD2?pagesize=100&page=1
+#Authorization: Basic {{secret}}
+#TenantId: 01,09
+
+PROTHEUS OFF
+DIARIAMENTE
+23:55:00
+00:25:00
