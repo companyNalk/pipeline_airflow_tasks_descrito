@@ -16,9 +16,9 @@ CONFIG = {
     "tenant_ids": ["01,00", "01,01", "01,09"],
     "endpoints": {
         "clientes": {"path": "WSGETCLI", "data_key": "CLIENTES"},
-        "pedidos": {"path": "WSGETPV", "data_key": "PEDIDOS"},
-        "produtos": {"path": "WSGETPRD", "data_key": "PRODUTOS"},
-        "vendedores_vnd": {"path": "WSGETVND", "data_key": "VENDEDORES"},
+        # "pedidos": {"path": "WSGETPV", "data_key": "PEDIDOS"},
+        # "produtos": {"path": "WSGETPRD", "data_key": "PRODUTOS"},
+        # "vendedores_vnd": {"path": "WSGETVND", "data_key": "VENDEDORES"},
         # "vendedores_sd2": {"path": "WSGETSD2", "data_key": "DADOS"},
         # "itens_nf": {"path": "WSGETSFT", "data_key": "DADOS"},
     }
