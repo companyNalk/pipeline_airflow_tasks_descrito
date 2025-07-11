@@ -30,11 +30,11 @@ CONFIG = {
             "data_key": "PRODUTOS",
             "tenant_ids": ["01,00"]
         },
-        "pedidos": {
-            "path": "WSGETPV",
-            "data_key": "PEDIDOS",
-            "tenant_ids": ["01,00"]
-        },
+        # "pedidos": {
+        #     "path": "WSGETPV",
+        #     "data_key": "PEDIDOS",
+        #     "tenant_ids": ["01,00"]
+        # },
         # "vendedores_sd2": {
         #     "path": "WSGETSD2",
         #     "data_key": "DADOS",
