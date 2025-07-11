@@ -25,7 +25,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN mkdir -p /app/output && chmod 777 /app/output
 
 # Copia o script de inicialização
-COPY crm-integrations/protheus/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+#COPY crm-integrations/protheus/entrypoint.sh /entrypoint.sh
+#RUN chmod +x /entrypoint.sh
+#
+#ENTRYPOINT ["/entrypoint.sh"]
 
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "main.py"]
