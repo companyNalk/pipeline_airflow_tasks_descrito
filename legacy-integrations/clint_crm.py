@@ -27,7 +27,6 @@ def run_extract_data(customer):
     ENDPOINTS = {
         "deals": "deals",
         "origins": "origins",
-        "groups": "groups",
         "lost_status": "lost-status",
         "tags": "tags",
         "contacts": "contacts"
@@ -53,7 +52,7 @@ def run_extract_data(customer):
                     f"Erro na requisição {endpoint} página {page}: {response.status_code} - {response.text}")
             json_data = response.json()
             all_data.extend(json_data.get("data", []))
-            if not json_data.get("hasNext", False):
+            if not json_data.get("hasNext", False) or page == 5:
                 break
             page += 1
         return all_data
@@ -67,14 +66,11 @@ def run_extract_data(customer):
         "contact.id": "contact_id"
     })
 
-    df_origins = pd.json_normalize(data["origins"]).rename(columns={
+    df_origins = pd.json_normalize(data["origins"])[['id', 'name', 'group.id', 'group.name']].rename(columns={
         "id": "origin_id_ref",
-        "name": "origin_name"
-    })
-
-    df_groups = pd.json_normalize(data["groups"]).rename(columns={
-        "id": "group_id_ref",
-        "name": "group_name"
+        "name": "origin_name",
+        'group.id': 'group_id',
+        'group.name': 'group_name'
     })
 
     df_lost_status = pd.json_normalize(data["lost_status"]).rename(columns={
@@ -100,13 +96,8 @@ def run_extract_data(customer):
     # MERGES COM OS OUTROS DADOS
 
     # Deals + Origins
-    df = df_deals.merge(df_origins[["origin_id_ref", "origin_name"]],
+    df = df_deals.merge(df_origins[["origin_id_ref", "origin_name", 'group_name']],
                         left_on="origin_id", right_on="origin_id_ref", how="left")
-
-    # Deals + Groups
-    if "group_id" in df.columns and not df_groups.empty:
-        df = df.merge(df_groups[["group_id_ref", "group_name"]],
-                      left_on="group_id", right_on="group_id_ref", how="left")
 
     # Deals + Lost Status
     df = df.merge(df_lost_status[["lost_status_id_ref", "lost_reason"]],
