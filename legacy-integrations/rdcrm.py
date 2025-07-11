@@ -430,6 +430,11 @@ def run(customer):
 
 
 def run_contacts(customer):
+    if not str(customer['contacts_active']).strip().lower() == 'true':
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_leads.")
+        return
+    print(f'VALUE: {customer["contacts_active"]}')
+
     import csv
     import os
     import requests
