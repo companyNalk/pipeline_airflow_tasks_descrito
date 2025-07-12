@@ -539,6 +539,64 @@ class DataPreprocessor:
             logger.error(f"❌ Erro na limpeza de nulls: {e}")
             raise
 
+    @staticmethod
+    def fix_invalid_date_values(csv_path, schema_json=None, logger=None):
+        """
+        Converte campos DATE para STRING APENAS se contêm valores como "3/1", "11/1".
+        """
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
+        try:
+            logger.info("🔧 Verificando campos DATE com valores inválidos...")
+
+            if not schema_json:
+                return 0
+
+            # Identificar campos DATE no schema
+            date_fields = [field['name'] for field in schema_json if field['type'] == 'DATE']
+
+            if not date_fields:
+                logger.info("ℹ️  Nenhum campo DATE encontrado")
+                return 0
+
+            # Carregar CSV para verificar conteúdo
+            df = pd.read_csv(csv_path, delimiter=';', dtype=str, low_memory=False)
+            corrections = 0
+
+            # Verificar cada campo DATE
+            for field_name in date_fields:
+                if field_name not in df.columns:
+                    continue
+
+                # Verificar se há valores como "3/1", "11/1" (sem ano)
+                sample_values = df[field_name].dropna().astype(str).str.strip().head(100)
+                invalid_count = sum(1 for val in sample_values if re.match(r'^\d{1,2}/\d{1,2}$', val))
+
+                # Se há valores inválidos, converter para STRING
+                if invalid_count > 0:
+                    for field in schema_json:
+                        if field['name'] == field_name:
+                            field['type'] = 'STRING'
+                            corrections += 1
+                            logger.info(f"   ✅ {field_name}: DATE → STRING ({invalid_count} valores inválidos)")
+                            break
+
+            # Salvar schema atualizado se houve correções
+            if corrections > 0:
+                schema_path = Path(csv_path).parent / "schema.json"
+                with open(schema_path, 'w', encoding='utf-8') as f:
+                    json.dump(schema_json, f, indent=2, ensure_ascii=False)
+                logger.info(f"✅ {corrections} campo(s) corrigido(s)")
+            else:
+                logger.info("ℹ️  Nenhum campo DATE precisou ser corrigido")
+
+            return corrections
+
+        except Exception as e:
+            logger.error(f"❌ Erro na correção de datas: {e}")
+            raise
+
 
 class ReportGenerator:
     """Handles generation of inconsistency reports."""
@@ -667,6 +725,8 @@ class BigQueryTableManager:
                 schema_json = json.load(f)
 
             # Reprocessamento
+            DataPreprocessor.fix_invalid_date_values(csv_path, schema_json, logger)
+
             DataPreprocessor.convert_date_br_to_iso(csv_path, schema_json, logger)
             DataPreprocessor.convert_timestamp_br_to_iso(csv_path, schema_json, logger)
             DataPreprocessor.convert_timestamp_us_to_iso(csv_path, schema_json, logger)
