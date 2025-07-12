@@ -1,6 +1,7 @@
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta, datetime
 
+from commons.advanced_utils import AdvancedUtils
 from commons.app_inicializer import AppInitializer
 from commons.big_query import BigQuery
 from commons.memory_monitor import MemoryMonitor
@@ -16,15 +17,15 @@ RATE_LIMIT = 100
 BASE_URL = "https://stores.grupoacert.app/api/v1"
 
 ENDPOINTS = {
-    "customers": "stores/{store_id}/customers",
-    "cash_flow": "stores/{store_id}/cash-flow",
-    "products": "stores/{store_id}/products/",
-    "products_simplified": "stores/{store_id}/products/simplified",
+    # "customers": "stores/{store_id}/customers",
+    # "cash_flow": "stores/{store_id}/cash-flow",
+    # "products": "stores/{store_id}/products/",
+    # "products_simplified": "stores/{store_id}/products/simplified",
     "sales": "stores/{store_id}/sales",
-    "payments": "stores/{store_id}/payments",
-    "invoice_history": "stores/{store_id}/invoice_history",
-    "types_of_sales": "stores/{store_id}/types-of-sales",
-    "users": "stores/{store_id}/users"
+    # "payments": "stores/{store_id}/payments",
+    # "invoice_history": "stores/{store_id}/invoice_history",
+    # "types_of_sales": "stores/{store_id}/types-of-sales",
+    # "users": "stores/{store_id}/users"
 }
 
 
@@ -40,8 +41,7 @@ def get_arguments():
 
 
 def parse_store_ids(store_ids):
-    """Converte string de IDs separados por vírgula ou lista em lista de inteiros.
-    """
+    """Converte string de IDs separados por vírgula ou lista em lista de inteiros."""
     try:
         if isinstance(store_ids, list):
             return store_ids
@@ -153,6 +153,34 @@ def fetch_all_pages(endpoint, token, extra_params=None):
     return all_items
 
 
+def get_endpoint_config(endpoint_name):
+    """
+    Retorna configuração específica para cada endpoint.
+    """
+    configs = {
+        "sales": {
+            "extra_params": {"withItems": "true"},
+            "relational_config": {
+                "items": {
+                    "parent_id_field": "sale_id",
+                    "fields_to_extract": None,
+                    "table_name": "sale_items"
+                }
+            },
+            "use_relational": True
+        },
+    }
+
+    # Configuração padrão para endpoints sem configuração específica
+    default_config = {
+        "extra_params": None,
+        "relational_config": None,
+        "use_relational": False
+    }
+
+    return configs.get(endpoint_name, default_config)
+
+
 def get_last_6_months_dates():
     """Gera lista de datas dos últimos 6 meses no formato YYYY-MM-DD."""
     today = datetime.now()
@@ -228,7 +256,7 @@ def process_cash_flow_endpoint(endpoint_name, endpoint_path, token, store_id):
 
 def process_endpoint(endpoint_name, endpoint_path, token, store_id):
     """Processa um endpoint específico e retorna estatísticas."""
-    # Tratamento especial para cash-flow
+    # Tratamento especial para cash-flow (mantém a lógica original)
     if endpoint_name == "cash_flow":
         return process_cash_flow_endpoint(endpoint_name, endpoint_path, token, store_id)
 
@@ -240,19 +268,60 @@ def process_endpoint(endpoint_name, endpoint_path, token, store_id):
         logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO ENDPOINT: {display_name.upper()}\n{'=' * 50}")
 
         endpoint_start = time.time()
-        raw_data = fetch_all_pages(formatted_endpoint, token)
 
-        # Processar e salvar dados
-        logger.info(f"💾 Processando e salvando {len(raw_data)} registros para {display_name}")
-        processed_data = Utils.process_and_save_data(raw_data, display_name)
+        # Obter configuração do endpoint
+        config = get_endpoint_config(endpoint_name)
+        extra_params = config["extra_params"]
+
+        raw_data = fetch_all_pages(formatted_endpoint, token, extra_params)
+
+        # Escolher método de processamento baseado na configuração
+        if config["use_relational"] and config["relational_config"]:
+            logger.info(f"🔄 Aplicando extração relacional para {endpoint_name}")
+
+            processed_tables = AdvancedUtils.process_with_relational_extraction(
+                raw_data=raw_data,
+                endpoint_name=display_name,
+                table_configs=config["relational_config"],
+                parent_id_field="id",
+                auto_detect=False
+            )
+
+            # Calcular total de registros
+            total_records = sum(len(data) if isinstance(data, list) else 0
+                                for data in processed_tables.values())
+
+            result = {
+                "registros": total_records,
+                "tabelas": processed_tables,
+                "status": "Sucesso com extração relacional"
+            }
+
+        else:
+            # Processamento normal para endpoints sem extração relacional
+            logger.info(f"📄 Processamento normal para {endpoint_name}")
+            processed_data = Utils.process_and_save_data(raw_data, display_name)
+
+            result = {
+                "registros": len(processed_data),
+                "tabelas": {"main_table": processed_data},
+                "status": "Sucesso"
+            }
 
         endpoint_duration = time.time() - endpoint_start
 
+        # Log dos resultados
+        if "tabelas" in result:
+            for table_name, data in result["tabelas"].items():
+                records_count = len(data) if isinstance(data, list) else 0
+                logger.info(f"📊 {table_name}: {records_count} registros processados")
+
         # Retornar estatísticas
         return {
-            "registros": len(processed_data),
-            "status": "Sucesso",
-            "tempo": endpoint_duration
+            "registros": result["registros"],
+            "status": result["status"],
+            "tempo": endpoint_duration,
+            "tabelas_geradas": list(result["tabelas"].keys()) if "tabelas" in result else []
         }
 
     except Exception as e:
@@ -260,7 +329,8 @@ def process_endpoint(endpoint_name, endpoint_path, token, store_id):
         return {
             "registros": 0,
             "status": f"Falha: {type(e).__name__}: {str(e)}",
-            "tempo": 0
+            "tempo": 0,
+            "tabelas_geradas": []
         }
 
 
@@ -292,8 +362,13 @@ def main():
             for endpoint_name, endpoint_path in ENDPOINTS.items():
                 stats_key = f"{store_id}_{endpoint_name}"
                 endpoint_stats[stats_key] = process_endpoint(endpoint_name, endpoint_path, api_auth_token, store_id)
-                logger.info(
-                    f"✅ {stats_key}: {endpoint_stats[stats_key]['registros']} registros em {endpoint_stats[stats_key]['tempo']:.2f}s")
+
+                # Log detalhado dos resultados
+                stats = endpoint_stats[stats_key]
+                logger.info(f"✅ {stats_key}: {stats['registros']} registros em {stats['tempo']:.2f}s")
+                logger.info(f"   Status: {stats['status']}")
+                if stats.get('tabelas_geradas'):
+                    logger.info(f"   Tabelas geradas: {', '.join(stats['tabelas_geradas'])}")
 
         # 6. Gerar resumo final
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)

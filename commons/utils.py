@@ -130,17 +130,20 @@ class Utils:
         return key
 
     @staticmethod
-    def _normalize_keys(data: Any) -> Any:
+    def _normalize_keys(data: Any, use_pascal_case_conversion: bool = False) -> Any:
         """
         Normaliza todas as chaves em estruturas aninhadas (dict/list).
         """
         try:
             if isinstance(data, dict):
                 # Normaliza as chaves do dicionário
-                return {Utils._normalize_key(k): Utils._normalize_keys(v) for k, v in data.items()}
+                return {
+                    Utils._normalize_key(k, use_pascal_case_conversion): Utils._normalize_keys(v, use_pascal_case_conversion)
+                    for k, v in data.items()
+                }
             elif isinstance(data, list):
                 # Normaliza cada item na lista
-                return [Utils._normalize_keys(item) for item in data]
+                return [Utils._normalize_keys(item, use_pascal_case_conversion) for item in data]
             else:
                 # Retorna o valor original se não for um dicionário ou lista
                 return data
@@ -351,7 +354,7 @@ class Utils:
             raise
 
     @staticmethod
-    def process_and_save_data(raw_data: List[Dict], endpoint_name: str) -> List[Dict]:
+    def process_and_save_data(raw_data: List[Dict], endpoint_name: str, use_pascal_case_conversion: bool = False) -> List[Dict]:
         """
         Processa dados brutos e salva o resultado como CSV.
         """
@@ -367,7 +370,7 @@ class Utils:
             raw_data = Utils._remove_newlines_from_fields(raw_data)
 
             # Normalizar as chaves dos dados
-            normalized_data = Utils._normalize_keys(raw_data)
+            normalized_data = Utils._normalize_keys(raw_data, use_pascal_case_conversion)
 
             # Achatar a estrutura JSON
             flattened_data = [Utils._flatten_json(item) for item in normalized_data]

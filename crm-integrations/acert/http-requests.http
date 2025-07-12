@@ -1,0 +1,70 @@
+### ========== CUSTOMERS ==========
+### CUSTOMERS - List All
+GET {{url_base}}/v1/stores/{{store_id}}/customers
+Authorization: {{auth_token}}
+
+### ========== PAYMENTS ==========
+### PAYMENTS - List All
+GET {{url_base}}/v1/stores/{{store_id}}/payments
+Authorization: {{auth_token}}
+
+### ========== PRODUCTS ==========
+### PRODUCTS - By SKU (Armação Ray-Ban)
+GET {{url_base}}/v1/stores/{{store_id}}/products/36717
+Authorization: {{auth_token}}
+
+### PRODUCTS - List All
+GET {{url_base}}/v1/stores/{{store_id}}/products
+Authorization: {{auth_token}}
+
+### PRODUCTS - Simplified
+GET {{url_base}}/v1/stores/{{store_id}}/products/simplified
+Authorization: {{auth_token}}
+
+### ========== SALES ==========
+### SALES - History (Basic)
+GET {{url_base}}/v1/stores/{{store_id}}/sales
+Authorization: {{auth_token}}
+
+### SALES - History (With Items)
+GET {{url_base}}/v1/stores/{{store_id}}/sales?withItems=true
+Authorization: {{auth_token}}
+
+### SALES - Invoice History (Sale #90841)
+GET {{url_base}}/v1/stores/{{store_id}}/sales/90841/invoice-history
+Authorization: {{auth_token}}
+
+### SALES - Items
+GET {{url_base}}/v1/stores/{{store_id}}/sales/items
+Authorization: {{auth_token}}
+
+### SALES - Report
+GET {{url_base}}/v1/stores/{{store_id}}/sales/report
+Authorization: {{auth_token}}
+
+### SALES - Types
+GET {{url_base}}/v1/stores/{{store_id}}/types-of-sales
+Authorization: {{auth_token}}
+
+### ========== STOCK ==========
+### STOCK - By SKU (Armação Ray-Ban)
+GET {{url_base}}/v1/stores/{{store_id}}/all-stocks/36717
+Authorization: {{auth_token}}
+
+### ========== STORE ==========
+### STORE - Cash Flow (Custom Date)
+GET {{url_base}}/v1/stores/{{store_id}}/cash-flow?receiptDate=2025-06-20
+Authorization: {{auth_token}}
+
+### STORE - Cash Flow (Today)
+GET {{url_base}}/v1/stores/{{store_id}}/cash-flow?receiptDate=2025-06-29
+Authorization: {{auth_token}}
+
+### STORE - Info
+GET {{url_base}}/v1/stores/{{store_id}}
+Authorization: {{auth_token}}
+
+### ========== USERS ==========
+### USERS - List All
+GET {{url_base}}/v1/stores/{{store_id}}/users
+Authorization: {{auth_token}}
