@@ -20,21 +20,21 @@ CONFIG = {
             "data_key": "VENDEDORES",
             "tenant_ids": ["01,00"]
         },
-        "clientes": {
-            "path": "WSGETCLI",
-            "data_key": "CLIENTES",
-            "tenant_ids": ["01,00"]
-        },
         "produtos": {
             "path": "WSGETPRD",
             "data_key": "PRODUTOS",
             "tenant_ids": ["01,00"]
         },
-        # "pedidos": {
-        #     "path": "WSGETPV",
-        #     "data_key": "PEDIDOS",
-        #     "tenant_ids": ["01,00"]
-        # },
+        "clientes": {
+            "path": "WSGETCLI",
+            "data_key": "CLIENTES",
+            "tenant_ids": ["01,00"]
+        },
+        "pedidos": {
+            "path": "WSGETPV",
+            "data_key": "PEDIDOS",
+            "tenant_ids": ["01,01", "01,09"]
+        },
         # "vendedores_sd2": {
         #     "path": "WSGETSD2",
         #     "data_key": "DADOS",
@@ -47,6 +47,18 @@ CONFIG = {
         # },
     }
 }
+
+# Mapeamento dos tenant_ids para nomes descritivos
+TENANT_NAMES = {
+    "01,00": "matriz",
+    "01,01": "filial_sp",
+    "01,09": "filial_jf"
+}
+
+
+def get_tenant_descriptive_name(tenant_id):
+    """Retorna o nome descritivo do tenant_id."""
+    return TENANT_NAMES.get(tenant_id, tenant_id.replace(',', '_'))
 
 
 def get_arguments():
@@ -102,7 +114,8 @@ def fetch_all_data(http_client, endpoint_path, data_key, headers):
 
 def process_endpoint_with_tenant(endpoint_name, endpoint_config, tenant_id, args):
     """Processa um endpoint específico com TenantId e retorna estatísticas."""
-    logger.info(f"\n{'=' * 60}\n🔍 PROCESSANDO: {endpoint_name.upper()} - TenantId: {tenant_id}\n{'=' * 60}")
+    tenant_name = get_tenant_descriptive_name(tenant_id)
+    logger.info(f"\n{'=' * 60}\n🔍 PROCESSANDO: {endpoint_name.upper()} - {tenant_name.upper()}\n{'=' * 60}")
 
     try:
         # Configurações
@@ -122,8 +135,8 @@ def process_endpoint_with_tenant(endpoint_name, endpoint_config, tenant_id, args
         start_time = time.time()
         raw_data = fetch_all_data(http_client, endpoint_config['path'], endpoint_config['data_key'], headers)
 
-        # Processar dados com sufixo do tenant
-        endpoint_name_with_tenant = f"{endpoint_name}_{tenant_id.replace(',', '_')}"
+        # Processar dados com nome descritivo do tenant
+        endpoint_name_with_tenant = f"{endpoint_name}_{tenant_name}"
         logger.info(f"💾 Processando e salvando {len(raw_data)} registros para {endpoint_name_with_tenant}")
         processed_data = Utils.process_and_save_data(raw_data, endpoint_name_with_tenant)
 
@@ -131,16 +144,18 @@ def process_endpoint_with_tenant(endpoint_name, endpoint_config, tenant_id, args
             "registros": len(processed_data),
             "status": "Sucesso",
             "tempo": time.time() - start_time,
-            "tenant_id": tenant_id
+            "tenant_id": tenant_id,
+            "tenant_name": tenant_name
         }
 
     except Exception as e:
-        logger.exception(f"❌ Falha no endpoint {endpoint_name} com TenantId {tenant_id}")
+        logger.exception(f"❌ Falha no endpoint {endpoint_name} com TenantId {tenant_id} ({tenant_name})")
         return {
             "registros": 0,
             "status": f"Falha: {type(e).__name__}: {str(e)}",
             "tempo": 0,
-            "tenant_id": tenant_id
+            "tenant_id": tenant_id,
+            "tenant_name": tenant_name
         }
 
 
@@ -167,14 +182,15 @@ def process_endpoint(endpoint_name, endpoint_config, args):
     total_time = 0
 
     for tenant_id in tenant_ids:
-        tenant_key = f"{endpoint_name}_{tenant_id.replace(',', '_')}"
+        tenant_name = get_tenant_descriptive_name(tenant_id)
+        tenant_key = f"{endpoint_name}_{tenant_name}"
         endpoint_stats[tenant_key] = process_endpoint_with_tenant(endpoint_name, endpoint_config, tenant_id, args)
 
         total_records += endpoint_stats[tenant_key]["registros"]
         total_time += endpoint_stats[tenant_key]["tempo"]
 
         logger.info(
-            f"✅ {endpoint_name} (TenantId: {tenant_id}): {endpoint_stats[tenant_key]['registros']} registros em {endpoint_stats[tenant_key]['tempo']:.2f}s")
+            f"✅ {endpoint_name} ({tenant_name}): {endpoint_stats[tenant_key]['registros']} registros em {endpoint_stats[tenant_key]['tempo']:.2f}s")
 
     # Log resumo do endpoint
     logger.info(f"\n📊 RESUMO {endpoint_name.upper()}: {total_records} registros totais em {total_time:.2f}s")
