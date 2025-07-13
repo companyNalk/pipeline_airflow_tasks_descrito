@@ -15,25 +15,25 @@ CONFIG = {
     "rate_limit": 100,
     "default_tenant_ids": ["01,00", "01,01", "01,09"],
     "endpoints": {
-        # "vendedores_vnd": {
-        #     "path": "WSGETVND",
-        #     "data_key": "VENDEDORES",
-        #     "tenant_ids": ["01,00"]
-        # },
-        # "produtos": {
-        #     "path": "WSGETPRD",
-        #     "data_key": "PRODUTOS",
-        #     "tenant_ids": ["01,00"]
-        # },
-        # "clientes": {
-        #     "path": "WSGETCLI",
-        #     "data_key": "CLIENTES",
-        #     "tenant_ids": ["01,00"]
-        # },
+        "vendedores_vnd": {
+            "path": "WSGETVND",
+            "data_key": "VENDEDORES",
+            "tenant_ids": ["01,00"]
+        },
+        "produtos": {
+            "path": "WSGETPRD",
+            "data_key": "PRODUTOS",
+            "tenant_ids": ["01,00"]
+        },
+        "clientes": {
+            "path": "WSGETCLI",
+            "data_key": "CLIENTES",
+            "tenant_ids": ["01,00"]
+        },
         "pedidos": {
             "path": "WSGETPV",
             "data_key": "PEDIDOS",
-            "tenant_ids": ["01,00"]
+            "tenant_ids": ["01,01", "01,09"]
         },
         # "vendedores_sd2": {
         #     "path": "WSGETSD2",
