@@ -1,0 +1,27 @@
+### DOCS
+### https://drive.google.com/drive/folders/1xAc3u_Cq3G4j_3ErwgU1GE5LXAUF-oPv
+
+### ========== TOKEN ==========
+GET {{url_base}}/api/auth?login={{login}}&password={{password}}&returnType={{returnType}}
+
+> {%
+const tokenData = JSON.parse(response.body);
+client.global.set("auth_token", tokenData.token);
+%}
+
+### ========== PRODUCTS ==========
+### DOCS https://drive.google.com/drive/folders/1zG9lBFsL46cxp7j78zAkBCMMYE4Vplsw
+GET {{url_base}}/api/products?token={{auth_token}}&returnType=json
+
+### ========== CLIENTS ==========
+### DOCS https://drive.google.com/drive/folders/11wXIlLajhI-v-cng9yWBrh_RHvRkucqC
+GET {{url_base}}/api/clients-v2.json?pagina=2&token={{auth_token}}
+
+### ========== VISITAS ==========
+GET {{url_base}}/api/visitas?token={{auth_token}}
+
+### ========== CONSULTA PROPOSTA ==========
+GET {{url_base}}/api/consultaproposta?token={{auth_token}}
+
+### ========== CONSULTA TAREFA ==========
+GET {{url_base}}/api/consultatarefa?token={{auth_token}}
