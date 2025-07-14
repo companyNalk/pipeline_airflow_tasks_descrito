@@ -43,7 +43,7 @@ def run(customer):
         'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
         'campaign_name', 'clicks', 'cost_per_action_type', 'ctr',
         'date_start', 'date_stop', 'frequency', 'impressions',
-        'objective', 'reach', 'spend', 'actions'
+        'objective', 'reach', 'spend', 'actions', 'action_values'  # Added action_values
     ]
 
     ACTION_FIELDS = [
@@ -63,6 +63,7 @@ def run(customer):
         'cost_per_action_type_onsite_conversion_lead_grouped',
         'cost_per_action_type_onsite_conversion_messaging_conversation_started_7d',
         'cost_per_action_type_post_engagement', 'cost_per_action_type_post_reaction',
+        'custom_conversion_action_name', 'custom_conversion_action_count', 'custom_conversion_action_value',
         'instagram_permalink_url', 'link', 'object_url'
     ]
 
@@ -81,6 +82,7 @@ def run(customer):
 
             # Cache para URLs dos criativos (evita buscar o mesmo ad_id múltiplas vezes)
             self.creative_urls_cache = {}
+            self.custom_conversion_names = {}  # Cache para nomes das conversões personalizadas
 
         async def get_session(self):
             if not self.session:
@@ -91,6 +93,37 @@ def run(customer):
             if self.session:
                 await self.session.close()
                 self.session = None
+
+        async def get_custom_conversion_names(self) -> Dict[str, str]:
+            """Consulta os nomes das conversões personalizadas uma única vez e armazena em cache"""
+            print("  ├─ Carregando nomes das conversões personalizadas...")
+            session = await self.get_session()
+            names = {}
+            
+            for account_id in self.account_ids:
+                clean_account_id = account_id.replace('act_', '')
+                url = f"{self.base_url}/act_{clean_account_id}/customconversions"
+                params = {
+                    "access_token": self.access_token,
+                    "fields": "id,name",
+                    "limit": 200
+                }
+                
+                try:
+                    async with self.semaphore:
+                        async with session.get(url, params=params) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                for item in data.get("data", []):
+                                    names[item["id"]] = item["name"]
+                                print(f"     └─ Account {account_id}: {len(data.get('data', []))} conversões personalizadas encontradas")
+                            else:
+                                print(f"     └─ Account {account_id}: Erro {response.status} ao buscar conversões personalizadas")
+                except Exception as e:
+                    print(f"     └─ Account {account_id}: Erro ao buscar conversões personalizadas: {e}")
+            
+            print(f"  └─ Total de conversões personalizadas carregadas: {len(names)}")
+            return names
 
         async def validate_credentials(self) -> bool:
             """
@@ -403,6 +436,26 @@ def run(customer):
                 # Obter URLs do mapeamento
                 ad_urls = ad_urls_map.get(ad_id, {})
 
+                # Initialize custom conversion fields
+                custom_conversion_name = None
+                custom_conversion_count = 0
+                custom_conversion_value = 0
+                
+                # Extract custom conversions - only the first one found
+                for action in item.get("actions", []):
+                    action_type = action.get("action_type", "")
+                    if action_type.startswith("offsite_conversion.custom."):
+                        custom_id = action_type.split(".")[-1]
+                        custom_conversion_name = self.custom_conversion_names.get(custom_id, f"custom_{custom_id}")
+                        custom_conversion_count = float(action.get("value", 0))
+                        
+                        # Try to find corresponding value
+                        for val in item.get("action_values", []):
+                            if val.get("action_type") == action_type:
+                                custom_conversion_value = float(val.get("value", 0))
+                                break
+                        break  # Only take the first custom conversion found
+
                 # Base data
                 row = {
                     "date": date_str,
@@ -421,6 +474,9 @@ def run(customer):
                     "totalcost": float(item.get("spend", 0)) if item.get("spend") else 0,
                     "age": item.get("age"),
                     "gender": item.get("gender"),
+                    "custom_conversion_action_name": custom_conversion_name,
+                    "custom_conversion_action_count": custom_conversion_count,
+                    "custom_conversion_action_value": custom_conversion_value,
                     # URLs dos criativos
                     "instagram_permalink_url": ad_urls.get("instagram_permalink_url"),
                     "link": ad_urls.get("link"),
@@ -455,6 +511,9 @@ def run(customer):
                     "adset_name": "first",
                     "campaign": "first",
                     "objective": "first",
+                    "custom_conversion_action_name": "first",
+                    "custom_conversion_action_count": "sum",
+                    "custom_conversion_action_value": "sum",
                     "instagram_permalink_url": "first",
                     "link": "first",
                     "object_url": "first"
@@ -495,8 +554,8 @@ def run(customer):
                     df[col] = None
 
             # Normalize column types
-            int_cols = ["clicks", "impressions", "reach"] + [f"actions_{a.replace('.', '_')}" for a in ACTION_FIELDS]
-            float_cols = ["frequency", "ctr", "totalcost"] + [f"cost_per_action_type_{a.replace('.', '_')}" for a in
+            int_cols = ["clicks", "impressions", "reach", "custom_conversion_action_count"] + [f"actions_{a.replace('.', '_')}" for a in ACTION_FIELDS]
+            float_cols = ["frequency", "ctr", "totalcost", "custom_conversion_action_value"] + [f"cost_per_action_type_{a.replace('.', '_')}" for a in
                                                               ACTION_FIELDS]
 
             for col in int_cols:
@@ -588,6 +647,9 @@ def run(customer):
                     `cost_per_action_type_onsite_conversion_messaging_conversation_started_7d` Float64,
                     `cost_per_action_type_post_engagement` Float64,
                     `cost_per_action_type_post_reaction` Float64,
+                    `custom_conversion_action_name` String,
+                    `custom_conversion_action_count` Int64,
+                    `custom_conversion_action_value` Float64,
                     `instagram_permalink_url` String,
                     `link` String,
                     `object_url` String,
@@ -672,6 +734,9 @@ def run(customer):
         async def run(self):
             """Execute collection process"""
             try:
+                # Load custom conversion names at the beginning
+                self.custom_conversion_names = await self.get_custom_conversion_names()
+                
                 # VALIDAÇÃO ANTES DE COMEÇAR
                 if not await self.validate_credentials():
                     print("\n[ERRO CRITICO] Validação falhou. Interrompendo execução.")

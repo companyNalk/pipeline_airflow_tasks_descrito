@@ -85,6 +85,37 @@ def run(customer):
                 await self.session.close()
                 self.session = None
 
+        async def get_custom_conversion_names(self) -> Dict[str, str]:
+            """Consulta os nomes das conversões personalizadas uma única vez e armazena em cache"""
+            print("  ├─ Carregando nomes das conversões personalizadas...")
+            session = await self.get_session()
+            names = {}
+            
+            for account_id in self.account_ids:
+                clean_account_id = account_id.replace('act_', '')
+                url = f"{self.base_url}/act_{clean_account_id}/customconversions"
+                params = {
+                    "access_token": self.access_token,
+                    "fields": "id,name",
+                    "limit": 200
+                }
+                
+                try:
+                    async with self.semaphore:
+                        async with session.get(url, params=params) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                for item in data.get("data", []):
+                                    names[item["id"]] = item["name"]
+                                print(f"     └─ Account {account_id}: {len(data.get('data', []))} conversões personalizadas encontradas")
+                            else:
+                                print(f"     └─ Account {account_id}: Erro {response.status} ao buscar conversões personalizadas")
+                except Exception as e:
+                    print(f"     └─ Account {account_id}: Erro ao buscar conversões personalizadas: {e}")
+            
+            print(f"  └─ Total de conversões personalizadas carregadas: {len(names)}")
+            return names
+
         async def validate_credentials(self) -> bool:
             """
             Valida as credenciais antes de iniciar a coleta
@@ -313,6 +344,26 @@ def run(customer):
             # First, transform all raw data
             rows = []
             for item in data:
+                # Initialize custom conversion fields
+                custom_conversion_name = None
+                custom_conversion_count = 0
+                custom_conversion_value = 0
+                
+                # Extract custom conversions - only the first one found
+                for action in item.get("actions", []):
+                    action_type = action.get("action_type", "")
+                    if action_type.startswith("offsite_conversion.custom."):
+                        custom_id = action_type.split(".")[-1]
+                        custom_conversion_name = self.custom_conversion_names.get(custom_id, f"custom_{custom_id}")
+                        custom_conversion_count = float(action.get("value", 0))
+                        
+                        # Try to find corresponding value
+                        for val in item.get("action_values", []):
+                            if val.get("action_type") == action_type:
+                                custom_conversion_value = float(val.get("value", 0))
+                                break
+                        break  # Only take the first custom conversion found
+
                 # Base data
                 row = {
                     "date": date_str,
@@ -331,6 +382,9 @@ def run(customer):
                     "totalcost": float(item.get("spend", 0)) if item.get("spend") else 0,
                     "age": item.get("age"),
                     "gender": item.get("gender"),
+                    "custom_conversion_action_name": custom_conversion_name,
+                    "custom_conversion_action_count": custom_conversion_count,
+                    "custom_conversion_action_value": custom_conversion_value,
                     "instagram_permalink_url": None,
                     "link": None,
                     "object_url": item.get("object_url")
@@ -364,6 +418,9 @@ def run(customer):
                     "adset_name": "first",
                     "campaign": "first",
                     "objective": "first",
+                    "custom_conversion_action_name": "first",
+                    "custom_conversion_action_count": "sum",
+                    "custom_conversion_action_value": "sum",
                     "instagram_permalink_url": "first",
                     "link": "first",
                     "object_url": "first"
