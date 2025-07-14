@@ -33,6 +33,7 @@ def get_arguments():
             .add("FIELDS_OWNERS", "Lista de campos para owners (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
             .add("FIELDS_PIPELINES", "Lista de campos para pipelines (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
             .add("FIELDS_PROPERTIES", "Lista de campos para properties (formato: ['campo1' , 'campo2' , 'campo3'])", required=True)
+            .add("USE_PYTHON_TO_CREATE_BIG_QUERY_TABLES", "Se flag marcada no sheets, cria o schema/tabela conforme dados do .csv", required=True)
             .add("PROJECT_ID", "ID do projeto GCS", required=True)
             .add("CRM_TYPE", "Ferramenta: Nome aba sheets", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credenciais GCS", required=True)
@@ -134,6 +135,7 @@ FIELDS_PROPERTIES = parse_env_list(args.FIELDS_PROPERTIES)
 START_DATE = args.START_DATE
 INTERVAL_DAYS = int(args.INTERVAL_DAYS)
 
+logger.info("📅 Configuração temporal:")
 logger.info(f"   • Data inicial: {START_DATE}")
 logger.info(f"   • Intervalo: {INTERVAL_DAYS} dias")
 
@@ -1323,6 +1325,241 @@ def process_properties_endpoint(client, endpoint_name="properties", object_type=
             "total_properties": 0
         }
 
+
+def fetch_deals_page_with_date_filter_enhanced(client, properties, limit, date_range=None, after=None, last_id=None):
+    """
+    Busca página de deals com filtro de data opcional e paginação por ID para contornar limite de 10.000
+    """
+    try:
+        if date_range and should_use_date_filter("deals"):
+            # Importar o modelo correto do HubSpot
+            from hubspot.crm.deals import PublicObjectSearchRequest, Filter, FilterGroup
+
+            # Formatar datas corretamente
+            start_date = format_date_for_hubspot(date_range[0], is_end_date=False)
+            end_date = format_date_for_hubspot(date_range[1], is_end_date=True)
+
+            # Criar filtros de data
+            filters = [
+                Filter(
+                    property_name="createdate",
+                    operator="GTE",
+                    value=start_date
+                ),
+                Filter(
+                    property_name="createdate",
+                    operator="LTE",
+                    value=end_date
+                )
+            ]
+
+            # Adicionar filtro de ID se fornecido (para contornar limite de 10.000)
+            if last_id is not None:
+                filters.append(
+                    Filter(
+                        property_name="hs_object_id",
+                        operator="GT",
+                        value=str(last_id)
+                    )
+                )
+
+            # Criar grupo de filtros
+            filter_group = FilterGroup(filters=filters)
+
+            # Criar request de busca com ordenação por ID
+            search_request = PublicObjectSearchRequest(
+                filter_groups=[filter_group],
+                properties=properties,
+                limit=limit,
+                sorts=[{
+                    "propertyName": "hs_object_id",
+                    "direction": "ASCENDING"
+                }]
+                # Remover after quando usando paginação por ID
+            )
+
+            response = client.crm.deals.search_api.do_search(
+                public_object_search_request=search_request
+            )
+        else:
+            # Usar API básica sem filtro de data
+            response = client.crm.deals.basic_api.get_page(
+                limit=limit,
+                properties=properties,
+                after=after
+            )
+        return response
+    except ApiException as e:
+        logger.error(f"❌ API Exception ao buscar página de deals: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar página de deals: {str(e)}")
+        raise
+
+
+def process_deals_batch_with_date_ranges_enhanced(client, property_groups, limit):
+    """
+    Processa deals usando intervalos de data com paginação por ID para contornar limite de 10.000
+    """
+    all_items = []
+
+    if should_use_date_filter("deals"):
+        date_ranges = generate_date_ranges(START_DATE, interval_days=INTERVAL_DAYS)
+        logger.info(f"📊 Processando deals em {len(date_ranges)} intervalos de data")
+
+        for range_idx, date_range in enumerate(date_ranges):
+            logger.info(
+                f"📅 Processando intervalo {range_idx + 1}/{len(date_ranges)}: {date_range[0]} a {date_range[1]}")
+
+            has_more = True
+            last_id = None  # Para paginação por ID
+            range_items = []
+            batch_count = 0
+
+            while has_more:
+                batch_start_time = time.time()
+                batch_count += 1
+
+                for group_index, properties in enumerate(property_groups):
+                    try:
+                        api_response = fetch_deals_page_with_date_filter_enhanced(
+                            client, properties, limit, date_range, None, last_id
+                        )
+                        deals = api_response.results
+
+                        # Verificar se há mais dados baseado no número de resultados
+                        if group_index == 0:
+                            has_more = len(deals) == limit
+                            # Atualizar last_id com o maior ID da página atual
+                            if deals:
+                                current_max_id = max(int(deal.id) for deal in deals)
+                                if last_id is None or current_max_id > last_id:
+                                    last_id = current_max_id
+
+                                logger.info(f"🔢 Último ID processado: {last_id}")
+
+                        for deal in deals:
+                            deal_id = deal.id
+                            existing_deal = next((item for item in range_items if item.get("hs_object_id") == deal_id),
+                                                 None)
+
+                            if existing_deal:
+                                for property_name in properties:
+                                    existing_deal[property_name] = deal.properties.get(property_name, "")
+                            else:
+                                new_deal = {"hs_object_id": deal_id}
+                                for property_name in properties:
+                                    new_deal[property_name] = deal.properties.get(property_name, "")
+                                range_items.append(new_deal)
+
+                        logger.info(f"✓ Grupo {group_index + 1}/{len(property_groups)} processado")
+
+                    except Exception as e:
+                        logger.error(f"❌ Erro no grupo {group_index + 1}: {str(e)}")
+
+                        # Se o erro for 400 (limite atingido), tentar continuar com paginação por ID
+                        if "400" in str(e) and last_id is not None:
+                            logger.warning(
+                                f"⚠️ Limite de 10.000 atingido, continuando com paginação por ID a partir de {last_id}")
+                            continue
+                        else:
+                            # Para outros erros, parar o processamento
+                            has_more = False
+                            break
+
+                batch_duration = time.time() - batch_start_time
+                logger.info(f"✓ Lote {batch_count}: {len(range_items)} deals em {batch_duration:.2f}s")
+
+                # Se não há mais dados ou atingiu um erro crítico
+                if not has_more:
+                    break
+
+                # Verificar se está em loop infinito (mesmo ID)
+                if batch_count > 1000:  # Limite de segurança
+                    logger.warning("⚠️ Muitas iterações, possível loop infinito. Parando processamento.")
+                    break
+
+            all_items.extend(range_items)
+            logger.info(f"📊 Intervalo concluído: {len(range_items)} deals. Total acumulado: {len(all_items)}")
+
+    else:
+        # Processar sem filtro de data (modo original)
+        logger.info("📊 Processando deals sem filtro de data")
+        all_items = process_deals_batch_original(client, property_groups, limit)
+
+    return all_items
+
+
+def process_deals_endpoint_enhanced(client, endpoint_name="deals", limit=LIMIT_PER_PAGE):
+    """Versão aprimorada que resolve problemas com dealstage, usa filtro de data e contorna limite de 10.000"""
+    try:
+        logger.info(
+            f"\n{'=' * 50}\n🔍 PROCESSANDO: {endpoint_name.upper()} (VERSÃO APRIMORADA COM PAGINAÇÃO POR ID)\n{'=' * 50}")
+
+        endpoint_start = time.time()
+
+        # PASSO 1: Criar mapeamento de stages
+        stage_mapping = create_stage_mapping(client)
+
+        # PASSO 2: Obter propriedades (já inclui campos essenciais automaticamente)
+        object_type = get_endpoint_object_type(endpoint_name)
+        all_properties = get_endpoint_properties(client, endpoint_name, object_type)
+        property_groups = create_property_groups(all_properties, MAX_PROPERTIES_PER_REQUEST)
+
+        # PASSO 3: Coletar dados de deals com filtro de data e paginação por ID
+        logger.info("📊 Coletando dados de deals com filtro de data e paginação por ID...")
+        if should_use_date_filter(endpoint_name):
+            logger.info(f"📅 Usando filtro de data a partir de: {START_DATE}")
+
+        logger.info("🔢 Usando paginação por ID para contornar limite de 10.000 registros")
+        raw_data = process_deals_batch_with_date_ranges_enhanced(client, property_groups, limit)
+
+        # PASSO 4: Enriquecer dados com informações de stage
+        enriched_data = enrich_deals_with_stage_info(raw_data, stage_mapping)
+
+        # PASSO 5: Análise de qualidade dos dados
+        analyze_dealstage_data_quality(enriched_data)
+
+        # PASSO 6: Processar e salvar
+        logger.info(f"💾 Processando e salvando {len(enriched_data)} registros para {endpoint_name}")
+        processed_data = Utils.process_and_save_data(enriched_data, endpoint_name)
+
+        endpoint_duration = time.time() - endpoint_start
+
+        stats = {
+            "registros": len(processed_data),
+            "status": "Sucesso",
+            "tempo": endpoint_duration,
+            "total_properties": len(all_properties),
+            "stages_mapeados": len(stage_mapping),
+            "start_date": START_DATE,
+            "interval_days": INTERVAL_DAYS,
+            "paginacao_tipo": "ID-based (contorna limite 10k)"
+        }
+
+        logger.info(f"✅ {endpoint_name}: {len(processed_data)} registros em {endpoint_duration:.2f}s")
+        logger.info(f"🗺️ Stages mapeados: {len(stage_mapping)}")
+        logger.info("🔢 Paginação por ID utilizada para contornar limite de 10.000")
+
+        return processed_data, stats
+
+    except Exception as e:
+        logger.exception(f"❌ Falha no endpoint {endpoint_name}")
+
+        stats = {
+            "registros": 0,
+            "status": f"Falha: {type(e).__name__}: {str(e)}",
+            "tempo": 0,
+            "total_properties": 0,
+            "stages_mapeados": 0,
+            "start_date": START_DATE,
+            "interval_days": INTERVAL_DAYS,
+            "paginacao_tipo": "ID-based (com erro)"
+        }
+
+        return [], stats
+
+
 def main():
     global_start_time = ReportGenerator.init_report(logger)
 
@@ -1371,8 +1608,7 @@ def main():
                 logger.info(f"🔄 Iniciando processamento paralelo do endpoint: {endpoint_name}")
 
                 if endpoint_name == "deals":
-                    # Usar a versão corrigida para deals com filtro de data
-                    _, stats = process_deals_endpoint(hubspot_client, endpoint_name)
+                    _, stats = process_deals_endpoint_enhanced(hubspot_client, endpoint_name)
 
                 elif endpoint_name == "contacts":
                     _, stats = process_contacts_endpoint(hubspot_client, access_token, endpoint_name, log_details)
@@ -1462,13 +1698,14 @@ def main():
 
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
 
-        # with MemoryMonitor(logger):
-        #     BigQuery.process_csv_files()
-        #
-        # tables = Utils.get_existing_folders(logger)
-        # for table in tables:
-        #     BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
-        #                             credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
+        if str(args.USE_PYTHON_TO_CREATE_BIG_QUERY_TABLES).strip().lower() == 'true':
+            with MemoryMonitor(logger):
+                BigQuery.process_csv_files()
+
+            tables = Utils.get_existing_folders(logger)
+            for table in tables:
+                BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
+                                        credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         if not success:
             failed_endpoints = [name for name, stats in endpoint_stats.items() if 'Falha' in stats['status']]
