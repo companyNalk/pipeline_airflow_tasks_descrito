@@ -17,15 +17,15 @@ RATE_LIMIT = 100
 BASE_URL = "https://stores.grupoacert.app/api/v1"
 
 ENDPOINTS = {
-    # "customers": "stores/{store_id}/customers",
-    # "cash_flow": "stores/{store_id}/cash-flow",
-    # "products": "stores/{store_id}/products/",
-    # "products_simplified": "stores/{store_id}/products/simplified",
+    "customers": "stores/{store_id}/customers",
+    "cash_flow": "stores/{store_id}/cash-flow",
+    "products": "stores/{store_id}/products/",
+    "products_simplified": "stores/{store_id}/products/simplified",
     "sales": "stores/{store_id}/sales",
-    # "payments": "stores/{store_id}/payments",
-    # "invoice_history": "stores/{store_id}/invoice_history",
-    # "types_of_sales": "stores/{store_id}/types-of-sales",
-    # "users": "stores/{store_id}/users"
+    "payments": "stores/{store_id}/payments",
+    "invoice_history": "stores/{store_id}/invoice_history",
+    "types_of_sales": "stores/{store_id}/types-of-sales",
+    "users": "stores/{store_id}/users"
 }
 
 

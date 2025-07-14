@@ -1,3 +1,7 @@
+# DOCS
+# URL PRD: https://stores.grupoacert.app/api/v1/stores/184/types-of-sales
+# URL HML: https://stores-hml.grupoacert.app/api/v1/swagger-ui/index.html#/
+
 ### ========== CUSTOMERS ==========
 ### CUSTOMERS - List All
 GET {{url_base}}/v1/stores/{{store_id}}/customers
