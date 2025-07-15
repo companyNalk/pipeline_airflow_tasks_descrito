@@ -1,6 +1,7 @@
 # PROTHEUS OFF DIARIAMENTE ENTRE 23:55:00 E 00:25:00
 # DOCS: http://192.169.0.6:8084/rest/
-# NECESARIO ESTAR CONECTADO NA VPN .ovpn
+# NECESARIO ESTAR CONECTADO NA VPN .ovpn para utilizar o IP http://192.169.0.6:8084/rest/
+# IP PUBLICO: http://189.1.106.218:8084/rest
 # EMPRESAS = 00 - Matriz | 01 - Filial SP | 09 - Filial JF
 
 #### ========== CURRENT-USER ==========
