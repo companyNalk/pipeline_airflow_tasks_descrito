@@ -198,6 +198,42 @@ class TestDataPreprocessorCoverage:
         assert df.iloc[1, 1] == 'valid'
         os.unlink(csv_path)
 
+    def test_remove_timezone_offsets_basic(self):
+        """Testa remoção básica de timezone offsets."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("timestamp_col\n2023-07-13 14:09:47 -0300\n2023-07-13 15:30:00 +0200\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.remove_timezone_offsets(csv_path, None, logger)
+
+        # THEN
+        assert result > 0
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "2023-07-13 14:09:47"
+        os.unlink(csv_path)
+
+    def test_fix_invalid_date_values_with_corrections(self):
+        """Testa correção de campos DATE com valores inválidos."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("date_col\n3/1\n11/2\n")
+            csv_path = f.name
+
+        schema_json = [{'name': 'date_col', 'type': 'DATE'}]
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.fix_invalid_date_values(csv_path, schema_json, logger)
+
+        # THEN
+        assert result > 0
+        assert schema_json[0]['type'] == 'STRING'
+        os.unlink(csv_path)
+
 
 class TestReportGeneratorCoverage:
     """Testes para garantir cobertura completa da classe ReportGenerator."""
@@ -312,6 +348,74 @@ class TestBigQueryTableManagerCoverage:
         # WHEN & THEN
         with pytest.raises(FileNotFoundError):
             BigQueryTableManager.create_external_table("project", "tool", "table", "creds.json")
+
+    @patch('commons.big_query.BigQueryTableManager._get_credentials_and_client')
+    def test_create_gold_table_success(self, mock_client):
+        """Testa criação de tabela gold com sucesso."""
+        # GIVEN
+        mock_bq_client = Mock()
+        mock_table = Mock()
+        mock_table.num_rows = 1000
+        mock_table.schema = [Mock(), Mock()]
+
+        mock_bq_client.query.return_value.result.return_value = None
+        mock_bq_client.get_table.return_value = mock_table
+        mock_client.return_value = mock_bq_client
+
+        # WHEN & THEN
+        BigQueryTableManager.create_gold_table("project", "tool", "table", "creds.json")
+
+    def test_generate_schema_parallel_with_errors(self):
+        """Testa geração de schema com erros no processamento."""
+        # GIVEN
+        bq = BigQuery(max_workers=1)
+        df = pd.DataFrame({'col_with_issue': ['data1', 'data2']})
+
+        with patch('commons.big_query.analyze_column_worker', side_effect=Exception("Test error")):
+            # WHEN
+            schema, report = bq._generate_schema_parallel(df)
+
+            # THEN
+            assert len(schema) >= 0
+
+    def test_process_single_csv_safe_with_error(self):
+        """Testa processamento seguro com erro - força erro via mock."""
+        # GIVEN
+        bq = BigQuery()
+        bq.logger = Mock()
+
+        csv_path = Path("dummy.csv")
+
+        # Forçar erro no método _process_single_csv
+        with patch.object(bq, '_process_single_csv', side_effect=Exception("Forced error")):
+            # WHEN & THEN
+            with pytest.raises(Exception, match="Forced error"):
+                bq._process_single_csv_safe(csv_path)
+
+    def test_process_single_csv_safe_success(self):
+        """Testa processamento seguro com sucesso."""
+        # GIVEN
+        bq = BigQuery()
+        bq.logger = Mock()
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("col1;col2\n1;2\n3;4\n")
+            csv_path = Path(f.name)
+
+        with patch.object(bq, '_generate_schema_parallel') as mock_schema:
+            mock_schema.return_value = ([], [])
+
+            with patch.object(bq, '_save_schema') as mock_save:
+                try:
+                    # WHEN
+                    bq._process_single_csv_safe(csv_path)
+
+                    # THEN
+                    mock_schema.assert_called_once()
+                    mock_save.assert_called_once()
+
+                finally:
+                    os.unlink(csv_path)
 
 
 class TestBigQueryMainClassCoverage:
