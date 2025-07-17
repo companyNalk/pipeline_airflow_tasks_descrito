@@ -1,0 +1,21 @@
+# DOCS: https://developers.activecampaign.com/reference/overview
+
+### ========== DEALS ==========
+GET {{url_base}}/api/3/deals
+Api-Token: {{auth_token}}
+
+### ========== DEAL GROUPS ==========
+GET {{url_base}}/api/3/dealGroups
+Api-Token: {{auth_token}}
+
+### ========== DEAL STAGES ==========
+GET {{url_base}}/api/3/dealStages
+Api-Token: {{auth_token}}
+
+### ========== DEAL CUSTOM FIELD META ==========
+GET {{url_base}}/api/3/dealCustomFieldMeta
+Api-Token: {{auth_token}}
+
+### ========== DEAL CUSTOM FIELD DATA ==========
+GET {{url_base}}/api/3/dealCustomFieldData
+Api-Token: {{auth_token}}

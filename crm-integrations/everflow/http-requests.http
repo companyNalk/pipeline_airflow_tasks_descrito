@@ -1,0 +1,55 @@
+### DOCS
+###
+
+### ========== TOKEN ==========
+GET {{url_base}}/api/auth?login={{login}}&password={{password}}&returnType={{returnType}}
+
+> {%
+const tokenData = JSON.parse(response.body);
+client.global.set("auth_token", tokenData.token);
+%}
+
+### ========== CLIENTES ==========
+GET {{url_base}}/v1/clientes?token={{auth_token}}&returnType=json
+
+### ========== CONTRATOS ==========
+GET {{url_base}}/v1/contratos?token={{auth_token}}&returnType=json
+
+### ========== FORNECEDORES ==========
+GET {{url_base}}/v1/fornecedores?token={{auth_token}}&returnType=json
+
+### ========== MOVIMENTO BANCÁRIOS ==========
+GET {{url_base}}/v1/movimentosBancarios?token={{auth_token}}&returnType=json
+
+### ========== ORÇAMENTOS ==========
+GET {{url_base}}/v1/orcamentos?token={{auth_token}}&returnType=json
+
+### ========== ORÇAMENTOS PROPOSTAS ==========
+GET {{url_base}}/v1/orcamentos/propostas?token={{auth_token}}&returnType=json
+
+### ========== ORÇAMENTOS PROPOSTAS KANBAN ==========
+GET {{url_base}}/v1/orcamentos/propostas/kanban?token={{auth_token}}&returnType=json
+
+### ========== GESTÃO SERVIÇOS ORDENS SERVIÇO ==========
+GET {{url_base}}/v1/gestaoServicos/OrdensServico?token={{auth_token}}&returnType=json
+
+### ========== ORDENS SERVIÇO TAREFAS ==========
+GET {{url_base}}/v1/ordensServico/tarefas?token={{auth_token}}&returnType=json
+
+### ========== PAGARS ==========
+GET {{url_base}}/v1/pagars?token={{auth_token}}&returnType=json
+
+### ========== PEDIDOS VENDA ==========
+GET {{url_base}}/v1/pedidosVenda?token={{auth_token}}&returnType=json
+
+### ========== RECEBERS ==========
+GET {{url_base}}/v1/recebers?token={{auth_token}}&returnType=json
+
+### ========== CONSULTORES ==========
+GET {{url_base}}/v1/consultores?token={{auth_token}}&returnType=json
+
+### ========== EQUIPAMENTOS ==========
+GET {{url_base}}/v1/equipamentos?token={{auth_token}}&returnType=json
+
+### ========== FUNCIONÁRIOS ==========
+GET {{url_base}}/v1/funcionarios?token={{auth_token}}&returnType=json

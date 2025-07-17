@@ -1,0 +1,9 @@
+# DOCS: https://documenter.getpostman.com/view/20302231/Uz5CNeHd
+### ========== LEADS ==========
+GET {{url_base}}/production/leads?page=1&perPage=500
+Authorization: {{auth_token}}
+
+# DOCS: https://documenter.getpostman.com/view/17050484/UVBzpAZ8
+### ========== IMOVEIS ==========
+GET {{url_base}}/api/imoveis?page=1&perPage=100
+Authorization: {{auth_token}}

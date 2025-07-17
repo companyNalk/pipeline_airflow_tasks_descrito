@@ -1,5 +1,5 @@
-### DOCS
-### https://drive.google.com/drive/folders/1xAc3u_Cq3G4j_3ErwgU1GE5LXAUF-oPv
+# DOCS
+# https://drive.google.com/drive/folders/1xAc3u_Cq3G4j_3ErwgU1GE5LXAUF-oPv
 
 ### ========== TOKEN ==========
 GET {{url_base}}/api/auth?login={{login}}&password={{password}}&returnType={{returnType}}
