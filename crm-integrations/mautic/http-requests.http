@@ -1,0 +1,44 @@
+# DOCS
+# https://developer.mautic.org/
+
+### ========== OAUTH2 TOKEN ==========
+POST {{url_base}}/oauth/v2/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client_id}}&client_secret={{client_secret}}&grant_type=client_credentials
+
+> {%
+client.global.set("access_token", response.body.access_token);
+%}
+
+### ========== CONTACTS ==========
+GET {{url_base}}/api/contacts?start=1000&limit=1&orderBy=id
+Authorization: Bearer {{access_token}}
+
+### ========== CONTACTS BY ID ==========
+GET {{url_base}}/api/contacts/8885
+Authorization: Bearer {{access_token}}
+
+### ========== SEGMENTS ==========
+GET {{url_base}}/api/segments
+Authorization: Bearer {{access_token}}
+
+### ========== SEGMENTS BY ID ==========
+GET {{url_base}}/api/segments/55
+Authorization: Bearer {{access_token}}
+
+### ========== CAMPAIGNS ==========
+GET {{url_base}}/api/campaigns
+Authorization: Bearer {{access_token}}
+
+### ========== CAMPAIGNS BY ID ==========
+GET {{url_base}}/api/campaigns/1
+Authorization: Bearer {{access_token}}
+
+### ========== CAMPAIGNS CONTACTS ==========
+GET {{url_base}}/api/campaigns/1/contacts
+Authorization: Bearer {{access_token}}
+
+### ========== CONTACTS EVENTS ==========
+GET {{url_base}}/api/contacts/1/events
+Authorization: Bearer {{access_token}}
