@@ -1,10 +1,10 @@
-import time
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-from commons.app_inicializer import AppInitializer
 from commons.advanced_utils import AdvancedUtils
+from commons.app_inicializer import AppInitializer
 from commons.big_query import BigQuery
 from commons.memory_monitor import MemoryMonitor
 from commons.report_generator import ReportGenerator
@@ -23,42 +23,45 @@ CONFIG = {
         "vendedores_vnd": {
             "path": "WSGETVND",
             "data_key": "VENDEDORES",
-            "tenant_ids": ["01,00"]
+            "tenant_ids": ["01,00"],
+            "use_relational": True,
+            "parent_id_field": "id"
         },
         "produtos": {
             "path": "WSGETPRD",
             "data_key": "PRODUTOS",
-            "tenant_ids": ["01,00"]
+            "tenant_ids": ["01,00"],
+            "use_relational": True,
+            "parent_id_field": "id"
         },
         "clientes": {
             "path": "WSGETCLI",
             "data_key": "CLIENTES",
-            "tenant_ids": ["01,00"]
+            "tenant_ids": ["01,00"],
+            "use_relational": True,
+            "parent_id_field": "id"
         },
         "pedidos": {
             "path": "WSGETPV",
             "data_key": "PEDIDOS",
-            "tenant_ids": ["01,00", "01,01", "01,09"],
+            "tenant_ids": ["01,09"],
             "extra_params": {"emissao": "01/07/2024"},
             "use_relational": True,
-            "relational_config": {
-                "ITENS": {
-                    "parent_id_field": "pedido_num",
-                    "fields_to_extract": None,
-                    "table_name": "pedidos_itens"
-                }
-            },
             "parent_id_field": "C5_NUM"
         },
         # "vendedores_sd2": {
         #     "path": "WSGETSD2",
         #     "data_key": "DADOS",
-        #     "tenant_ids": ["01,01", "01,09"]
+        #     "tenant_ids": ["01,01", "01,09"],
+        #     "use_relational": True,
+        #     "parent_id_field": "id"
         # },
         # "itens_nf": {
         #     "path": "WSGETSFT",
         #     "data_key": "DADOS",
-        #     "tenant_ids": ["01,00"]
+        #     "tenant_ids": ["01,00"],
+        #     "use_relational": True,
+        #     "parent_id_field": "id"
         # },
     }
 }
@@ -93,39 +96,12 @@ def get_tenant_descriptive_name(tenant_id):
 def get_arguments():
     """Configura e retorna os argumentos da linha de comando."""
     return (ArgumentManager("Script para coletar e processar dados da API REST ERP")
-            # .add("API_BASE_URL", "URL base da API REST", default="http://192.169.0.6:8084/rest/")
             .add("API_BASE_URL", "URL base da API REST", default="http://189.1.106.218:8084/rest")
             .add("API_AUTH_TOKEN", "Token de autenticação Basic", required=True)
             .add("PROJECT_ID", "ID do projeto GCS", required=True)
             .add("CRM_TYPE", "Ferramenta: Nome aba sheets", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credenciais GCS", required=True)
             .parse())
-
-
-def get_endpoint_config(endpoint_name):
-    """
-    Retorna configuração específica para cada endpoint.
-    """
-    endpoint_config = CONFIG["endpoints"].get(endpoint_name, {})
-
-    # Configuração padrão
-    default_config = {
-        "extra_params": None,
-        "relational_config": None,
-        "use_relational": False,
-        "parent_id_field": "id"
-    }
-
-    # Combinar configuração padrão com configuração específica do endpoint
-    config = {**default_config}
-    config.update({
-        "extra_params": endpoint_config.get("extra_params"),
-        "relational_config": endpoint_config.get("relational_config"),
-        "use_relational": endpoint_config.get("use_relational", False),
-        "parent_id_field": endpoint_config.get("parent_id_field", "id")
-    })
-
-    return config
 
 
 def fetch_all_data_parallel(http_client, endpoint_path, data_key, headers, extra_params=None):
@@ -193,10 +169,6 @@ def process_endpoint_tenant_worker(endpoint_name, endpoint_config, tenant_id, ba
             "TenantId": tenant_id
         }
 
-        # Obter configuração específica do endpoint
-        config = get_endpoint_config(endpoint_name)
-        extra_params = config["extra_params"]
-
         # Buscar dados
         start_time = time.time()
         raw_data = fetch_all_data_parallel(
@@ -204,31 +176,38 @@ def process_endpoint_tenant_worker(endpoint_name, endpoint_config, tenant_id, ba
             endpoint_config['path'],
             endpoint_config['data_key'],
             headers,
-            extra_params
+            endpoint_config.get('extra_params')
         )
 
-        # Escolher método de processamento baseado na configuração
+        # Verificar se deve usar extração relacional
+        use_relational = endpoint_config.get("use_relational", False)
+
         thread_safe_log("info", f"💾 [{thread_name}] Processando {len(raw_data)} registros para {endpoint_tenant_key}")
 
-        if config["use_relational"] and config["relational_config"]:
-            thread_safe_log("info", f"🔄 [{thread_name}] Aplicando extração relacional para {endpoint_name}")
+        if use_relational:
+            # Obter chave de ligação customizada
+            parent_id_field = endpoint_config.get("parent_id_field", "id")
+
+            # Detecção automática com chave customizada
+            thread_safe_log("info",
+                            f"🔍 [{thread_name}] Detecção automática para {endpoint_name} (chave: {parent_id_field})")
 
             processed_tables = AdvancedUtils.process_with_relational_extraction(
                 raw_data=raw_data,
                 endpoint_name=endpoint_tenant_key,
-                table_configs=config["relational_config"],
-                parent_id_field=config["parent_id_field"],
-                auto_detect=False
+                parent_id_field=parent_id_field
             )
 
             # Calcular total de registros
-            total_records = sum(len(data) if isinstance(data, list) else 0
-                                for data in processed_tables.values())
+            total_records = sum(len(data) if isinstance(data, list) else 0 for data in processed_tables.values())
 
             # Log das tabelas geradas
+            table_names = []
             for table_name, data in processed_tables.items():
                 records_count = len(data) if isinstance(data, list) else 0
-                thread_safe_log("info", f"📊 [{thread_name}] {table_name}: {records_count} registros processados")
+                if records_count > 0:
+                    table_names.append(table_name)
+                    thread_safe_log("info", f"📊 [{thread_name}] {table_name}: {records_count} registros processados")
 
             result = {
                 "endpoint_tenant": endpoint_tenant_key,
@@ -236,13 +215,13 @@ def process_endpoint_tenant_worker(endpoint_name, endpoint_config, tenant_id, ba
                 "tenant_id": tenant_id,
                 "tenant_name": tenant_name,
                 "registros": total_records,
-                "status": "Sucesso com extração relacional",
+                "status": f"Sucesso com detecção automática (chave: {parent_id_field})",
                 "tempo": time.time() - start_time,
-                "tabelas_geradas": list(processed_tables.keys())
+                "tabelas_geradas": table_names
             }
 
         else:
-            # Processamento normal para endpoints sem extração relacional
+            # Processamento normal sem extração relacional
             thread_safe_log("info", f"📄 [{thread_name}] Processamento normal para {endpoint_name}")
             processed_data = Utils.process_and_save_data(raw_data, endpoint_tenant_key)
 
@@ -254,7 +233,7 @@ def process_endpoint_tenant_worker(endpoint_name, endpoint_config, tenant_id, ba
                 "registros": len(processed_data),
                 "status": "Sucesso",
                 "tempo": time.time() - start_time,
-                "tabelas_geradas": ["main_table"]
+                "tabelas_geradas": [endpoint_tenant_key]
             }
 
         thread_safe_log("info",
@@ -314,21 +293,21 @@ def main():
         combinations = create_all_endpoint_tenant_combinations()
 
         logger.info("🚀" * 30)
-        logger.info(f"🚀 INICIANDO PROCESSAMENTO PARALELO DE {len(combinations)} COMBINAÇÕES ENDPOINT x TENANT")
+        logger.info(f"🚀 INICIANDO PROCESSAMENTO COM CHAVES CUSTOMIZADAS - {len(combinations)} COMBINAÇÕES")
         logger.info(f"📋 Configuração: {CONFIG['max_workers']} workers simultâneos")
 
         # Mostrar o que será processado
         for combo in combinations:
             tenant_name = get_tenant_descriptive_name(combo["tenant_id"])
             endpoint_name = combo["endpoint_name"]
-            config = get_endpoint_config(endpoint_name)
+            endpoint_config = combo["endpoint_config"]
 
             logger.info(f"📌 {endpoint_name} x {tenant_name} ({combo['tenant_id']})")
-            if config["extra_params"]:
-                logger.info(f"   ↳ Parâmetros extras: {config['extra_params']}")
-            if config["use_relational"]:
-                logger.info(
-                    f"   ↳ Extração relacional: {config['parent_id_field']} -> {list(config['relational_config'].keys())}")
+            if endpoint_config.get("extra_params"):
+                logger.info(f"   ↳ Parâmetros extras: {endpoint_config['extra_params']}")
+            if endpoint_config.get("use_relational"):
+                parent_key = endpoint_config.get("parent_id_field", "id")
+                logger.info(f"   ↳ Detecção automática: ATIVADA (chave: {parent_key})")
 
         logger.info("🚀" * 30)
 
@@ -374,7 +353,7 @@ def main():
                     }
 
         logger.info("🚀" * 30)
-        logger.info("✅ TODAS AS COMBINAÇÕES PROCESSADAS SIMULTANEAMENTE!")
+        logger.info("✅ TODAS AS COMBINAÇÕES PROCESSADAS COM CHAVES CUSTOMIZADAS!")
 
         # Mostrar resumo por endpoint
         endpoint_summary = {}
