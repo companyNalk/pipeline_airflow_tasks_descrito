@@ -519,6 +519,124 @@ class DataPreprocessor:
             raise
 
     @staticmethod
+    def remove_timezone_offsets(csv_path, schema_json=None, logger=None, delimiter=';'):
+        """
+        Remove timezone offsets de timestamps para compatibilidade com BigQuery.
+        Converte '2023-07-13 14:09:47 -0300' para '2023-07-13 14:09:47'
+        """
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
+        try:
+            logger.info("🕐 Iniciando remoção de timezone offsets...")
+
+            # Carregar CSV
+            df = pd.read_csv(csv_path, delimiter=delimiter, dtype=str, low_memory=False)
+            logger.info(f"📄 Arquivo carregado: {len(df)} linhas, {len(df.columns)} colunas")
+
+            # Identificar campos de timestamp do schema (se fornecido)
+            timestamp_fields = []
+            if schema_json:
+                timestamp_fields = [
+                    field['name'] for field in schema_json
+                    if field['type'] in ['TIMESTAMP', 'DATETIME']
+                ]
+                logger.info(f"🕐 Campos TIMESTAMP identificados no schema: {timestamp_fields}")
+
+            # Se não tiver schema, detectar automaticamente colunas com timezone
+            if not timestamp_fields:
+                timestamp_fields = []
+                for col in df.columns:
+                    # Verificar se a coluna tem timestamps com timezone
+                    sample_values = df[col].dropna().head(10)
+                    timezone_count = 0
+
+                    for val in sample_values:
+                        if isinstance(val, str):
+                            # Verificar padrões com timezone offset
+                            if re.search(r'\s[+-]\d{2,4}$', val.strip()):  # Termina com +0300 ou -03:00
+                                timezone_count += 1
+
+                    # Se mais de 50% das amostras têm timezone, incluir
+                    if timezone_count >= len(sample_values) * 0.5:
+                        timestamp_fields.append(col)
+
+                logger.info(f"🔍 Campos com timezone detectados automaticamente: {timestamp_fields}")
+
+            if not timestamp_fields:
+                logger.info("ℹ️  Nenhum campo com timezone encontrado")
+                return 0
+
+            total_conversions = 0
+
+            # Processar cada campo de timestamp
+            for field in timestamp_fields:
+                if field not in df.columns:
+                    logger.warning(f"⚠️  Campo '{field}' não encontrado no CSV")
+                    continue
+
+                field_conversions = 0
+                logger.info(f"🔄 Processando campo: {field}")
+
+                for idx, timestamp_str in enumerate(df[field]):
+                    # Pular valores vazios/nulos
+                    if not timestamp_str or pd.isna(timestamp_str):
+                        continue
+
+                    timestamp_str = str(timestamp_str).strip()
+
+                    # Padrões de timezone para remover
+                    timezone_patterns = [
+                        r'\s[+-]\d{4}$',  # -0300, +0200
+                        r'\s[+-]\d{2}:\d{2}$',  # -03:00, +02:00
+                        r'\s[+-]\d{2}$',  # -03, +02
+                        r'\sZ$',  # Z (UTC)
+                        r'\sUTC$',  # UTC
+                        r'\sGMT$',  # GMT
+                    ]
+
+                    original_value = timestamp_str
+                    converted = False
+
+                    # Tentar remover cada padrão de timezone
+                    for pattern in timezone_patterns:
+                        if re.search(pattern, timestamp_str):
+                            # Remover o timezone offset
+                            clean_timestamp = re.sub(pattern, '', timestamp_str)
+
+                            # Validar se o resultado é um timestamp válido
+                            if re.match(r'^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2}$', clean_timestamp):
+                                df.at[idx, field] = clean_timestamp
+                                field_conversions += 1
+                                converted = True
+                                break
+
+                    # Se não foi convertido, manter valor original
+                    if not converted:
+                        df.at[idx, field] = original_value
+
+                if field_conversions > 0:
+                    total_conversions += field_conversions
+                    logger.info(f"   ✅ {field}: {field_conversions} timezone offsets removidos")
+                else:
+                    logger.info(f"   ℹ️  {field}: nenhum timezone offset encontrado")
+
+            # Salvar arquivo se houve conversões
+            if total_conversions > 0:
+                # Salvar arquivo convertido (sem backup)
+                df.to_csv(csv_path, sep=delimiter, index=False, encoding='utf-8')
+                logger.info(f"✅ {total_conversions} timezone offset(s) removido(s) com sucesso!")
+                logger.info(f"📁 Arquivo atualizado: {csv_path}")
+            else:
+                logger.info("ℹ️  Nenhum timezone offset precisou ser removido")
+
+            return total_conversions
+
+        except Exception as e:
+            logger.error(f"❌ Erro na remoção de timezone offsets: {e}")
+            raise
+
+    @staticmethod
     def clean_null_values(csv_path, logger):
         """Limpa valores 'null' string substituindo por NULL real."""
         try:
@@ -730,6 +848,7 @@ class BigQueryTableManager:
             DataPreprocessor.convert_date_br_to_iso(csv_path, schema_json, logger)
             DataPreprocessor.convert_timestamp_br_to_iso(csv_path, schema_json, logger)
             DataPreprocessor.convert_timestamp_us_to_iso(csv_path, schema_json, logger)
+            DataPreprocessor.remove_timezone_offsets(csv_path, schema_json, logger)
             DataPreprocessor.clean_null_values(csv_path, logger)
 
             schema = [
