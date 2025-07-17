@@ -44,7 +44,7 @@ CONFIG = {
         "pedidos": {
             "path": "WSGETPV",
             "data_key": "PEDIDOS",
-            "tenant_ids": ["01,09"],
+            "tenant_ids": ["01,00", "01,01", "01,09"],
             "extra_params": {"emissao": "01/07/2024"},
             "use_relational": True,
             "parent_id_field": "C5_NUM"
