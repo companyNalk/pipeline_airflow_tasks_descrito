@@ -637,6 +637,78 @@ class DataPreprocessor:
             raise
 
     @staticmethod
+    def fix_coordinates_schema(csv_path, schema_json=None, logger=None):
+        """
+        Corrige campos de coordenadas (latitude/longitude) que foram incorretamente
+        detectados como DATE para FLOAT64.
+        """
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
+        try:
+            logger.info("🗺️  Verificando campos de coordenadas com tipo incorreto...")
+
+            if not schema_json:
+                logger.info("ℹ️  Nenhum schema fornecido")
+                return 0
+
+            # Carregar CSV para verificar conteúdo
+            df = pd.read_csv(csv_path, delimiter=';', dtype=str, low_memory=False)
+            corrections = 0
+
+            # Identificar campos que podem ser coordenadas
+            coordinate_field_names = [
+                'latitude', 'longitude', 'lat', 'lng', 'lon',
+                'coord_lat', 'coord_lng', 'geo_lat', 'geo_lng'
+            ]
+
+            # Verificar cada campo no schema
+            for field in schema_json:
+                field_name = field['name'].lower()
+
+                # Se o campo tem nome de coordenada E está como DATE
+                if any(coord in field_name for coord in coordinate_field_names) and field['type'] == 'DATE':
+
+                    # Verificar se realmente contém coordenadas no CSV
+                    if field['name'] in df.columns:
+                        sample_values = df[field['name']].dropna().astype(str).str.strip().head(100)
+
+                        # Contar valores que parecem coordenadas (números decimais negativos/positivos)
+                        coordinate_pattern_count = 0
+                        for val in sample_values:
+                            # Padrão de coordenada: -XX.XXXXXX ou XX.XXXXXX
+                            if re.match(r'^-?\d+[,.]?\d*$', val.replace(',', '.')):
+                                try:
+                                    # Tentar converter para float
+                                    coord_val = float(val.replace(',', '.'))
+                                    # Verificar se está em range válido de coordenadas
+                                    if -180 <= coord_val <= 180:
+                                        coordinate_pattern_count += 1
+                                except ValueError:
+                                    continue
+
+                        # Se mais de 80% dos valores são coordenadas válidas
+                        if coordinate_pattern_count >= len(sample_values) * 0.8:
+                            field['type'] = 'FLOAT64'
+                            corrections += 1
+                            logger.info(f"   ✅ {field['name']}: DATE → FLOAT64 (coordenada detectada)")
+
+            # Salvar schema atualizado se houve correções
+            if corrections > 0:
+                schema_path = Path(csv_path).parent / "schema.json"
+                with open(schema_path, 'w', encoding='utf-8') as f:
+                    json.dump(schema_json, f, indent=2, ensure_ascii=False)
+                logger.info(f"✅ {corrections} campo(s) de coordenadas corrigido(s)")
+            else:
+                logger.info("ℹ️  Nenhum campo de coordenadas precisou ser corrigido")
+
+            return corrections
+
+        except Exception as e:
+            logger.error(f"❌ Erro na correção de coordenadas: {e}")
+            raise
+
+    @staticmethod
     def clean_null_values(csv_path, logger):
         """Limpa valores 'null' string substituindo por NULL real."""
         try:
@@ -844,11 +916,11 @@ class BigQueryTableManager:
 
             # Reprocessamento
             DataPreprocessor.fix_invalid_date_values(csv_path, schema_json, logger)
-
             DataPreprocessor.convert_date_br_to_iso(csv_path, schema_json, logger)
             DataPreprocessor.convert_timestamp_br_to_iso(csv_path, schema_json, logger)
             DataPreprocessor.convert_timestamp_us_to_iso(csv_path, schema_json, logger)
             DataPreprocessor.remove_timezone_offsets(csv_path, schema_json, logger)
+            DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
             DataPreprocessor.clean_null_values(csv_path, logger)
 
             schema = [

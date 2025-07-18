@@ -234,6 +234,252 @@ class TestDataPreprocessorCoverage:
         assert schema_json[0]['type'] == 'STRING'
         os.unlink(csv_path)
 
+    def test_fix_coordinates_schema_no_schema(self):
+        """Testa função quando não há schema fornecido."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("latitude;longitude\n-23.5505;-46.6333\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.fix_coordinates_schema(csv_path, None, logger)
+
+        # THEN
+        assert result == 0
+        logger.info.assert_any_call("ℹ️  Nenhum schema fornecido")
+        os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_latitude_longitude_correction(self):
+        """Testa correção de latitude e longitude de DATE para FLOAT64."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("latitude;longitude;other_field\n-23.5505;-46.6333;value\n-22.9068;-43.1729;value2\n")
+            f.flush()  # Garantir que dados sejam escritos
+            csv_path = f.name
+
+        schema_json = [
+            {'name': 'latitude', 'type': 'DATE'},
+            {'name': 'longitude', 'type': 'DATE'},
+            {'name': 'other_field', 'type': 'STRING'}
+        ]
+        logger = Mock()
+
+        try:
+            # WHEN
+            result = DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+            # THEN
+            assert result == 2
+            assert schema_json[0]['type'] == 'FLOAT64'
+            assert schema_json[1]['type'] == 'FLOAT64'
+            assert schema_json[2]['type'] == 'STRING'
+            logger.info.assert_any_call("🗺️  Verificando campos de coordenadas com tipo incorreto...")
+            logger.info.assert_any_call("   ✅ latitude: DATE → FLOAT64 (coordenada detectada)")
+            logger.info.assert_any_call("   ✅ longitude: DATE → FLOAT64 (coordenada detectada)")
+            logger.info.assert_any_call("✅ 2 campo(s) de coordenadas corrigido(s)")
+
+        finally:
+            if os.path.exists(csv_path):
+                os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_with_comma_decimal(self):
+        """Testa correção com coordenadas usando vírgula como separador decimal."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("lat;lng\n-23,5505;-46,6333\n-22,9068;-43,1729\n")
+            f.flush()
+            csv_path = f.name
+
+        schema_json = [
+            {'name': 'lat', 'type': 'DATE'},
+            {'name': 'lng', 'type': 'DATE'}
+        ]
+        logger = Mock()
+
+        try:
+            # WHEN
+            result = DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+            # THEN
+            assert result == 2
+            assert schema_json[0]['type'] == 'FLOAT64'
+            assert schema_json[1]['type'] == 'FLOAT64'
+
+        finally:
+            if os.path.exists(csv_path):
+                os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_no_coordinate_fields(self):
+        """Testa função quando não há campos de coordenadas no schema."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("name;age\nJohn;30\nJane;25\n")
+            csv_path = f.name
+
+        schema_json = [
+            {'name': 'name', 'type': 'STRING'},
+            {'name': 'age', 'type': 'INT64'}
+        ]
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+        # THEN
+        assert result == 0
+        logger.info.assert_any_call("ℹ️  Nenhum campo de coordenadas precisou ser corrigido")
+        os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_coordinate_field_not_date_type(self):
+        """Testa quando campo de coordenada não está marcado como DATE."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("latitude;longitude\n-23.5505;-46.6333\n")
+            csv_path = f.name
+
+        schema_json = [
+            {'name': 'latitude', 'type': 'FLOAT64'},
+            {'name': 'longitude', 'type': 'STRING'}
+        ]
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+        # THEN
+        assert result == 0
+        assert schema_json[0]['type'] == 'FLOAT64'
+        assert schema_json[1]['type'] == 'STRING'
+        os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_invalid_coordinate_values(self):
+        """Testa quando valores não são coordenadas válidas."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("latitude;longitude\n2023-01-01;2023-02-01\ntext;data\n")
+            csv_path = f.name
+
+        schema_json = [
+            {'name': 'latitude', 'type': 'DATE'},
+            {'name': 'longitude', 'type': 'DATE'}
+        ]
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+        # THEN
+        assert result == 0
+        assert schema_json[0]['type'] == 'DATE'
+        assert schema_json[1]['type'] == 'DATE'
+        os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_coordinate_out_of_range(self):
+        """Testa coordenadas fora do range válido (-180 a 180)."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("latitude;longitude\n-200.5505;200.6333\n300.9068;-250.1729\n")  # Fora do range
+            csv_path = f.name
+
+        schema_json = [
+            {'name': 'latitude', 'type': 'DATE'},
+            {'name': 'longitude', 'type': 'DATE'}
+        ]
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+        # THEN
+        assert result == 0
+        assert schema_json[0]['type'] == 'DATE'
+        assert schema_json[1]['type'] == 'DATE'
+        os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_mixed_valid_invalid_values(self):
+        """Testa campo com mistura de valores válidos e inválidos (menos de 80% válidos)."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("latitude\n-23.5505\ntext_data\ninvalid_coord\n-22.9068\nmore_text\n")
+            csv_path = f.name
+
+        schema_json = [
+            {'name': 'latitude', 'type': 'DATE'}
+        ]
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+        # THEN
+        assert result == 0
+        assert schema_json[0]['type'] == 'DATE'
+        os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_field_not_in_csv(self):
+        """Testa quando campo do schema não existe no CSV."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("other_field\nvalue1\nvalue2\n")
+            csv_path = f.name
+
+        schema_json = [
+            {'name': 'latitude', 'type': 'DATE'},
+            {'name': 'other_field', 'type': 'STRING'}
+        ]
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+        # THEN
+        assert result == 0
+        assert schema_json[0]['type'] == 'DATE'
+        os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_various_coordinate_field_names(self):
+        """Testa detecção de vários nomes de campos de coordenadas."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("coord_lat;coord_lng;geo_lat;geo_lng\n-23.55;-46.63;-22.90;-43.17\n")
+            f.flush()
+            csv_path = f.name
+
+        schema_json = [
+            {'name': 'coord_lat', 'type': 'DATE'},
+            {'name': 'coord_lng', 'type': 'DATE'},
+            {'name': 'geo_lat', 'type': 'DATE'},
+            {'name': 'geo_lng', 'type': 'DATE'}
+        ]
+        logger = Mock()
+
+        try:
+            # WHEN
+            result = DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+            # THEN
+            assert result == 4
+            assert all(field['type'] == 'FLOAT64' for field in schema_json)
+
+        finally:
+            if os.path.exists(csv_path):
+                os.unlink(csv_path)
+
+    def test_fix_coordinates_schema_error_handling(self):
+        """Testa tratamento de erro na função."""
+        # GIVEN
+        csv_path = "nonexistent_file.csv"
+        schema_json = [{'name': 'latitude', 'type': 'DATE'}]
+        logger = Mock()
+
+        # WHEN & THEN
+        with pytest.raises(FileNotFoundError):
+            DataPreprocessor.fix_coordinates_schema(csv_path, schema_json, logger)
+
+        logger.error.assert_called_once()
+
 
 class TestReportGeneratorCoverage:
     """Testes para garantir cobertura completa da classe ReportGenerator."""
