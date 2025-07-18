@@ -1,0 +1,42 @@
+# DOCS
+# icehot.postman_collection.json
+
+### ========== DADOS USUARIO POR PERIODO POR FUNIL POR STATUS==========
+GET {{url_base}}/api/Health/DadosUsoPorPeriodoPorFunilPorStatus?dataInicial=2024-07-01&dataFinal=2025-07-17&etapaId=44
+Authorization: Bearer {{access_token}}
+
+### ========== DADOS USUARIO POR PERIODO ==========
+GET {{url_base}}/api/Health/DadosUsoPorPeriodo?dataInicial=2024-07-01&dataFinal=2025-07-17
+Authorization: Bearer {{access_token}}
+
+### ========== DADOS POR PERIODO POR VENDEDOR ==========
+GET {{url_base}}/api/Health/DadosUsoPorPeriodoPorVendedor?dataInicial=2024-07-01&dataFinal=2025-07-17
+Authorization: Bearer {{access_token}}
+
+### ========== ETAPA LEAD ==========
+GET {{url_base}}/api/EtapaLead?PageSize=500&PageNumber=1
+Authorization: Bearer {{access_token}}
+
+### ========== STATUS PROJETO ==========
+GET {{url_base}}/api/StatusProjeto?PageSize=500&PageNumber=1
+Authorization: Bearer {{access_token}}
+
+### ========== CARDS DEALS POR PROJETO ==========
+GET {{url_base}}/api/projeto/cards?pageNumber=1&pageSize=500&ordenarPor=DataAtualizacao_DESC
+Authorization: Bearer {{access_token}}
+
+### ========== ATIVIDADES ==========
+GET {{url_base}}/api/Atividades?pageNumber=1&pageSize=500
+Authorization: Bearer {{access_token}}
+
+### ========== CONTATOS PESSOAS ==========
+GET {{url_base}}/api/lead/cards?pageSize=500&pageNumber=1
+Authorization: Bearer {{access_token}}
+
+### ========== LOJA ==========
+GET {{url_base}}/api/loja?pageNumber=1&pageSize=500
+Authorization: Bearer {{access_token}}
+
+### ========== USUARIO ==========
+GET {{url_base}}/api/usuario?pageNumber=1&pageSize=500&somenteAtivos=true
+Authorization: Bearer {{access_token}}
