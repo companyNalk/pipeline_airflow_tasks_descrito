@@ -380,7 +380,7 @@ def run(customer):
             # Coleta dados em janelas de tempo de 30 dias
             while current_date < now:
                 start_date_str = current_date.strftime('%Y-%m-%dT%H:%M:%S')
-                end_date = current_date + timedelta(days=30)
+                end_date = current_date + timedelta(days=10)
                 if end_date > now:
                     end_date = now
                 end_date_str = end_date.strftime('%Y-%m-%dT%H:%M:%S')
