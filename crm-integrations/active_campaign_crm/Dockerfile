@@ -3,8 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copia somente o necessário - ajustado para o contexto raiz
-COPY crm-integrations/active_campaign_mkt/main.py .
-COPY crm-integrations/active_campaign_mkt/requirements.txt .
+COPY crm-integrations/active_campaign_crm/main.py .
+COPY crm-integrations/active_campaign_crm/requirements.txt .
 
 # Copia commons e generic como módulo
 COPY commons/ /app/commons/
