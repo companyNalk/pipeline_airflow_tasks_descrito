@@ -232,10 +232,10 @@ def run(customer):
             raise
 
     def get_earliest_date():
-        """Define uma data de início fixa de 5 anos atrás"""
-        print("Usando data fixa de 5 anos atrás como ponto de partida para a coleta")
-        # Retorna uma data definida como 5 anos atrás
-        return datetime.now() - timedelta(days=365 * 5)
+        """Define uma data de início fixa de 01/07/2024"""
+        print("Usando data fixa de 01/07/2024 como ponto de partida para a coleta")
+        # Retorna a data fixa de 01/07/2024
+        return datetime(2024, 7, 1)
 
     def fetch_all_deals_for_period(start_date, end_date):
         """Busca as negociações para um período específico"""
