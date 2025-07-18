@@ -43,25 +43,44 @@ def get_arguments():
 
 
 def fetch_endpoint_data(http_client, endpoint_config, app_token, access_token):
-    """Busca dados de um endpoint."""
+    """Busca dados de um endpoint com paginação."""
     headers = {
         "app_token": app_token,
         "access_token": access_token
     }
 
+    all_data = []
+    pagina = 1
+
     try:
         logger.info(f"📊 Coletando dados do endpoint {endpoint_config['path']}")
 
-        response = http_client.get(endpoint_config["path"], headers=headers)
+        while True:
+            # Adicionar parâmetro de paginação
+            path_with_pagination = f"{endpoint_config['path']}?pagina={pagina}"
 
-        # Extrair dados da resposta
-        if endpoint_config["data_key"]:
-            data = response.get(endpoint_config["data_key"], [])
-        else:
-            data = response if isinstance(response, list) else []
+            logger.info(f"🔄 Buscando página {pagina}")
 
-        logger.info(f"✅ Coletados {len(data)} registros")
-        return data
+            response = http_client.get(path_with_pagination, headers=headers)
+
+            # Extrair dados da resposta
+            if endpoint_config["data_key"]:
+                data = response.get(endpoint_config["data_key"], [])
+            else:
+                data = response if isinstance(response, list) else []
+
+            # Se não há dados, chegou ao final
+            if not data:
+                logger.info(f"📄 Fim da paginação na página {pagina}")
+                break
+
+            all_data.extend(data)
+            logger.info(f"✅ Página {pagina}: {len(data)} registros coletados")
+
+            pagina += 1
+
+        logger.info(f"🎯 Total coletado: {len(all_data)} registros")
+        return all_data
 
     except Exception as e:
         logger.error(f"❌ Erro ao buscar dados do endpoint {endpoint_config['path']}: {str(e)}")
