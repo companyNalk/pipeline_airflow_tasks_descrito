@@ -292,7 +292,7 @@ def run(customer):
 
         print("[INFO] Iniciando a coleta de tags...")
 
-        max_retries = 3
+        max_retries = 15
         for attempt in range(max_retries):
             try:
                 response = requests.get(base_url, headers=API_HEADERS, timeout=30)
