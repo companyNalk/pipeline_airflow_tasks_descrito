@@ -1,0 +1,61 @@
+# DOCS
+# https://evo-integracao-api.w12app.com.br/swagger/index.html
+
+### ========== ACTIVITIES ==========
+GET {{url_base}}/api/v1/activities
+Authorization: Basic {{token}}
+
+### ========== PARTNERSHIP ==========
+GET {{url_base}}/api/v1/partnership
+Authorization: Basic {{token}}
+
+### ========== PROSPECTS ==========
+GET {{url_base}}/api/v1/prospects
+Authorization: Basic {{token}}
+
+### ========== SERVICE ==========
+GET {{url_base}}/api/v1/service
+Authorization: Basic {{token}}
+
+### ========== EMPLOYEES ==========
+GET {{url_base}}/api/v2/employees
+Authorization: Basic {{token}}
+
+### ========== MEMBERS ==========
+GET {{url_base}}/api/v2/members
+Authorization: Basic {{token}}
+
+### ========== SALES ==========
+GET {{url_base}}/api/v2/sales
+Authorization: Basic {{token}}
+
+### ========== MEMBERSHIP (PAGINADO) ==========
+GET {{url_base}}/api/v2/membership?take=50&skip=0
+Authorization: Basic {{token}}
+
+### ========== ESTRUTURA DE RESPOSTA ==========
+
+# Endpoints v1 e v2 (exceto membership) retornam lista direta:
+# [
+#   { "id": 1, "name": "Item 1" },
+#   { "id": 2, "name": "Item 2" }
+# ]
+
+# Endpoint membership retorna estrutura paginada:
+# {
+#   "qtde": 5669,
+#   "lista": null,
+#   "list": [
+#     {
+#       "idMembership": 22,
+#       "idBranch": 1,
+#       "nameMembership": "TOP PRÉ-VENDA (RECORRENTE MENSAL)",
+#       "membershipType": "Monthly recurrence",
+#       "durationType": "Months",
+#       "duration": 0,
+#       "updateDate": "2025-06-26T23:24:46",
+#       "value": 79.9000,
+#       "maxAmountInstallments": null
+#     }
+#   ]
+# }
