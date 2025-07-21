@@ -523,6 +523,7 @@ class DataPreprocessor:
         """
         Remove timezone offsets de timestamps para compatibilidade com BigQuery.
         Converte '2023-07-13 14:09:47 -0300' para '2023-07-13 14:09:47'
+        E converte campos com apenas timezone offsets (ex: -03:00:00) para STRING no schema.
         """
         if logger is None:
             logger = logging.getLogger(__name__)
@@ -556,6 +557,9 @@ class DataPreprocessor:
                             # Verificar padrões com timezone offset
                             if re.search(r'\s[+-]\d{2,4}$', val.strip()):  # Termina com +0300 ou -03:00
                                 timezone_count += 1
+                            # NOVO: Verificar timezone offsets standalone
+                            elif re.match(r'^[+-]\d{1,2}:?\d{0,2}:?\d{0,2}$', val.strip()):  # -03:00:00, -03:00, -03
+                                timezone_count += 1
 
                     # Se mais de 50% das amostras têm timezone, incluir
                     if timezone_count >= len(sample_values) * 0.5:
@@ -577,6 +581,26 @@ class DataPreprocessor:
 
                 field_conversions = 0
                 logger.info(f"🔄 Processando campo: {field}")
+
+                # NOVO: Verificar se campo contém apenas timezone offsets standalone
+                sample_values = df[field].dropna().astype(str).str.strip().head(10)
+                has_standalone_timezone = any(
+                    re.match(r'^[+-]\d{1,2}:?\d{0,2}:?\d{0,2}$', val) for val in sample_values
+                )
+                has_valid_timestamp = any(
+                    re.match(r'^\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}:\d{2}', val) for val in sample_values
+                )
+
+                # Se tem timezone standalone e não tem timestamps válidos, converter schema para STRING
+                if has_standalone_timezone and not has_valid_timestamp and schema_json:
+                    for schema_field in schema_json:
+                        if schema_field['name'] == field:
+                            old_type = schema_field['type']
+                            schema_field['type'] = 'STRING'
+                            logger.info(f"   🔧 {field}: {old_type} → STRING (timezone standalone detectado)")
+                            total_conversions += 1
+                            break
+                    continue  # Pular processamento de dados para este campo
 
                 for idx, timestamp_str in enumerate(df[field]):
                     # Pular valores vazios/nulos
@@ -620,6 +644,11 @@ class DataPreprocessor:
                     logger.info(f"   ✅ {field}: {field_conversions} timezone offsets removidos")
                 else:
                     logger.info(f"   ℹ️  {field}: nenhum timezone offset encontrado")
+
+            if schema_json:
+                schema_path = Path(csv_path).parent / "schema.json"
+                with open(schema_path, 'w', encoding='utf-8') as f:
+                    json.dump(schema_json, f, indent=2, ensure_ascii=False)
 
             # Salvar arquivo se houve conversões
             if total_conversions > 0:
