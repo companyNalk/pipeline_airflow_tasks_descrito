@@ -40,16 +40,21 @@ CONFIG = {
         },
         "members": {
             "path": "api/v2/members",
-            "use_pagination": False
+            "use_pagination": False,
+            "use_advanced_processing": True,
+            "parent_id_field": "idMember"
         },
         "sales": {
             "path": "api/v2/sales",
-            "use_pagination": False
+            "use_pagination": False,
+            "use_advanced_processing": True,
+            "parent_id_field": "idSale"
         },
         "membership": {
             "path": "api/v2/membership",
             "use_pagination": True,
-            "use_advanced_processing": True
+            "use_advanced_processing": True,
+            "parent_id_field": "idMembership"
         }
     }
 }
@@ -171,11 +176,13 @@ def process_endpoint(endpoint_name, endpoint_config, username, password):
         # Verificar se deve usar processamento avançado
         if endpoint_config.get("use_advanced_processing"):
             # Processar dados com extração automática de listas
-            logger.info(f"🔍 Detectando e extraindo listas automaticamente para {table_name}")
+            parent_id_field = endpoint_config.get("parent_id_field", "id")
+            logger.info(
+                f"🔍 Detectando e extraindo listas automaticamente para {table_name} (parent_id: {parent_id_field})")
             processed_results = AdvancedUtils.process_with_relational_extraction(
                 raw_data=all_data,
                 endpoint_name=table_name,
-                parent_id_field="idMembership",
+                parent_id_field=parent_id_field,
                 auto_detect=True
             )
 
