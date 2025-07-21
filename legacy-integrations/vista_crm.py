@@ -1,6 +1,13 @@
 """
 VistaCRM module for data extraction functions.
 This module contains functions specific to the VistaCRM integration.
+
+DOCS: https://{CLIENT_DOMAIN}.vistahost.com.br/doc/
+EXEMPLE: http://cli43499-rest.vistahost.com.br/doc/
+
+CODIGO PIPE INDICADO NA API
+1 - vendas
+2 - locacao
 """
 
 from core import gcs
@@ -2335,9 +2342,945 @@ def extract_real_state(customer):
     collector.run()
 
 
+def extract_pipes(customer):
+    import json
+    import logging
+    import pandas as pd
+    import random
+    import re
+    import requests
+    import time
+    import unicodedata
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from datetime import datetime
+    from google.cloud import storage
+    from typing import Dict, List, Tuple
+    import os
+    import pathlib
+
+    # Variáveis globais
+    BASE_URL = customer['api_base_url']
+    TOKEN = customer['api_token']
+    EMPRESA = customer['empresa']
+    BUCKET_NAME = customer['bucket_name']
+    FOLDER = "tabela_pipes"
+    FILENAME = "pipes.csv"
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    MAX_RETRIES, MAX_WORKERS, RECORDS_PER_PAGE = 5, 5, 50
+
+    # Configuração de logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(), logging.FileHandler('pipes_collector.log')]
+    )
+    logger = logging.getLogger('pipes_collector')
+
+    class PipesCollector:
+        """Classe para coleta de dados da Tabela de Pipes da API VistaHost"""
+
+        def __init__(self):
+            self.session = requests.Session()
+            self.session.headers.update({'Accept': 'application/json', 'Content-Type': 'application/json'})
+            self.total_collected = 0
+            self.total_failed = 0
+            self.total_pages = 0
+            self.start_time = time.time()
+            self.failed_requests = []
+            self.processed_urls = set()
+            self.init_gcs_client()
+
+        def init_gcs_client(self):
+            """Inicializa cliente do Google Cloud Storage"""
+            try:
+                self.storage_client = storage.Client(project=customer['project_id'])
+                self.bucket = self.storage_client.bucket(BUCKET_NAME)
+                logger.info(f"Cliente GCS inicializado com sucesso para o bucket: {BUCKET_NAME}")
+            except Exception as e:
+                logger.error(f"Erro ao inicializar cliente GCS: {str(e)}")
+                raise
+
+        def normalize_column_name(self, name: str) -> str:
+            """Normaliza nomes de colunas: remove acentos, converte para lowercase e substitui espaços por underlines"""
+            normalized = unicodedata.normalize('NFKD', str(name)).encode('ASCII', 'ignore').decode('utf-8').lower()
+            normalized = re.sub(r'[^a-z0-9]', '_', normalized)
+            return re.sub(r'_+', '_', normalized).strip('_')
+
+        def flatten_json(self, json_obj: Dict, prefix: str = '') -> Dict:
+            """Transforma JSON aninhado em formato plano"""
+            flattened = {}
+            for key, value in json_obj.items():
+                new_key = f"{prefix}_{key}" if prefix else key
+                if isinstance(value, dict):
+                    flattened.update(self.flatten_json(value, new_key))
+                elif isinstance(value, list):
+                    for i, item in enumerate(value):
+                        if isinstance(item, dict):
+                            flattened.update(self.flatten_json(item, f"{new_key}_{i}"))
+                        else:
+                            flattened[f"{new_key}_{i}"] = item
+                else:
+                    flattened[new_key] = value
+            return flattened
+
+        def make_request(self, url: str, retries: int = 0) -> Dict:
+            """Faz uma requisição à API com estratégia de backoff exponencial"""
+            try:
+                response = self.session.get(url, timeout=30)
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 429 or response.status_code >= 500:
+                    if retries < MAX_RETRIES:
+                        wait_time = (2 ** retries) + random.uniform(0, 1)
+                        logger.info(f"Limitação da API. Aguardando {wait_time:.2f}s")
+                        time.sleep(wait_time)
+                        return self.make_request(url, retries + 1)
+                    else:
+                        logger.error(f"Falha após {MAX_RETRIES} tentativas")
+                        self.total_failed += 1
+                        return {"error": f"Falha após {MAX_RETRIES} tentativas", "url": url}
+                else:
+                    logger.error(f"Erro na requisição. Status: {response.status_code}")
+                    if response.status_code == 401:
+                        print('ERRO NA AUTENTICACAO/MONTAGEM DA URL DINAMICA')
+                        raise
+                    if retries < MAX_RETRIES:
+                        time.sleep((2 ** retries) + random.uniform(0, 1))
+                        return self.make_request(url, retries + 1)
+                    self.total_failed += 1
+                    return {"error": f"Erro {response.status_code}", "url": url}
+            except Exception as e:
+                logger.error(f"Exceção ao fazer requisição: {str(e)}")
+                if retries < MAX_RETRIES:
+                    time.sleep((2 ** retries) + random.uniform(0, 1))
+                    return self.make_request(url, retries + 1)
+                self.total_failed += 1
+                return {"error": str(e), "url": url}
+
+        def extract_data_from_response(self, response_data: Dict) -> List[Dict]:
+            """Extrai dados da resposta da API"""
+            if "error" in response_data:
+                return []
+
+            # Para o endpoint de pipes, os dados estão em chaves numéricas
+            numeric_keys = [k for k in response_data.keys() if k.isdigit()]
+            return [response_data[k] for k in numeric_keys]
+
+        def get_page_data(self, base_url: str, page: int) -> Tuple[List[Dict], int, bool]:
+            """Obtém os dados de uma página específica - Retorna: (dados, próxima_página, tem_erro)"""
+            try:
+                # Montar URL para paginação
+                start_idx = base_url.find('pesquisa=') + 9
+                pesquisa_obj = json.loads(base_url[start_idx:])
+                pesquisa_obj['paginacao']['pagina'] = page
+                url = base_url[:start_idx] + json.dumps(pesquisa_obj)
+
+                # Criar um ID único para a requisição
+                req_id = f"pipes_{page}"
+
+                # Verifica se já processamos esta requisição antes
+                if req_id in self.processed_urls:
+                    logger.warning(f"Requisição duplicada evitada: {req_id}")
+                    return [], 0, True
+
+                self.processed_urls.add(req_id)
+
+                # Fazer a requisição
+                response_data = self.make_request(url)
+
+                if "error" in response_data:
+                    self.failed_requests.append(url)
+                    return [], 0, True
+
+                # Extrai dados da resposta
+                data = self.extract_data_from_response(response_data)
+
+                # Atualiza contador de páginas
+                self.total_pages += 1
+
+                next_page = page + 1 if len(data) > 0 else 0
+
+                # Print detalhado para acompanhamento da paginação
+                print(
+                    f"PIPES | Pág {page} | +{len(data)} | T:{self.total_collected + len(data)} | P:{self.total_pages} | F:{self.total_failed}")
+
+                return data, next_page, False
+            except Exception as e:
+                logger.error(f"Erro ao processar página {page}: {str(e)}")
+                self.failed_requests.append(base_url)
+                self.total_failed += 1
+                return [], 0, True
+
+        def collect_pipes_with_pagination(self, base_url: str) -> pd.DataFrame:
+            """Coleta todos os dados de pipes com paginação"""
+            print("INICIANDO | TABELA DE PIPES")
+
+            first_page_data, next_page, has_error = self.get_page_data(base_url, 1)
+            all_data = first_page_data
+            self.total_collected += len(first_page_data)
+
+            # Coleta páginas adicionais enquanto houver dados
+            current_page = 1
+            while next_page > 0:
+                current_page = next_page
+                page_data, next_page, has_error = self.get_page_data(base_url, current_page)
+                if has_error or not page_data:
+                    logger.warning(f"Parada na paginação devido a erro ou dados vazios na página {current_page}")
+                    break
+                all_data.extend(page_data)
+                self.total_collected += len(page_data)
+
+                # Evita loop infinito
+                if current_page > 1000:
+                    logger.warning(f"Limite de segurança atingido na página {current_page}")
+                    break
+
+            # Reprocessa falhas
+            if self.failed_requests:
+                self.reprocess_failed_requests(all_data)
+
+            # Converte para DataFrame e normaliza
+            if all_data:
+                df = pd.DataFrame([self.flatten_json(item) for item in all_data])
+                df.columns = [self.normalize_column_name(col) for col in df.columns]
+                print(
+                    f"CONCLUÍDO | PIPES | Total {len(df)} | Páginas {self.total_pages} | Falhas {self.total_failed}")
+                return df
+
+            print(f"CONCLUÍDO | PIPES | Total 0 | Páginas {self.total_pages} | Falhas {self.total_failed}")
+            return pd.DataFrame()
+
+        def reprocess_failed_requests(self, all_data: List[Dict]):
+            """Reprocessa requisições que falharam"""
+            if not self.failed_requests:
+                return
+
+            failed_count = len(self.failed_requests)
+            print(f"REPROCESSANDO | PIPES | {failed_count} pendentes")
+            failed_urls = self.failed_requests.copy()
+            self.failed_requests = []
+
+            with ThreadPoolExecutor(max_workers=max(1, MAX_WORKERS // 2)) as executor:
+                futures = {executor.submit(self.make_request, url): url for url in failed_urls}
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        if "error" not in result:
+                            data = self.extract_data_from_response(result)
+                            all_data.extend(data)
+                            self.total_collected += len(data)
+                            self.total_failed -= 1
+                    except Exception as e:
+                        logger.error(f"Exceção no reprocessamento: {str(e)}")
+
+        def save_to_gcs(self, df: pd.DataFrame):
+            """Salva DataFrame como CSV no Google Cloud Storage"""
+            if df.empty:
+                logger.warning("DataFrame vazio, não será salvo")
+                return
+
+            try:
+                blob_path = f"{FOLDER}/{FILENAME}"
+                blob = self.bucket.blob(blob_path)
+                blob.upload_from_string(df.to_csv(sep=';', index=False), content_type='text/csv')
+                print(f"SALVO | PIPES | {len(df)} registros | gs://{BUCKET_NAME}/{blob_path}")
+            except Exception as e:
+                logger.error(f"Erro ao salvar arquivo: {str(e)}")
+                print("ERRO | PIPES | falha ao salvar")
+                raise
+
+        def get_api_url(self) -> str:
+            """Retorna a URL da API para a tabela de pipes"""
+            pesquisa = json.dumps({
+                "fields": ["Codigo", "Nome", "Empresa"],
+                "paginacao": {
+                    "pagina": 1,
+                    "quantidade": RECORDS_PER_PAGE
+                }
+            })
+
+            return f"{BASE_URL}/pipes/listar?key={TOKEN}&empresa={EMPRESA}&pesquisa={pesquisa}"
+
+        def generate_pipes_report(self, df: pd.DataFrame):
+            """Gera um relatório específico sobre os dados de pipes coletados"""
+            if df.empty:
+                return
+
+            print(f"\n{'=' * 70}")
+            print("RELATÓRIO DE PIPES")
+            print(f"{'=' * 70}")
+
+            # Estatísticas básicas
+            print(f"Total de pipes: {len(df)}")
+
+            # Análise por empresa (se a coluna existir)
+            empresa_cols = [col for col in df.columns if 'empresa' in col.lower()]
+            if empresa_cols:
+                empresa_col = empresa_cols[0]
+                print(f"\nDistribuição por Empresa:")
+                empresa_counts = df[empresa_col].value_counts()
+                for empresa, count in empresa_counts.items():
+                    percentage = (count / len(df)) * 100
+                    print(f"  {empresa}: {count} ({percentage:.1f}%)")
+
+            # Análise por nome de pipe
+            nome_cols = [col for col in df.columns if 'nome' in col.lower()]
+            if nome_cols:
+                nome_col = nome_cols[0]
+                print(f"\nPipes por Nome:")
+                nome_counts = df[nome_col].value_counts()
+                for nome, count in nome_counts.items():
+                    if pd.notna(nome) and str(nome).strip():
+                        print(f"  {nome}: {count}")
+
+            # Análise de códigos
+            codigo_cols = [col for col in df.columns if 'codigo' in col.lower()]
+            if codigo_cols:
+                codigo_col = codigo_cols[0]
+                print(f"\nCódigos de Pipes:")
+                codigo_counts = df[codigo_col].value_counts().sort_index()
+                for codigo, count in codigo_counts.items():
+                    nome_pipe = ""
+                    if nome_cols:
+                        pipe_info = df[df[codigo_col] == codigo].iloc[0]
+                        nome_pipe = f" - {pipe_info[nome_cols[0]]}"
+                    print(f"  Pipe {codigo}{nome_pipe}: {count} registro(s)")
+
+            # Análise de completude dos dados
+            print(f"\nCompletude dos Dados:")
+            completude = {}
+            for col in df.columns:
+                non_null_count = df[col].notna().sum()
+                completude[col] = (non_null_count / len(df)) * 100
+
+            sorted_completude = sorted(completude.items(), key=lambda x: x[1], reverse=True)
+            for col, percentage in sorted_completude:
+                print(f"  {col}: {percentage:.1f}%")
+
+            print(f"{'=' * 70}\n")
+
+        def run(self):
+            """Executa a coleta completa de dados da tabela de pipes"""
+            try:
+                print(f"INICIANDO | PipesCollector | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+                # Coleta dados de pipes
+                url = self.get_api_url()
+                pipes_df = self.collect_pipes_with_pagination(url)
+
+                # Gera relatórios específicos de pipes
+                self.generate_pipes_report(pipes_df)
+
+                # Salva os dados coletados
+                self.save_to_gcs(pipes_df)
+            except Exception as e:
+                logger.error(f"Erro durante a execução: {str(e)}")
+                print(f"ERRO | Execução geral | {str(e)}")
+                raise
+            finally:
+                # Exibe resumo
+                self.print_summary()
+
+        def print_summary(self):
+            """Exibe resumo da execução"""
+            execution_time = time.time() - self.start_time
+            hours, remainder = divmod(execution_time, 3600)
+            minutes, seconds = divmod(remainder, 60)
+
+            print(f"\n{'=' * 80}")
+            print(f"RESUMO DA EXECUÇÃO - TABELA DE PIPES")
+            print(f"{'=' * 80}")
+            print(f"Tempo de execução: {int(hours)}h{int(minutes)}m{int(seconds)}s")
+            print(f"Total de registros coletados: {self.total_collected}")
+            print(f"Total de páginas processadas: {self.total_pages}")
+            print(f"Total de falhas: {self.total_failed}")
+            print(
+                f"Taxa de sucesso: {((self.total_collected / (self.total_collected + self.total_failed)) * 100):.2f}%" if (
+                                                                                                                                  self.total_collected + self.total_failed) > 0 else "N/A")
+            print(
+                f"Registros por página (média): {(self.total_collected / self.total_pages):.1f}" if self.total_pages > 0 else "N/A")
+            print(f"Campos coletados: Codigo, Nome, Empresa")
+            print(f"{'=' * 80}\n")
+
+    # START
+    print(f"INICIANDO | PipesCollector | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    collector = PipesCollector()
+    collector.run()
+
+
+def extract_steps(customer):
+    import json
+    import logging
+    import pandas as pd
+    import random
+    import re
+    import requests
+    import time
+    import unicodedata
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from datetime import datetime
+    from google.cloud import storage
+    from typing import Dict, List, Tuple
+    import os
+    import pathlib
+
+    # Variáveis globais
+    BASE_URL = customer['api_base_url']
+    TOKEN = customer['api_token']
+    EMPRESA = customer['empresa']
+    BUCKET_NAME = customer['bucket_name']
+    FOLDER = "tabela_etapas"
+    FILENAME = "etapas.csv"
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    MAX_RETRIES, MAX_WORKERS = 5, 5
+    CODIGO_PIPES = ["1", "2"]  # Vendas (1) e Locação (2)
+
+    # Configuração de logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(), logging.FileHandler('etapas_collector.log')]
+    )
+    logger = logging.getLogger('etapas_collector')
+
+    class EtapasCollector:
+        """Classe para coleta de dados das Etapas dos Pipes da API VistaHost"""
+
+        def __init__(self):
+            self.session = requests.Session()
+            self.session.headers.update({'Accept': 'application/json', 'Content-Type': 'application/json'})
+            self.total_collected = 0
+            self.total_failed = 0
+            self.total_pipes_processed = 0
+            self.start_time = time.time()
+            self.failed_requests = []
+            self.etapas_by_pipe = {}
+            self.init_gcs_client()
+
+        def init_gcs_client(self):
+            """Inicializa cliente do Google Cloud Storage"""
+            try:
+                self.storage_client = storage.Client(project=customer['project_id'])
+                self.bucket = self.storage_client.bucket(BUCKET_NAME)
+                logger.info(f"Cliente GCS inicializado com sucesso para o bucket: {BUCKET_NAME}")
+            except Exception as e:
+                logger.error(f"Erro ao inicializar cliente GCS: {str(e)}")
+                raise
+
+        def normalize_column_name(self, name: str) -> str:
+            """Normaliza nomes de colunas: remove acentos, converte para lowercase e substitui espaços por underlines"""
+            normalized = unicodedata.normalize('NFKD', str(name)).encode('ASCII', 'ignore').decode('utf-8').lower()
+            normalized = re.sub(r'[^a-z0-9]', '_', normalized)
+            return re.sub(r'_+', '_', normalized).strip('_')
+
+        def flatten_json(self, json_obj: Dict, prefix: str = '') -> Dict:
+            """Transforma JSON aninhado em formato plano"""
+            flattened = {}
+            for key, value in json_obj.items():
+                new_key = f"{prefix}_{key}" if prefix else key
+                if isinstance(value, dict):
+                    flattened.update(self.flatten_json(value, new_key))
+                elif isinstance(value, list):
+                    for i, item in enumerate(value):
+                        if isinstance(item, dict):
+                            flattened.update(self.flatten_json(item, f"{new_key}_{i}"))
+                        else:
+                            flattened[f"{new_key}_{i}"] = item
+                else:
+                    flattened[new_key] = value
+            return flattened
+
+        def make_request(self, url: str, retries: int = 0) -> Dict:
+            """Faz uma requisição à API com estratégia de backoff exponencial"""
+            try:
+                response = self.session.get(url, timeout=30)
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 429 or response.status_code >= 500:
+                    if retries < MAX_RETRIES:
+                        wait_time = (2 ** retries) + random.uniform(0, 1)
+                        logger.info(f"Limitação da API. Aguardando {wait_time:.2f}s")
+                        time.sleep(wait_time)
+                        return self.make_request(url, retries + 1)
+                    else:
+                        logger.error(f"Falha após {MAX_RETRIES} tentativas")
+                        self.total_failed += 1
+                        return {"error": f"Falha após {MAX_RETRIES} tentativas", "url": url}
+                else:
+                    logger.error(f"Erro na requisição. Status: {response.status_code}")
+                    if response.status_code == 401:
+                        print('ERRO NA AUTENTICACAO/MONTAGEM DA URL DINAMICA')
+                        raise
+                    if retries < MAX_RETRIES:
+                        time.sleep((2 ** retries) + random.uniform(0, 1))
+                        return self.make_request(url, retries + 1)
+                    self.total_failed += 1
+                    return {"error": f"Erro {response.status_code}", "url": url}
+            except Exception as e:
+                logger.error(f"Exceção ao fazer requisição: {str(e)}")
+                if retries < MAX_RETRIES:
+                    time.sleep((2 ** retries) + random.uniform(0, 1))
+                    return self.make_request(url, retries + 1)
+                self.total_failed += 1
+                return {"error": str(e), "url": url}
+
+        def extract_data_from_response(self, response_data: Dict, codigo_pipe: str) -> List[Dict]:
+            """Extrai dados da resposta da API"""
+            if "error" in response_data:
+                return []
+
+            # Log da estrutura da resposta para debug
+            logger.info(
+                f"Estrutura da resposta para pipe {codigo_pipe}: {list(response_data.keys()) if isinstance(response_data, dict) else type(response_data)}")
+
+            data = []
+
+            if isinstance(response_data, list):
+                logger.info(f"Resposta é uma lista com {len(response_data)} itens")
+                for item in response_data:
+                    if isinstance(item, dict):
+                        item['codigo_pipe_origem'] = codigo_pipe  # Adiciona referência ao pipe
+                        data.append(item)
+                return data
+            elif isinstance(response_data, dict):
+                # Verifica chaves numéricas (padrão da API)
+                numeric_keys = [k for k in response_data.keys() if k.isdigit()]
+                if numeric_keys:
+                    logger.info(f"Encontradas {len(numeric_keys)} chaves numéricas")
+                    for k in numeric_keys:
+                        item = response_data[k]
+                        if isinstance(item, dict):
+                            item['codigo_pipe_origem'] = codigo_pipe
+                            data.append(item)
+                    return data
+
+                # Verifica possíveis chaves que podem conter os dados
+                possible_data_keys = ['data', 'dados', 'etapas', 'items', 'results', 'list']
+                for key in possible_data_keys:
+                    if key in response_data:
+                        items = response_data[key]
+                        logger.info(f"Dados encontrados na chave '{key}': {type(items)}")
+                        if isinstance(items, list):
+                            logger.info(f"Lista com {len(items)} itens")
+                            for item in items:
+                                if isinstance(item, dict):
+                                    item['codigo_pipe_origem'] = codigo_pipe
+                                    data.append(item)
+                            return data
+                        elif isinstance(items, dict):
+                            items['codigo_pipe_origem'] = codigo_pipe
+                            return [items]
+
+                # Se não encontrou nas chaves específicas, verifica se é uma única etapa
+                etapa_fields = ['CodigoPipe', 'NomePipe', 'NomeEtapa', 'Ordem', 'DiasPrevisto', 'UnidadePrevisto']
+                if any(field in response_data for field in etapa_fields):
+                    logger.info("Resposta parece ser uma única etapa")
+                    response_data['codigo_pipe_origem'] = codigo_pipe
+                    return [response_data]
+
+                # Log da resposta completa se não reconheceu
+                response_str = str(response_data)[:500]
+                logger.warning(f"Estrutura não reconhecida para pipe {codigo_pipe}. Primeiro trecho: {response_str}")
+
+            logger.warning(f"Nenhum dado extraído da resposta para pipe {codigo_pipe}")
+            return []
+
+        def collect_etapas_for_pipe(self, codigo_pipe: str) -> List[Dict]:
+            """Coleta etapas para um pipe específico"""
+            try:
+                pesquisa = json.dumps({
+                    "fields": ["CodigoPipe", "NomePipe", "NomeEtapa", "Ordem", "DiasPrevisto", "UnidadePrevisto"],
+                    "order": {"Ordem": "asc"}
+                })
+
+                url = f"{BASE_URL}/pipes/etapas?key={TOKEN}&codigo_pipe={codigo_pipe}&pesquisa={pesquisa}"
+
+                logger.info(f"Coletando etapas para pipe {codigo_pipe}")
+                logger.info(f"URL: {url}")
+
+                # Fazer a requisição
+                response_data = self.make_request(url)
+
+                if "error" in response_data:
+                    logger.error(f"Erro na resposta para pipe {codigo_pipe}: {response_data}")
+                    self.failed_requests.append(url)
+                    return []
+
+                # Extrai dados da resposta
+                data = self.extract_data_from_response(response_data, codigo_pipe)
+
+                logger.info(f"Pipe {codigo_pipe}: {len(data)} etapas coletadas")
+                if len(data) > 0 and isinstance(data[0], dict):
+                    logger.info(f"Campos da primeira etapa: {list(data[0].keys())}")
+
+                print(
+                    f"ETAPAS | Pipe {codigo_pipe} | +{len(data)} etapas | T:{self.total_collected + len(data)} | F:{self.total_failed}")
+
+                return data
+
+            except Exception as e:
+                logger.error(f"Erro ao coletar etapas para pipe {codigo_pipe}: {str(e)}")
+                self.total_failed += 1
+                return []
+
+        def collect_all_etapas(self) -> pd.DataFrame:
+            """Coleta etapas de todos os pipes configurados"""
+            print("INICIANDO | TABELA DE ETAPAS")
+
+            all_data = []
+            pipe_summary = {}
+
+            for codigo_pipe in CODIGO_PIPES:
+                try:
+                    print(f"\nProcessando Pipe {codigo_pipe}...")
+                    etapas_data = self.collect_etapas_for_pipe(codigo_pipe)
+
+                    if etapas_data:
+                        all_data.extend(etapas_data)
+                        self.total_collected += len(etapas_data)
+                        self.etapas_by_pipe[codigo_pipe] = etapas_data
+                        pipe_summary[codigo_pipe] = len(etapas_data)
+
+                        # Mostra resumo das etapas deste pipe
+                        pipe_name = "Desconhecido"
+                        if etapas_data and 'NomePipe' in etapas_data[0]:
+                            pipe_name = etapas_data[0]['NomePipe']
+                        elif etapas_data and 'nomepipe' in etapas_data[0]:
+                            pipe_name = etapas_data[0]['nomepipe']
+
+                        print(f"✓ Pipe {codigo_pipe} ({pipe_name}): {len(etapas_data)} etapas")
+
+                        # Lista as etapas em ordem
+                        for etapa in sorted(etapas_data, key=lambda x: x.get('Ordem', x.get('ordem', 0))):
+                            ordem = etapa.get('Ordem', etapa.get('ordem', '?'))
+                            nome = etapa.get('NomeEtapa', etapa.get('nomeetapa', 'Nome não encontrado'))
+                            dias = etapa.get('DiasPrevisto', etapa.get('diasprevisto', '?'))
+                            unidade = etapa.get('UnidadePrevisto', etapa.get('unidadeprevisto', '?'))
+                            print(f"  {ordem}. {nome} ({dias} {unidade})")
+                    else:
+                        print(f"✗ Pipe {codigo_pipe}: Nenhuma etapa encontrada")
+                        pipe_summary[codigo_pipe] = 0
+
+                    self.total_pipes_processed += 1
+
+                    # Pausa entre pipes
+                    time.sleep(1)
+
+                except Exception as e:
+                    logger.error(f"Erro ao processar pipe {codigo_pipe}: {str(e)}")
+                    self.total_failed += 1
+                    continue
+
+            # Reprocessa falhas se houver
+            if self.failed_requests:
+                self.reprocess_failed_requests(all_data)
+
+            # Converte para DataFrame e normaliza
+            if all_data:
+                df = pd.DataFrame([self.flatten_json(item) for item in all_data])
+                df.columns = [self.normalize_column_name(col) for col in df.columns]
+
+                print(f"\n{'=' * 50}")
+                print(f"RESUMO DA COLETA DE ETAPAS:")
+                for pipe, count in pipe_summary.items():
+                    pipe_name = "Vendas" if pipe == "1" else "Locação" if pipe == "2" else f"Pipe {pipe}"
+                    print(f"  {pipe_name} (Pipe {pipe}): {count} etapas")
+                print(f"Total geral: {len(df)} etapas de {len(pipe_summary)} pipes")
+                print(f"{'=' * 50}")
+
+                print(
+                    f"CONCLUÍDO | ETAPAS | Total {len(df)} | Pipes {self.total_pipes_processed} | Falhas {self.total_failed}")
+                return df
+
+            print(f"CONCLUÍDO | ETAPAS | Total 0 | Pipes {self.total_pipes_processed} | Falhas {self.total_failed}")
+            return pd.DataFrame()
+
+        def reprocess_failed_requests(self, all_data: List[Dict]):
+            """Reprocessa requisições que falharam"""
+            if not self.failed_requests:
+                return
+
+            failed_count = len(self.failed_requests)
+            print(f"REPROCESSANDO | ETAPAS | {failed_count} pendentes")
+            failed_urls = self.failed_requests.copy()
+            self.failed_requests = []
+
+            with ThreadPoolExecutor(max_workers=max(1, MAX_WORKERS // 2)) as executor:
+                futures = {executor.submit(self.make_request, url): url for url in failed_urls}
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        if "error" not in result:
+                            # Extrai código do pipe da URL para processar corretamente
+                            url = futures[future]
+                            codigo_pipe = "1"  # Default
+                            if "codigo_pipe=" in url:
+                                codigo_pipe = url.split("codigo_pipe=")[1].split("&")[0]
+
+                            data = self.extract_data_from_response(result, codigo_pipe)
+                            all_data.extend(data)
+                            self.total_collected += len(data)
+                            self.total_failed -= 1
+                    except Exception as e:
+                        logger.error(f"Exceção no reprocessamento: {str(e)}")
+
+        def save_to_gcs(self, df: pd.DataFrame):
+            """Salva DataFrame como CSV no Google Cloud Storage"""
+            if df.empty:
+                logger.warning("DataFrame vazio, não será salvo")
+                return
+
+            try:
+                blob_path = f"{FOLDER}/{FILENAME}"
+                blob = self.bucket.blob(blob_path)
+                blob.upload_from_string(df.to_csv(sep=';', index=False), content_type='text/csv')
+                print(f"SALVO | ETAPAS | {len(df)} registros | gs://{BUCKET_NAME}/{blob_path}")
+            except Exception as e:
+                logger.error(f"Erro ao salvar arquivo: {str(e)}")
+                print("ERRO | ETAPAS | falha ao salvar")
+                raise
+
+        def generate_etapas_report(self, df: pd.DataFrame):
+            """Gera um relatório específico sobre os dados de etapas coletados"""
+            if df.empty:
+                return
+
+            print(f"\n{'=' * 70}")
+            print("RELATÓRIO DE ETAPAS DOS PIPES")
+            print(f"{'=' * 70}")
+
+            # Estatísticas básicas
+            print(f"Total de etapas: {len(df)}")
+
+            # Análise por pipe
+            pipe_cols = [col for col in df.columns if 'codigo' in col.lower() and 'pipe' in col.lower()]
+            if pipe_cols:
+                pipe_col = pipe_cols[0]
+                print(f"\nDistribuição por Pipe:")
+                pipe_counts = df[pipe_col].value_counts().sort_index()
+                for pipe, count in pipe_counts.items():
+                    pipe_name = "Vendas" if str(pipe) == "1" else "Locação" if str(pipe) == "2" else f"Pipe {pipe}"
+                    print(f"  {pipe_name} (Código {pipe}): {count} etapas")
+
+            # Análise por nome do pipe
+            nome_pipe_cols = [col for col in df.columns if 'nome' in col.lower() and 'pipe' in col.lower()]
+            if nome_pipe_cols:
+                nome_pipe_col = nome_pipe_cols[0]
+                print(f"\nPipes por Nome:")
+                nome_counts = df[nome_pipe_col].value_counts()
+                for nome, count in nome_counts.items():
+                    if pd.notna(nome) and str(nome).strip():
+                        print(f"  {nome}: {count} etapas")
+
+            # Análise detalhada por pipe
+            for codigo_pipe in CODIGO_PIPES:
+                pipe_data = df[df[pipe_cols[0]] == int(codigo_pipe)] if pipe_cols else df
+                if len(pipe_data) > 0:
+                    pipe_name = "Vendas" if codigo_pipe == "1" else "Locação" if codigo_pipe == "2" else f"Pipe {codigo_pipe}"
+                    print(f"\nDetalhamento - {pipe_name} (Pipe {codigo_pipe}):")
+
+                    # Ordena por ordem das etapas
+                    ordem_cols = [col for col in pipe_data.columns if 'ordem' in col.lower()]
+                    if ordem_cols:
+                        pipe_data_sorted = pipe_data.sort_values(ordem_cols[0])
+                        nome_etapa_cols = [col for col in pipe_data.columns if
+                                           'nome' in col.lower() and 'etapa' in col.lower()]
+                        dias_cols = [col for col in pipe_data.columns if 'dias' in col.lower()]
+                        unidade_cols = [col for col in pipe_data.columns if 'unidade' in col.lower()]
+
+                        for _, etapa in pipe_data_sorted.iterrows():
+                            ordem = etapa[ordem_cols[0]] if ordem_cols else "?"
+                            nome = etapa[nome_etapa_cols[0]] if nome_etapa_cols else "Nome não encontrado"
+                            dias = etapa[dias_cols[0]] if dias_cols else "?"
+                            unidade = etapa[unidade_cols[0]] if unidade_cols else "?"
+                            print(f"    {ordem}. {nome} - {dias} {unidade}")
+
+            # Análise de prazos
+            dias_cols = [col for col in df.columns if 'dias' in col.lower() and 'previsto' in col.lower()]
+            if dias_cols:
+                dias_col = dias_cols[0]
+                dias_numericos = pd.to_numeric(df[dias_col], errors='coerce').dropna()
+                if len(dias_numericos) > 0:
+                    print(f"\nAnálise de Prazos (Dias Previstos):")
+                    print(
+                        f"  Etapas com prazo definido: {len(dias_numericos)} ({(len(dias_numericos) / len(df) * 100):.1f}%)")
+                    print(f"  Prazo médio: {dias_numericos.mean():.1f} dias")
+                    print(f"  Prazo mediano: {dias_numericos.median():.1f} dias")
+                    print(f"  Prazo mínimo: {dias_numericos.min():.0f} dias")
+                    print(f"  Prazo máximo: {dias_numericos.max():.0f} dias")
+
+            # Análise de unidades de tempo
+            unidade_cols = [col for col in df.columns if 'unidade' in col.lower() and 'previsto' in col.lower()]
+            if unidade_cols:
+                unidade_col = unidade_cols[0]
+                print(f"\nDistribuição por Unidade de Tempo:")
+                unidade_counts = df[unidade_col].value_counts()
+                for unidade, count in unidade_counts.items():
+                    percentage = (count / len(df)) * 100
+                    if pd.notna(unidade) and str(unidade).strip():
+                        print(f"  {unidade}: {count} ({percentage:.1f}%)")
+
+            # Análise de completude dos dados
+            print(f"\nCompletude dos Dados:")
+            completude = {}
+            for col in df.columns:
+                non_null_count = df[col].notna().sum()
+                completude[col] = (non_null_count / len(df)) * 100
+
+            sorted_completude = sorted(completude.items(), key=lambda x: x[1], reverse=True)
+            for col, percentage in sorted_completude:
+                print(f"  {col}: {percentage:.1f}%")
+
+            print(f"{'=' * 70}\n")
+
+        def validate_etapas_data(self, df: pd.DataFrame):
+            """Valida a qualidade dos dados de etapas"""
+            if df.empty:
+                return
+
+            print(f"\n{'=' * 70}")
+            print("VALIDAÇÃO DE QUALIDADE DOS DADOS DE ETAPAS")
+            print(f"{'=' * 70}")
+
+            # Validação de campos obrigatórios
+            pipe_cols = [col for col in df.columns if 'codigo' in col.lower() and 'pipe' in col.lower()]
+            if pipe_cols:
+                pipe_col = pipe_cols[0]
+                pipes_preenchidos = df[pipe_col].notna().sum()
+                pipes_unicos = df[pipe_col].nunique()
+                print(f"Códigos de pipe preenchidos: {pipes_preenchidos} ({(pipes_preenchidos / len(df) * 100):.1f}%)")
+                print(f"Pipes únicos: {pipes_unicos}")
+
+            nome_etapa_cols = [col for col in df.columns if 'nome' in col.lower() and 'etapa' in col.lower()]
+            if nome_etapa_cols:
+                nome_col = nome_etapa_cols[0]
+                nomes_preenchidos = df[nome_col].notna().sum()
+                print(f"Nomes de etapa preenchidos: {nomes_preenchidos} ({(nomes_preenchidos / len(df) * 100):.1f}%)")
+
+            ordem_cols = [col for col in df.columns if 'ordem' in col.lower()]
+            if ordem_cols:
+                ordem_col = ordem_cols[0]
+                ordens_preenchidas = df[ordem_col].notna().sum()
+                ordens_numericas = pd.to_numeric(df[ordem_col], errors='coerce').notna().sum()
+                print(f"Ordens preenchidas: {ordens_preenchidas} ({(ordens_preenchidas / len(df) * 100):.1f}%)")
+                print(f"Ordens numéricas válidas: {ordens_numericas} ({(ordens_numericas / len(df) * 100):.1f}%)")
+
+            # Validação de prazos
+            dias_cols = [col for col in df.columns if 'dias' in col.lower()]
+            if dias_cols:
+                dias_col = dias_cols[0]
+                dias_preenchidos = df[dias_col].notna().sum()
+                dias_numericos = pd.to_numeric(df[dias_col], errors='coerce').notna().sum()
+                print(f"Dias previstos preenchidos: {dias_preenchidos} ({(dias_preenchidos / len(df) * 100):.1f}%)")
+                print(f"Dias previstos numéricos: {dias_numericos} ({(dias_numericos / len(df) * 100):.1f}%)")
+
+            unidade_cols = [col for col in df.columns if 'unidade' in col.lower()]
+            if unidade_cols:
+                unidade_col = unidade_cols[0]
+                unidades_preenchidas = df[unidade_col].notna().sum()
+                print(f"Unidades preenchidas: {unidades_preenchidas} ({(unidades_preenchidas / len(df) * 100):.1f}%)")
+
+            # Validação de consistência
+            print(f"\nValidação de Consistência:")
+
+            # Verifica se há etapas duplicadas por pipe
+            if pipe_cols and ordem_cols:
+                duplicatas = df.groupby([pipe_cols[0], ordem_cols[0]]).size()
+                duplicatas_encontradas = duplicatas[duplicatas > 1]
+                if len(duplicatas_encontradas) > 0:
+                    print(f"⚠️  Etapas com ordem duplicada por pipe: {len(duplicatas_encontradas)}")
+                    for (pipe, ordem), count in duplicatas_encontradas.items():
+                        print(f"    Pipe {pipe}, Ordem {ordem}: {count} ocorrências")
+                else:
+                    print(f"✓ Sem duplicatas de ordem por pipe")
+
+            # Verifica sequência de ordens
+            if pipe_cols and ordem_cols:
+                for pipe in df[pipe_cols[0]].unique():
+                    if pd.notna(pipe):
+                        pipe_data = df[df[pipe_cols[0]] == pipe]
+                        ordens = pd.to_numeric(pipe_data[ordem_cols[0]], errors='coerce').dropna().sort_values()
+                        if len(ordens) > 1:
+                            gaps = []
+                            for i in range(1, len(ordens)):
+                                if ordens.iloc[i] - ordens.iloc[i - 1] > 1:
+                                    gaps.append(f"{ordens.iloc[i - 1]}-{ordens.iloc[i]}")
+
+                            pipe_name = "Vendas" if str(pipe) == "1" else "Locação" if str(
+                                pipe) == "2" else f"Pipe {pipe}"
+                            if gaps:
+                                print(f"⚠️  {pipe_name}: Gaps na sequência de ordens: {', '.join(gaps)}")
+                            else:
+                                print(f"✓ {pipe_name}: Sequência de ordens consistente")
+
+            print(f"{'=' * 70}\n")
+
+        def run(self):
+            """Executa a coleta completa de dados das etapas"""
+            try:
+                print(f"INICIANDO | EtapasCollector | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                print(f"Pipes a serem processados: {', '.join(CODIGO_PIPES)} (1=Vendas, 2=Locação)")
+
+                # Coleta dados de etapas
+                etapas_df = self.collect_all_etapas()
+
+                if not etapas_df.empty:
+                    # Gera relatórios específicos de etapas
+                    self.generate_etapas_report(etapas_df)
+                    self.validate_etapas_data(etapas_df)
+
+                    # Salva os dados coletados
+                    self.save_to_gcs(etapas_df)
+                else:
+                    print("NENHUM DADO COLETADO | Verifique os logs para mais detalhes")
+
+            except Exception as e:
+                logger.error(f"Erro durante a execução: {str(e)}")
+                print(f"ERRO | Execução geral | {str(e)}")
+                raise
+            finally:
+                # Exibe resumo
+                self.print_summary()
+
+        def print_summary(self):
+            """Exibe resumo da execução"""
+            execution_time = time.time() - self.start_time
+            hours, remainder = divmod(execution_time, 3600)
+            minutes, seconds = divmod(remainder, 60)
+
+            print(f"\n{'=' * 80}")
+            print(f"RESUMO DA EXECUÇÃO - TABELA DE ETAPAS")
+            print(f"{'=' * 80}")
+            print(f"Tempo de execução: {int(hours)}h{int(minutes)}m{int(seconds)}s")
+            print(f"Total de registros coletados: {self.total_collected}")
+            print(f"Total de pipes processados: {self.total_pipes_processed}")
+            print(f"Total de falhas: {self.total_failed}")
+            print(
+                f"Taxa de sucesso: {((self.total_pipes_processed - self.total_failed) / max(self.total_pipes_processed, 1) * 100):.2f}%")
+
+            if self.etapas_by_pipe:
+                print(f"\nDetalhamento por Pipe:")
+                for pipe, etapas in self.etapas_by_pipe.items():
+                    pipe_name = "Vendas" if pipe == "1" else "Locação" if pipe == "2" else f"Pipe {pipe}"
+                    print(f"  {pipe_name} (Pipe {pipe}): {len(etapas)} etapas")
+
+            print(f"Campos coletados: CodigoPipe, NomePipe, NomeEtapa, Ordem, DiasPrevisto, UnidadePrevisto")
+            print(f"Endpoint: /pipes/etapas")
+            print(f"{'=' * 80}\n")
+
+    # START
+    print(f"INICIANDO | EtapasCollector | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    collector = EtapasCollector()
+    collector.run()
+
+
 def get_extraction_tasks():
     """
-    Get the list of data extraction tasks for Moskit.
+    Get the list of data extraction tasks for VistaCRM.
 
     Returns:
         list: List of task configurations
@@ -2362,5 +3305,13 @@ def get_extraction_tasks():
         {
             'task_id': 'extract_real_state',
             'python_callable': extract_real_state
+        },
+        {
+            'task_id': 'extract_pipes',
+            'python_callable': extract_pipes
+        },
+        {
+            'task_id': 'extract_steps',
+            'python_callable': extract_steps
         }
     ]
