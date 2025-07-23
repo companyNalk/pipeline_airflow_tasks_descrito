@@ -3,18 +3,123 @@ Moskit module for data extraction functions.
 This module contains functions specific to the Moskit integration.
 """
 
+import csv
+import io
+import os
+import re
+import time
+import unicodedata
+
+import requests
+from core import gcs
+from google.cloud import storage
+
+# Variáveis globais que serão inicializadas
+storage_client = None
+bucket = None
+
+
+def initialize_gcs(customer):
+    """
+    Inicializa o cliente do Google Cloud Storage.
+    Deve ser chamada no início de cada função principal.
+    """
+    global storage_client, bucket
+
+    BUCKET_NAME = customer['bucket_name']
+    import pathlib
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+
+    # Autenticação no Google Cloud Storage
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+    credentials = gcs.load_credentials_from_env()
+    storage_client = storage.Client(credentials=credentials)
+    bucket = storage_client.bucket(BUCKET_NAME)
+
+
+def normalize_column_name(name):
+    """
+    Normaliza nomes de campos para uso em CSV.
+    """
+    nfkd = unicodedata.normalize('NFKD', name)
+    ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+    cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+    return re.sub(r"\s+", "_", cleaned).lower()
+
+
+def upload_to_gcs(data, destination_path):
+    global bucket
+
+    if bucket is None:
+        raise Exception("GCS não foi inicializado. Chame initialize_gcs() primeiro.")
+
+    if not data:
+        print(f"[WARNING] Sem dados para enviar para {destination_path}")
+        return
+
+    try:
+        # Determinar todas as chaves possíveis (colunas)
+        all_keys = set()
+        for item in data:
+            all_keys.update(item.keys())
+
+        # Normalizar todos os nomes de colunas
+        normalized_keys = {key: normalize_column_name(key) for key in all_keys}
+        sorted_keys = sorted(list(all_keys))
+
+        # Criar um buffer na memória para o CSV
+        output = io.StringIO()
+        csv_writer = csv.writer(output, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+        # Escrever cabeçalho normalizado
+        csv_writer.writerow([normalized_keys[key] for key in sorted_keys])
+
+        # Escrever linhas
+        for item in data:
+            row = [item.get(key, "") for key in sorted_keys]
+            csv_writer.writerow(row)
+
+        # Upload para o GCS
+        blob = bucket.blob(destination_path)
+        blob.upload_from_string(output.getvalue(), content_type="text/csv")
+
+        print(f"[SUCCESS] Arquivo salvo em gs://{bucket.name}/{destination_path}")
+    except Exception as e:
+        print(f"[ERROR] Falha ao fazer upload para {destination_path}: {str(e)}")
+        raise
+
+
+def upload_dataframe_to_gcs(df, destination_path):
+    global bucket
+
+    if bucket is None:
+        raise Exception("GCS não foi inicializado. Chame initialize_gcs() primeiro.")
+
+    if df.empty:
+        print(f"[WARNING] DataFrame vazio para {destination_path}")
+        return
+
+    try:
+        # Normalizar nomes das colunas
+        df.columns = [normalize_column_name(col) for col in df.columns]
+
+        # Converter DataFrame para CSV
+        csv_buffer = io.StringIO()
+        df.to_csv(csv_buffer, sep=';', index=False, quoting=csv.QUOTE_MINIMAL)
+
+        # Upload para o GCS
+        blob = bucket.blob(destination_path)
+        blob.upload_from_string(csv_buffer.getvalue(), content_type="text/csv")
+
+        print(f"[SUCCESS] DataFrame salvo em gs://{bucket.name}/{destination_path}")
+    except Exception as e:
+        print(f"[ERROR] Falha ao fazer upload do DataFrame para {destination_path}: {str(e)}")
+        raise
+
 
 def run(customer):
-    import requests
-    import time
-    import os
-    import re
-    import csv
-    import io
-    import unicodedata
-    from datetime import datetime
-    from google.cloud import storage
-    from core import gcs
+    # Inicializar GCS no início da função
+    initialize_gcs(customer)
 
     # Configurações da API
     API_KEY = customer['api_key']
@@ -25,11 +130,6 @@ def run(customer):
     LOST_REASONS_URL = "https://api.ms.prod.moskit.services/v2/lostReasons"
     USERS_URL = "https://api.ms.prod.moskit.services/v2/users"
     HEADERS = {"Accept": "application/json", "apikey": API_KEY}
-
-    # Configuração do Google Cloud Storage
-    BUCKET_NAME = customer['bucket_name']
-    import pathlib
-    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
 
     # Parâmetros de busca
     QUANTITY = 50
@@ -43,23 +143,6 @@ def run(customer):
     stage_names = {}
     lost_reason_cache = {}
     user_cache = {}
-
-    # Autenticação no Google Cloud Storage
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
-    credentials = gcs.load_credentials_from_env()
-    storage_client = storage.Client(credentials=credentials)
-    bucket = storage_client.bucket(BUCKET_NAME)
-
-    # Função para normalizar nomes de campos
-    def normalize_column_name(name):
-        nfkd = unicodedata.normalize('NFKD', name)
-        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
-        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
-        return re.sub(r"\s+", "_", cleaned).lower()
-
-    # Função para sanitizar nomes de campos (substituída pela normalize_column_name)
-    def sanitize_column_name(name):
-        return normalize_column_name(name)[:300]  # Normaliza e limita a 300 caracteres
 
     # Função para buscar nomes das entidades
     def get_name(url, entity_id, cache):
@@ -93,7 +176,7 @@ def run(customer):
             response = requests.get(f"{CUSTOM_FIELDS_URL}/{field_id}", headers=HEADERS, timeout=TIMEOUT)
             if response.status_code == 200:
                 data = response.json()
-                field_name = normalize_column_name(data.get("name", field_id))  # Normaliza o nome
+                field_name = normalize_column_name(data.get("name", field_id))
                 custom_fields_mapping[field_id] = field_name
                 return field_name
             elif response.status_code == 429:
@@ -118,7 +201,6 @@ def run(customer):
                     pipeline_id = stage.get("pipeline", {}).get("id", "")
                     stage_to_pipeline[stage_id] = pipeline_id
 
-                    # Preparar dados para CSV de stages
                     stages_data.append({
                         "id": stage_id,
                         "name": stage.get("name", ""),
@@ -137,7 +219,6 @@ def run(customer):
                     pipeline_id = pipeline["id"]
                     pipeline_names[pipeline_id] = pipeline["name"]
 
-                    # Preparar dados para CSV de pipelines
                     pipelines_data.append({
                         "id": pipeline_id,
                         "name": pipeline["name"]
@@ -147,10 +228,8 @@ def run(customer):
 
         print(f"[SUCCESS] {len(stage_names)} estágios e {len(pipeline_names)} pipelines coletados!")
 
-        # Salvar estágios em CSV
+        # Usar a função global upload_to_gcs
         upload_to_gcs(stages_data, "stages/stages.csv")
-
-        # Salvar pipelines em CSV
         upload_to_gcs(pipelines_data, "pipelines/pipelines.csv")
 
     # Função para buscar negócios
@@ -224,9 +303,8 @@ def run(customer):
                 "email": user.get("email", "")
             })
 
-        # Salvar usuários em CSV
+        # Usar a função global upload_to_gcs
         upload_to_gcs(users_data, "users/users.csv")
-
         return users
 
     # Função para buscar motivos de perda
@@ -240,7 +318,6 @@ def run(customer):
                 data = response.json()
                 lost_reasons = data
 
-                # Atualizar cache
                 for reason in lost_reasons:
                     lost_reason_cache[reason["id"]] = reason.get("name", "")
 
@@ -258,9 +335,8 @@ def run(customer):
                 "name": reason.get("name", "")
             })
 
-        # Salvar motivos de perda em CSV
+        # Usar a função global upload_to_gcs
         upload_to_gcs(lost_reasons_data, "lost_reasons/lost_reasons.csv")
-
         return lost_reasons
 
     # Função para buscar campos personalizados
@@ -274,10 +350,9 @@ def run(customer):
                 data = response.json()
                 custom_fields = data
 
-                # Atualizar cache
                 for field in custom_fields:
                     field_id = field["id"]
-                    field_name = normalize_column_name(field.get("name", field_id))  # Usa normalize_column_name
+                    field_name = normalize_column_name(field.get("name", field_id))
                     custom_fields_mapping[field_id] = field_name
 
                 print(f"[INFO] Total de campos personalizados coletados: {len(custom_fields)}")
@@ -295,47 +370,9 @@ def run(customer):
                 "type": field.get("type", "")
             })
 
-        # Salvar campos personalizados em CSV
+        # Usar a função global upload_to_gcs
         upload_to_gcs(custom_fields_data, "custom_fields/custom_fields.csv")
-
         return custom_fields
-
-    # Função para fazer upload de dados para o Google Cloud Storage
-    def upload_to_gcs(data, destination_path):
-        if not data:
-            print(f"[WARNING] Sem dados para enviar para {destination_path}")
-            return
-
-        try:
-            # Determinar todas as chaves possíveis (colunas)
-            all_keys = set()
-            for item in data:
-                all_keys.update(item.keys())
-
-            # Normalizar todos os nomes de colunas
-            normalized_keys = {key: normalize_column_name(key) for key in all_keys}
-            sorted_keys = sorted(list(all_keys))
-
-            # Criar um buffer na memória para o CSV
-            output = io.StringIO()
-            csv_writer = csv.writer(output, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-
-            # Escrever cabeçalho normalizado
-            csv_writer.writerow([normalized_keys[key] for key in sorted_keys])
-
-            # Escrever linhas
-            for item in data:
-                row = [item.get(key, "") for key in sorted_keys]
-                csv_writer.writerow(row)
-
-            # Upload para o GCS
-            blob = bucket.blob(destination_path)
-            blob.upload_from_string(output.getvalue(), content_type="text/csv")
-
-            print(f"[SUCCESS] Arquivo salvo em gs://{BUCKET_NAME}/{destination_path}")
-        except Exception as e:
-            print(f"[ERROR] Falha ao fazer upload para {destination_path}: {str(e)}")
-            raise
 
     # Função para processar negócios e salvar no GCS
     def process_and_save_deals(deals):
@@ -383,44 +420,164 @@ def run(customer):
             }
 
             # Adicionar campos personalizados
-            custom_fields_values = {}
             for field in deal.get("entityCustomFields", []):
                 field_name = custom_fields_mapping.get(field["id"], field["id"])
                 processed_deal[f"custom_{field_name}"] = field.get("textValue", "")
-
-                # Preparar dados para CSV de valores de campos personalizados
-                custom_fields_values[field["id"]] = {
-                    "deal_id": deal.get("id", ""),
-                    "custom_field_id": field["id"],
-                    "custom_field_name": field_name,
-                    "value": field.get("textValue", "")
-                }
 
             processed_deals.append(processed_deal)
 
             if i % 100 == 0:
                 print(f"[INFO] {i} negócios processados...")
 
-        # Salvar negócios em CSV
-        upload_to_gcs(processed_deals, f"deals/deals.csv")
+        # Usar a função global upload_to_gcs
+        upload_to_gcs(processed_deals, "deals/deals.csv")
 
-    # Buscar e salvar dados de cada endpoint
+    # Executar todas as funções
     fetch_custom_fields()
     fetch_lost_reasons()
     fetch_users()
     fetch_stages_and_pipelines()
 
-    # Buscar e processar negócios
     deals = fetch_deals()
     process_and_save_deals(deals)
 
     print("[COMPLETE] Processo finalizado com sucesso!")
 
 
+def refactor_deals_custom_fields(customer):
+    import pandas as pd
+
+    # Inicializar GCS no início da função
+    initialize_gcs(customer)
+
+    API_KEY = customer['api_key']
+
+    def fetch_moskit_deals_with_custom_fields(quantity: int = 50, limit_pages: int = None) -> pd.DataFrame:
+        """
+        Busca todos os deals da API Moskit com paginação usando nextPageToken,
+        processa os campos personalizados substituindo IDs pelos nomes amigáveis,
+        e retorna um único DataFrame com os resultados combinados.
+        """
+        base_url = "https://api.ms.prod.moskit.services/v2"
+        deals_url = f"{base_url}/deals"
+        custom_fields_url = f"{base_url}/customFields"
+
+        headers = {
+            "accept": "application/json",
+            "apikey": API_KEY
+        }
+
+        # --- Fetching Deals
+        deals_params = {
+            "order": "DESC",
+            "sort": "dateCreated",
+            "quantity": min(quantity, 50)
+        }
+
+        all_deals = []
+        next_page_token_deals = None
+        page_count_deals = 0
+
+        print("🔄 Buscando dados de deals paginados...")
+
+        while True:
+            if next_page_token_deals:
+                deals_params['nextPageToken'] = next_page_token_deals
+            else:
+                deals_params.pop('nextPageToken', None)
+
+            response = requests.get(deals_url, headers=headers, params=deals_params)
+
+            if response.status_code != 200:
+                raise Exception(f"Erro ao buscar deals: {response.status_code} - {response.text}")
+
+            deals_data = response.json()
+            all_deals.extend(deals_data)
+
+            next_page_token_deals = response.headers.get("X-Moskit-Listing-Next-Page-Token")
+
+            page_count_deals += 1
+            print(f"✅ Página {page_count_deals} de deals carregada. Registros acumulados: {len(all_deals)}")
+
+            if not next_page_token_deals:
+                print("🏁 Todas as páginas de deals foram carregadas.")
+                break
+
+            if limit_pages and page_count_deals >= limit_pages:
+                print("⚠️ Limite de páginas de deals atingido (limit_pages).")
+                break
+
+        df = pd.json_normalize(all_deals)
+
+        # --- Fetching Custom Fields
+        all_custom_fields = []
+        next_page_token_custom_fields = None
+        page_count_custom_fields = 0
+
+        custom_fields_params = {
+            "order": "ASC",
+            "quantity": 50
+        }
+
+        print("🔄 Buscando dados de custom fields paginados...")
+
+        while True:
+            if next_page_token_custom_fields:
+                custom_fields_params['nextPageToken'] = next_page_token_custom_fields
+            else:
+                custom_fields_params.pop('nextPageToken', None)
+
+            response = requests.get(custom_fields_url, headers=headers, params=custom_fields_params)
+
+            if response.status_code != 200:
+                raise Exception(f"Erro ao buscar custom fields: {response.status_code} - {response.text}")
+
+            custom_fields_data = response.json()
+            all_custom_fields.extend(custom_fields_data)
+
+            next_page_token_custom_fields = response.headers.get("X-Moskit-Listing-Next-Page-Token")
+
+            page_count_custom_fields += 1
+            print(
+                f"✅ Página {page_count_custom_fields} de custom fields carregada. Registros acumulados: {len(all_custom_fields)}")
+
+            if not next_page_token_custom_fields:
+                print("🏁 Todas as páginas de custom fields foram carregadas.")
+                break
+
+        # Cria mapeamento {id: name} apenas para módulo DEAL
+        id_to_name = {}
+        for field in all_custom_fields:
+            if field.get('module') == 'DEAL':
+                id_to_name[field['id']] = field['name']
+
+        # Substitui IDs pelos nomes já na extração
+        def extract_fields(fields):
+            result = {}
+            if isinstance(fields, list):
+                for item in fields:
+                    if isinstance(item, dict):
+                        field_id = item.get('id')
+                        value = item.get('textValue')
+                        field_name = id_to_name.get(field_id, field_id)
+                        if field_name:
+                            result[field_name] = value
+            return result
+
+        # Cria novas colunas a partir de entityCustomFields com nomes amigáveis
+        new_cols = df['entityCustomFields'].apply(extract_fields).apply(pd.Series)
+        df = pd.concat([df.drop(columns=['entityCustomFields']), new_cols], axis=1)
+
+        # Usar a função global para DataFrames
+        upload_dataframe_to_gcs(df, "refactor_deals_custom_fields/refactor_deals_custom_fields.csv")
+
+    fetch_moskit_deals_with_custom_fields()
+
+
 def get_extraction_tasks():
     """
     Get the list of data extraction tasks for Moskit.
-    
+
     Returns:
         list: List of task configurations
     """
@@ -428,5 +585,9 @@ def get_extraction_tasks():
         {
             'task_id': 'run',
             'python_callable': run
-        }
+        },
+        {
+            'task_id': 'refactor_deals_custom_fields',
+            'python_callable': refactor_deals_custom_fields
+        },
     ]
