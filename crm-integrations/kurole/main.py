@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Script Kurole para baixar backup MySQL e exportar tabelas específicas
-Seguindo arquitetura padrão do projeto com commons/generic
-"""
-
 import csv
 import datetime
 import os
@@ -13,10 +7,7 @@ import urllib.parse
 import urllib.request
 
 from commons.app_inicializer import AppInitializer
-from commons.big_query import BigQuery
-from commons.memory_monitor import MemoryMonitor
 from commons.report_generator import ReportGenerator
-from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
 
 logger = AppInitializer.initialize()
@@ -163,7 +154,7 @@ def run_command(cmd, shell=False, encoding='utf-8'):
         try:
             result = subprocess.run(cmd, shell=shell, capture_output=True, text=True, timeout=300, encoding='latin-1')
             return result.returncode == 0, result.stdout, result.stderr
-        except:
+        except Exception:
             return False, "", "Erro de codificação"
 
 
@@ -416,7 +407,7 @@ def export_table_to_csv(table_name, database):
                             try:
                                 clean_cell = cell.encode('utf-8', errors='ignore').decode('utf-8')
                                 row.append(clean_cell)
-                            except:
+                            except Exception:
                                 row.append(str(cell))
                     writer.writerow(row)
                     data_rows += 1
@@ -593,7 +584,7 @@ def main():
                     total_records += record_count
                     logger.info(f"   ✅ Sucesso! ({exported}/{len(CONFIG['target_tables'])} concluídas)")
                 else:
-                    logger.error(f"   ❌ Falhou!")
+                    logger.error("   ❌ Falhou!")
                     stats["status"] = "Falha na exportação"
 
                 all_table_stats[table] = stats
@@ -608,20 +599,9 @@ def main():
                 }
 
         # Relatório final
-        logger.info(f"\n🎉 Exportação concluída!")
+        logger.info("\n🎉 Exportação concluída!")
         logger.info(f"✅ Exportadas: {exported}/{len(CONFIG['target_tables'])} tabelas")
         logger.info(f"📊 Total de registros: {total_records:,}")
-
-        # Processar arquivos CSV para BigQuery
-        # logger.info("\n💾 Processando arquivos para BigQuery...")
-        # with MemoryMonitor(logger):
-        #     BigQuery.process_csv_files()
-        #
-        # # Enviar para BigQuery
-        # tables = Utils.get_existing_folders(logger)
-        # for table in tables:
-        #     BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
-        #                             credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         # Relatório final consolidado
         if not ReportGenerator.final_summary(logger, all_table_stats, global_start_time):
