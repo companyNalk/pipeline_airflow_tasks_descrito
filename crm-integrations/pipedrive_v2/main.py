@@ -604,6 +604,9 @@ def main():
 
     # Resumo
     successful = sum(1 for r in results if r is not None)
+    if successful == 0:
+        logger.error("Validação final falhou: nenhum endpoint respondeu com sucesso. Encerrando execução da DAG.")
+        raise
     logger.info(f"📊 {successful}/{len(functions)} endpoints coletados com sucesso")
     logger.info("📊 Arquivos *_fields.json normalizados com sucesso")
     logger.info("📊 Leads convertidos com campos legíveis")
