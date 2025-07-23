@@ -89,34 +89,6 @@ def upload_to_gcs(data, destination_path):
         raise
 
 
-def upload_dataframe_to_gcs(df, destination_path):
-    global bucket
-
-    if bucket is None:
-        raise Exception("GCS não foi inicializado. Chame initialize_gcs() primeiro.")
-
-    if df.empty:
-        print(f"[WARNING] DataFrame vazio para {destination_path}")
-        return
-
-    try:
-        # Normalizar nomes das colunas
-        df.columns = [normalize_column_name(col) for col in df.columns]
-
-        # Converter DataFrame para CSV
-        csv_buffer = io.StringIO()
-        df.to_csv(csv_buffer, sep=';', index=False, quoting=csv.QUOTE_MINIMAL)
-
-        # Upload para o GCS
-        blob = bucket.blob(destination_path)
-        blob.upload_from_string(csv_buffer.getvalue(), content_type="text/csv")
-
-        print(f"[SUCCESS] DataFrame salvo em gs://{bucket.name}/{destination_path}")
-    except Exception as e:
-        print(f"[ERROR] Falha ao fazer upload do DataFrame para {destination_path}: {str(e)}")
-        raise
-
-
 def run(customer):
     # Inicializar GCS no início da função
     initialize_gcs(customer)
@@ -568,8 +540,13 @@ def refactor_deals_custom_fields(customer):
         new_cols = df['entityCustomFields'].apply(extract_fields).apply(pd.Series)
         df = pd.concat([df.drop(columns=['entityCustomFields']), new_cols], axis=1)
 
-        # Usar a função global para DataFrames
-        upload_dataframe_to_gcs(df, "refactor_deals_custom_fields/refactor_deals_custom_fields.csv")
+        # Converter DataFrame para lista de dicionários
+        # Substituir valores NaN por strings vazias para evitar problemas no CSV
+        df_clean = df.fillna('')
+        deals_list = df_clean.to_dict('records')
+
+        # Usar a função upload_to_gcs que trabalha com lista de dicionários
+        upload_to_gcs(deals_list, "refactor_deals_custom_fields/refactor_deals_custom_fields.csv")
 
     fetch_moskit_deals_with_custom_fields()
 
