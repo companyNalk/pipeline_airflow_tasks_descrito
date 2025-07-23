@@ -418,6 +418,7 @@ def run(customer):
 
 def refactor_deals_custom_fields(customer):
     import pandas as pd
+    import time
 
     # Inicializar GCS no início da função
     initialize_gcs(customer)
@@ -458,10 +459,30 @@ def refactor_deals_custom_fields(customer):
             else:
                 deals_params.pop('nextPageToken', None)
 
-            response = requests.get(deals_url, headers=headers, params=deals_params)
+            max_retries = 13
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(deals_url, headers=headers, params=deals_params, timeout=30)
+
+                    if response.status_code == 200:
+                        break
+                    elif response.status_code == 429:
+                        wait_time = 5 * (attempt + 1)
+                        print(
+                            f"⚠️ Rate limit atingido. Aguardando {wait_time} segundos... (tentativa {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                    else:
+                        raise Exception(f"Erro ao buscar deals: {response.status_code} - {response.text}")
+
+                except requests.exceptions.RequestException as e:
+                    if attempt == max_retries - 1:
+                        raise Exception(f"Erro de conexão após {max_retries} tentativas: {str(e)}")
+                    print(f"⚠️ Erro de conexão. Tentativa {attempt + 1}/{max_retries}. Aguardando 3 segundos...")
+                    time.sleep(3)
 
             if response.status_code != 200:
-                raise Exception(f"Erro ao buscar deals: {response.status_code} - {response.text}")
+                raise Exception(
+                    f"Erro ao buscar deals após {max_retries} tentativas: {response.status_code} - {response.text}")
 
             deals_data = response.json()
             all_deals.extend(deals_data)
@@ -478,6 +499,9 @@ def refactor_deals_custom_fields(customer):
             if limit_pages and page_count_deals >= limit_pages:
                 print("⚠️ Limite de páginas de deals atingido (limit_pages).")
                 break
+
+            # Pequena pausa entre requisições para evitar rate limit
+            time.sleep(0.5)
 
         df = pd.json_normalize(all_deals)
 
@@ -499,10 +523,31 @@ def refactor_deals_custom_fields(customer):
             else:
                 custom_fields_params.pop('nextPageToken', None)
 
-            response = requests.get(custom_fields_url, headers=headers, params=custom_fields_params)
+            # Fazer requisição com retry para rate limit
+            max_retries = 13
+            for attempt in range(max_retries):
+                try:
+                    response = requests.get(custom_fields_url, headers=headers, params=custom_fields_params, timeout=30)
+
+                    if response.status_code == 200:
+                        break
+                    elif response.status_code == 429:
+                        wait_time = 5 * (attempt + 1)
+                        print(
+                            f"⚠️ Rate limit atingido. Aguardando {wait_time} segundos... (tentativa {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                    else:
+                        raise Exception(f"Erro ao buscar custom fields: {response.status_code} - {response.text}")
+
+                except requests.exceptions.RequestException as e:
+                    if attempt == max_retries - 1:
+                        raise Exception(f"Erro de conexão após {max_retries} tentativas: {str(e)}")
+                    print(f"⚠️ Erro de conexão. Tentativa {attempt + 1}/{max_retries}. Aguardando 3 segundos...")
+                    time.sleep(3)
 
             if response.status_code != 200:
-                raise Exception(f"Erro ao buscar custom fields: {response.status_code} - {response.text}")
+                raise Exception(
+                    f"Erro ao buscar custom fields após {max_retries} tentativas: {response.status_code} - {response.text}")
 
             custom_fields_data = response.json()
             all_custom_fields.extend(custom_fields_data)
@@ -516,6 +561,9 @@ def refactor_deals_custom_fields(customer):
             if not next_page_token_custom_fields:
                 print("🏁 Todas as páginas de custom fields foram carregadas.")
                 break
+
+            # Pequena pausa entre requisições
+            time.sleep(0.5)
 
         # Cria mapeamento {id: name} apenas para módulo DEAL
         id_to_name = {}
