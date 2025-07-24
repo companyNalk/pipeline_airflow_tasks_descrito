@@ -1,12 +1,13 @@
 FROM python:3.11-slim
 
-# Instalar dependências do sistema necessárias
+# Instalar dependências do sistema necessárias + cliente Docker CLI
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     gnupg \
     lsb-release \
     gzip \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
 # Diretório de trabalho
