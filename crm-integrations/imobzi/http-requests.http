@@ -1,0 +1,40 @@
+# DOCS
+# https://developer.imobzi.com/#section/Introduction
+# pagination = 50
+# rate limiting = 120
+
+### ========== DEALS SEARCH ==========
+GET {{url_base}}/v1/deals/search
+X-Imobzi-Secret: {{token}}
+
+### ========== DEALS ROTATIONS ==========
+GET {{url_base}}/v1/deals-rotations
+X-Imobzi-Secret: {{token}}
+
+### ========== DEAL LOST-REASON ==========
+GET {{url_base}}/v1/deal/lost-reason
+X-Imobzi-Secret: {{token}}
+
+### ========== PIPELINES ==========
+GET {{url_base}}/v1/pipelines
+X-Imobzi-Secret: {{token}}
+
+### ========== PIPELINE GROUP ==========
+GET {{url_base}}/v1/pipeline-groups
+X-Imobzi-Secret: {{token}}
+
+### ========== CONTACTS ==========
+GET {{url_base}}/v1/contacts
+X-Imobzi-Secret: {{token}}
+
+### ========== CONTACTS TAGS ==========
+GET {{url_base}}/v1/contacts/tags
+X-Imobzi-Secret: {{token}}
+
+### ========== PERSON-FIELDS ==========
+GET {{url_base}}/v1/person-fields
+X-Imobzi-Secret: {{token}}
+
+### ========== ORGANIZATION FIELDS ==========
+GET {{url_base}}/v1/organization-fields
+X-Imobzi-Secret: {{token}}
