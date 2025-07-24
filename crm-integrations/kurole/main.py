@@ -145,14 +145,14 @@ def download_backup(filename, username, password):
 def run_command(cmd, shell=False, encoding='utf-8'):
     """Executa comando e retorna resultado"""
     try:
-        result = subprocess.run(cmd, shell=shell, capture_output=True, text=True, timeout=300, encoding=encoding,
+        result = subprocess.run(cmd, shell=shell, capture_output=True, text=True, timeout=3000, encoding=encoding,
                                 errors='replace')
         return result.returncode == 0, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
         return False, "", "Timeout na execução"
     except UnicodeDecodeError:
         try:
-            result = subprocess.run(cmd, shell=shell, capture_output=True, text=True, timeout=300, encoding='latin-1')
+            result = subprocess.run(cmd, shell=shell, capture_output=True, text=True, timeout=3000, encoding='latin-1')
             return result.returncode == 0, result.stdout, result.stderr
         except Exception:
             return False, "", "Erro de codificação"
