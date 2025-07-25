@@ -2,6 +2,8 @@ import logging
 import time
 
 from commons.app_inicializer import AppInitializer
+from commons.big_query import BigQuery
+from commons.memory_monitor import MemoryMonitor
 from commons.report_generator import ReportGenerator
 from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
@@ -22,6 +24,9 @@ def get_arguments():
             .add("API_BASE_URL", "URL base", required=True)
             .add("API_USERNAME", "Username para autenticação", required=True)
             .add("API_PASSWORD", "Senha para autenticação", required=True)
+            .add("PROJECT_ID", "ID do projeto Google Cloud", required=True)
+            .add("CRM_TYPE", "Nome da ferramenta", required=True)
+            .add("GOOGLE_APPLICATION_CREDENTIALS", "Credencial GCS", required=True)
             .parse())
 
 
@@ -152,7 +157,7 @@ def process_endpoint(endpoint_name, endpoint_path, token):
 
         # Usando Utils.process_and_save_data exatamente como no modelo base
         logger.info(f"💾 Processando e salvando {len(all_data)} registros para {endpoint_name}")
-        processed_data = Utils.process_and_save_data(all_data, endpoint_name)
+        processed_data = Utils.process_and_save_data(all_data, endpoint_name, use_pascal_case_conversion=True)
 
         endpoint_duration = time.time() - endpoint_start
         return {
@@ -205,6 +210,14 @@ def main():
         # Se houver falhas, lançar exceção
         if not success:
             raise Exception(f"Falhas nos endpoints: {success}")
+
+        with MemoryMonitor(logger):
+            BigQuery.process_csv_files()
+
+        tables = Utils.get_existing_folders(logger)
+        for table in tables:
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
+                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
     except Exception as e:
         logger.exception(f"❌ ERRO CRÍTICO NA EXECUÇÃO: {e}")
