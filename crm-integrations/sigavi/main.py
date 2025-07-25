@@ -157,7 +157,7 @@ def process_endpoint(endpoint_name, endpoint_path, token):
 
         # Usando Utils.process_and_save_data exatamente como no modelo base
         logger.info(f"💾 Processando e salvando {len(all_data)} registros para {endpoint_name}")
-        processed_data = Utils.process_and_save_data(all_data, endpoint_name, use_pascal_case_conversion=True)
+        processed_data = Utils.process_and_save_data(all_data, endpoint_name)
 
         endpoint_duration = time.time() - endpoint_start
         return {
