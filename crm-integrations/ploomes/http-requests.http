@@ -1,0 +1,102 @@
+
+# DOCS: http://developers.ploomes.com
+
+### ========== ACCOUNT ==========
+GET {{url_base}}/Account
+User-Key: {{secret}}
+
+### ========== CITIES ==========
+GET {{url_base}}/Cities
+User-Key: {{secret}}
+
+### ========== CONTACTS ==========
+GET {{url_base}}/Contacts
+User-Key: {{secret}}
+
+### ========== CONTACTS@NUMBERSOFEMPLOYEES ==========
+GET {{url_base}}/Contacts@NumbersOfEmployees
+User-Key: {{secret}}
+
+### ========== CONTACTS@ORIGINS ==========
+GET {{url_base}}/Contacts@Origins
+User-Key: {{secret}}
+
+### ========== CONTACTS@LINESOFBUSINESS ==========
+GET {{url_base}}/Contacts@LinesOfBusiness
+User-Key: {{secret}}
+
+### ========== CONTACTS@RELATIONSHIPS ==========
+GET {{url_base}}/Contacts@Relationships
+User-Key: {{secret}}
+
+### ========== CONTACTS@STATUS ==========
+GET {{url_base}}/Contacts@Status
+User-Key: {{secret}}
+
+### ========== CONTACTS@TYPES ==========
+GET {{url_base}}/Contacts@Types
+User-Key: {{secret}}
+
+### ========== CONTACTS@PRODUCTS ==========
+GET {{url_base}}/Contacts@Products
+User-Key: {{secret}}
+
+### ========== CURRENCIES ==========
+GET {{url_base}}/Currencies
+User-Key: {{secret}}
+
+### ========== DEALS ==========
+GET {{url_base}}/Deals
+User-Key: {{secret}}
+
+### ========== DEALS@STAGES ==========
+GET {{url_base}}/Deals@Stages
+User-Key: {{secret}}
+
+### ========== DEALS@STATUS ==========
+GET {{url_base}}/Deals@Status
+User-Key: {{secret}}
+
+### ========== DEALS@LOSSREASONS ==========
+GET {{url_base}}/Deals@LossReasons
+User-Key: {{secret}}
+
+### ========== DEALS@PIPELINES ==========
+GET {{url_base}}/Deals@Pipelines
+User-Key: {{secret}}
+
+### ========== ORDERS ==========
+GET {{url_base}}/Orders
+User-Key: {{secret}}
+
+### ========== ORDERS@STAGES ==========
+GET {{url_base}}/Orders@Stages
+User-Key: {{secret}}
+
+### ========== PRODUCTS ==========
+GET {{url_base}}/Products
+User-Key: {{secret}}
+
+### ========== PRODUCTS@FAMILIES ==========
+GET {{url_base}}/Products@Families
+User-Key: {{secret}}
+
+### ========== PRODUCTS@GROUPS ==========
+GET {{url_base}}/Products@Groups
+User-Key: {{secret}}
+
+### ========== PRODUCTS@PARTS ==========
+GET {{url_base}}/Products@Parts
+User-Key: {{secret}}
+
+### ========== TAGS ==========
+GET {{url_base}}/Tags
+User-Key: {{secret}}
+
+### ========== TEAMS ==========
+GET {{url_base}}/Teams
+User-Key: {{secret}}
+
+### ========== USERS ==========
+GET {{url_base}}/Users
+User-Key: {{secret}}
