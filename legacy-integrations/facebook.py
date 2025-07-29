@@ -26,9 +26,16 @@ def run(customer):
 
     accounts_ids_raw = customer['accounts_ids']
     if isinstance(accounts_ids_raw, str):
-        ACCOUNT_IDS = [acc.strip() for acc in accounts_ids_raw.split(',') if acc.strip()]
+        raw_ids = [acc.strip() for acc in accounts_ids_raw.split(',') if acc.strip()]
     else:
-        ACCOUNT_IDS = accounts_ids_raw
+        raw_ids = accounts_ids_raw
+
+    ACCOUNT_IDS = []
+    for account_id in raw_ids:
+        if not account_id.startswith('act_'):
+            ACCOUNT_IDS.append(f'act_{account_id}')
+        else:
+            ACCOUNT_IDS.append(account_id)
 
     FIELDS = [
         'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
@@ -576,7 +583,7 @@ def run(customer):
         print("\n" + "=" * 60)
         print("FACEBOOK ADS COLLECTOR - WITH CUSTOM CONVERSIONS")
         print("=" * 60)
-        print(f"Accounts: {ACCOUNT_IDS}")
+        print(f"Accounts: {ACCOUNT_IDS}")  # FIX: Now it will display the list properly
         print(f"Bucket: {BUCKET_NAME}")
         print(f"Start Date: {HISTORICAL_START_DATE}")
         print("=" * 60)
