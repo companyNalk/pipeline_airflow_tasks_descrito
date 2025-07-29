@@ -23,7 +23,13 @@ def run(customer):
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
     HISTORICAL_START_DATE = customer['start_date']
     ACCESS_TOKEN = customer['access_token']
-    ACCOUNT_IDS = customer['accounts_ids']
+
+    accounts_ids_raw = customer['accounts_ids']
+    if isinstance(accounts_ids_raw, str):
+        ACCOUNT_IDS = [acc.strip() for acc in accounts_ids_raw.split(',') if acc.strip()]
+    else:
+        ACCOUNT_IDS = accounts_ids_raw
+
     FIELDS = [
         'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
         'campaign_name', 'clicks', 'cost_per_action_type', 'ctr',
@@ -570,7 +576,7 @@ def run(customer):
         print("\n" + "=" * 60)
         print("FACEBOOK ADS COLLECTOR - WITH CUSTOM CONVERSIONS")
         print("=" * 60)
-        print(f"Accounts: {', '.join(ACCOUNT_IDS)}")
+        print(f"Accounts: {ACCOUNT_IDS}")
         print(f"Bucket: {BUCKET_NAME}")
         print(f"Start Date: {HISTORICAL_START_DATE}")
         print("=" * 60)
