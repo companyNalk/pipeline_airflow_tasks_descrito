@@ -1,4 +1,4 @@
-# DOCS: https://moskit.stoplight.io/
+# DOCS: https://moskit_v2.stoplight.io/
 
 ### ========== CUSTOM FIELDS ==========
 GET {{url_base}}/v2/customFields?quantity=50&offset=0
