@@ -43,10 +43,12 @@ def run(customer):
         'date_start', 'date_stop', 'frequency', 'impressions',
         'objective', 'reach', 'spend', 'actions', 'action_values'
     ]
+
     ACTION_FIELDS = [
         'lead', 'offsite_conversion.fb_pixel_lead', 'onsite_conversion.lead_grouped',
         'onsite_conversion.messaging_conversation_started_7d', 'post_engagement', 'post_reaction'
     ]
+
     FIXED_COLUMNS = [
         'date', 'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
         'campaign', 'clicks', 'ctr', 'frequency', 'impressions', 'objective',
@@ -72,6 +74,7 @@ def run(customer):
             self.bucket = storage.Client.from_service_account_json(SERVICE_ACCOUNT_PATH).bucket(bucket_name)
             self.semaphore = asyncio.Semaphore(500)  # Paralelismo de 500
             self.custom_conversion_names = {}  # Cache para nomes das conversões personalizadas
+            self.validated_accounts = {}  # Cache dos dados das contas validadas
 
         async def get_session(self):
             if not self.session:
@@ -83,50 +86,175 @@ def run(customer):
                 await self.session.close()
                 self.session = None
 
-        async def debug_account_permissions(self, account_id: str):
-            """Debug para verificar permissões da conta"""
+        async def validate_token_and_accounts(self) -> bool:
+            """Valida o token e verifica se tem acesso às contas especificadas"""
+            print("\n" + "=" * 60)
+            print("VALIDANDO TOKEN E CONTAS DE ANÚNCIOS")
+            print("=" * 60)
+
             session = await self.get_session()
-            clean_account_id = account_id.replace('act_', '')
+            valid_accounts = []
 
-            # Testar acesso básico à conta
-            url = f"{self.base_url}/act_{clean_account_id}"
-            params = {
-                "access_token": self.access_token,
-                "fields": "account_id,name,account_status,capabilities"
-            }
-
+            # Primeiro, verifica se o token está válido testando um endpoint básico
             try:
+                url = f"{self.base_url}/me"
+                params = {"access_token": self.access_token, "fields": "id,name"}
+
                 async with session.get(url, params=params) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        print(f"     ├─ Account Access: OK")
-                        print(f"     ├─ Account Name: {data.get('name', 'N/A')}")
-                        print(f"     ├─ Account Status: {data.get('account_status', 'N/A')}")
-                        print(f"     └─ Capabilities: {data.get('capabilities', [])}")
-                        return True
-                    else:
+                    if response.status != 200:
                         error_data = await response.json()
-                        print(f"     └─ Account Access Error {response.status}: {error_data}")
+                        print(f"❌ ERRO: Token inválido ou expirado")
+                        print(f"   Detalhes: {error_data.get('error', {}).get('message', 'Erro desconhecido')}")
                         return False
+
+                    user_data = await response.json()
+                    print(
+                        f"✅ Token válido para usuário: {user_data.get('name', 'N/A')} (ID: {user_data.get('id', 'N/A')})")
+
             except Exception as e:
-                print(f"     └─ Account Access Exception: {e}")
+                print(f"❌ ERRO ao validar token: {e}")
+                return False
+
+            # Agora verifica a validade/expiração do token
+            try:
+                debug_url = f"{self.base_url}/debug_token"
+                debug_params = {
+                    "input_token": self.access_token,
+                    "access_token": self.access_token
+                }
+
+                async with session.get(debug_url, params=debug_params) as response:
+                    if response.status == 200:
+                        debug_data = await response.json()
+                        token_info = debug_data.get("data", {})
+
+                        # Informações do token
+                        app_id = token_info.get("app_id", "N/A")
+                        user_id = token_info.get("user_id", "N/A")
+                        is_valid = token_info.get("is_valid", False)
+                        expires_at = token_info.get("expires_at")
+
+                        print(f"📋 INFORMAÇÕES DO TOKEN:")
+                        print(f"   │ App ID: {app_id}")
+                        print(f"   │ User ID: {user_id}")
+                        print(f"   │ Status: {'✅ Válido' if is_valid else '❌ Inválido'}")
+
+                        if expires_at:
+                            # Converte timestamp para data legível
+                            expiry_date = datetime.fromtimestamp(expires_at)
+                            days_until_expiry = (expiry_date - datetime.now()).days
+
+                            print(f"   │ Expira em: {expiry_date.strftime('%d/%m/%Y às %H:%M:%S')}")
+
+                            if days_until_expiry > 30:
+                                print(f"   └ Tempo restante: ✅ {days_until_expiry} dias")
+                            elif days_until_expiry > 7:
+                                print(f"   └ Tempo restante: ⚠️  {days_until_expiry} dias (renovar em breve)")
+                            elif days_until_expiry > 0:
+                                print(f"   └ Tempo restante: 🚨 {days_until_expiry} dias (URGENTE: renovar!)")
+                            else:
+                                print(f"   └ Status: ❌ TOKEN EXPIRADO!")
+                                return False
+                        else:
+                            print(f"   └ Tipo: Token sem expiração ou de longa duração")
+
+                        # Verifica scopes/permissões
+                        scopes = token_info.get("scopes", [])
+                        if scopes:
+                            required_scopes = ['ads_read', 'ads_management']
+                            missing_scopes = [scope for scope in required_scopes if scope not in scopes]
+
+                            print(f"   │ Permissões: {', '.join(scopes) if scopes else 'Nenhuma'}")
+                            if missing_scopes:
+                                print(f"   └ ⚠️  Permissões faltando: {', '.join(missing_scopes)}")
+                            else:
+                                print(f"   └ ✅ Todas as permissões necessárias presentes")
+                    else:
+                        print(f"⚠️  Não foi possível verificar detalhes do token (status: {response.status})")
+
+            except Exception as e:
+                print(f"⚠️  Erro ao verificar detalhes do token: {e}")
+                print("   └ Continuando com validação básica...")
+
+            # Agora verifica cada conta de anúncio
+            print(f"\nVerificando acesso às {len(self.account_ids)} contas de anúncios...")
+
+            for account_id in self.account_ids:
+                try:
+                    # Remove 'act_' se existir para normalizar
+                    clean_account_id = account_id.replace('act_', '')
+                    account_id_with_act = f"act_{clean_account_id}"
+
+                    url = f"{self.base_url}/{account_id_with_act}"
+                    params = {
+                        "access_token": self.access_token,
+                        "fields": "id,name,account_status,currency,timezone_name,business"
+                    }
+
+                    async with session.get(url, params=params) as response:
+                        if response.status == 200:
+                            account_data = await response.json()
+
+                            # Armazena dados da conta validada
+                            self.validated_accounts[account_id_with_act] = {
+                                'id': account_data.get('id'),
+                                'name': account_data.get('name'),
+                                'status': account_data.get('account_status'),
+                                'currency': account_data.get('currency'),
+                                'timezone': account_data.get('timezone_name'),
+                                'business': account_data.get('business', {}).get('name') if account_data.get(
+                                    'business') else 'N/A'
+                            }
+
+                            print(f"✅ {account_id_with_act}")
+                            print(f"   │ Nome: {account_data.get('name', 'N/A')}")
+                            print(f"   │ Status: {account_data.get('account_status', 'N/A')}")
+                            print(f"   │ Moeda: {account_data.get('currency', 'N/A')}")
+                            print(f"   │ Fuso: {account_data.get('timezone_name', 'N/A')}")
+                            print(
+                                f"   └ Business: {account_data.get('business', {}).get('name', 'N/A') if account_data.get('business') else 'N/A'}")
+
+                            valid_accounts.append(account_id_with_act)
+
+                        else:
+                            error_data = await response.json()
+                            error_msg = error_data.get('error', {}).get('message', 'Erro desconhecido')
+                            print(f"❌ {account_id_with_act}: ACESSO NEGADO")
+                            print(f"   └ Erro: {error_msg}")
+
+                            # Códigos de erro comuns
+                            error_code = error_data.get('error', {}).get('code')
+                            if error_code == 190:
+                                print(f"   └ Sugestão: Token expirado ou inválido")
+                            elif error_code == 200:
+                                print(f"   └ Sugestão: Sem permissão para esta conta")
+                            elif error_code == 100:
+                                print(f"   └ Sugestão: Conta não encontrada ou ID inválido")
+
+                except Exception as e:
+                    print(f"❌ {account_id}: ERRO DE CONEXÃO")
+                    print(f"   └ Detalhes: {e}")
+
+            # Atualiza a lista de account_ids apenas com as contas válidas
+            if valid_accounts:
+                self.account_ids = valid_accounts
+                print(f"\n✅ VALIDAÇÃO CONCLUÍDA")
+                print(f"   └ {len(valid_accounts)} de {len(self.account_ids)} contas acessíveis")
+                print("=" * 60)
+                return True
+            else:
+                print(f"\n❌ FALHA NA VALIDAÇÃO")
+                print(f"   └ Nenhuma conta acessível com o token fornecido")
+                print("=" * 60)
                 return False
 
         async def get_custom_conversion_names(self) -> Dict[str, str]:
-            """Consulta os nomes das conversões personalizadas com melhor tratamento de erros"""
+            """Consulta os nomes das conversões personalizadas uma única vez e armazena em cache"""
             print("  ├─ Carregando nomes das conversões personalizadas...")
             session = await self.get_session()
             names = {}
 
             for account_id in self.account_ids:
-                print(f"    ├─ Processando account: {account_id}")
-
-                # Debug das permissões da conta
-                has_access = await self.debug_account_permissions(account_id)
-                if not has_access:
-                    print(f"    └─ Pulando conversões personalizadas para {account_id} (sem acesso)")
-                    continue
-
                 clean_account_id = account_id.replace('act_', '')
                 url = f"{self.base_url}/act_{clean_account_id}/customconversions"
                 params = {
@@ -140,27 +268,15 @@ def run(customer):
                         async with session.get(url, params=params) as response:
                             if response.status == 200:
                                 data = await response.json()
-                                conversions = data.get("data", [])
-                                for item in conversions:
+                                for item in data.get("data", []):
                                     names[item["id"]] = item["name"]
-                                print(f"    └─ Success: {len(conversions)} conversões personalizadas encontradas")
+                                print(
+                                    f"     └─ Account {account_id}: {len(data.get('data', []))} conversões personalizadas encontradas")
                             else:
-                                # Melhor tratamento de erros
-                                error_text = await response.text()
-                                try:
-                                    error_data = json.loads(error_text)
-                                    error_msg = error_data.get("error", {}).get("message", "Unknown error")
-                                    error_code = error_data.get("error", {}).get("code", "Unknown")
-                                    print(f"    └─ API Error {response.status}: Code {error_code} - {error_msg}")
-                                except:
-                                    print(f"    └─ HTTP Error {response.status}: {error_text[:200]}...")
-
-                                # Se erro 400, pode ser que não tenha conversões personalizadas
-                                if response.status == 400:
-                                    print(f"    └─ Nota: Conta pode não ter conversões personalizadas configuradas")
-
+                                print(
+                                    f"     └─ Account {account_id}: Erro {response.status} ao buscar conversões personalizadas")
                 except Exception as e:
-                    print(f"    └─ Exception: {e}")
+                    print(f"     └─ Account {account_id}: Erro ao buscar conversões personalizadas: {e}")
 
             print(f"  └─ Total de conversões personalizadas carregadas: {len(names)}")
             return names
@@ -206,9 +322,6 @@ def run(customer):
                             print(f"    └─ Ad {ad_id}: Rate limited. Sleeping...")
                             await asyncio.sleep(int(response.headers.get("Retry-After", "60")))
                             return await self.get_ad_details_with_demographics(ad_id, date_str)
-                        else:
-                            error_text = await response.text()
-                            print(f"    └─ Ad {ad_id}: Error {response.status} - {error_text[:100]}...")
 
             except Exception as e:
                 print(f"    └─ Ad {ad_id}: Error - {e}")
@@ -259,9 +372,6 @@ def run(customer):
                                         page += 1
                                     else:
                                         break
-                        else:
-                            error_text = await response.text()
-                            print(f"    └─ Error {response.status}: {error_text[:200]}...")
 
             except Exception as e:
                 print(f"    └─ Error: {e}")
@@ -280,14 +390,11 @@ def run(customer):
             all_data = []
 
             for account_id in self.account_ids:
-                print(f"\nAccount: {account_id}")
+                account_info = self.validated_accounts.get(account_id, {})
+                print(f"\nAccount: {account_id} ({account_info.get('name', 'N/A')})")
 
                 # Step 1: Get all active ads
                 ad_ids = await self.get_active_ads(account_id, date_str)
-
-                if not ad_ids:
-                    print(f"  └─ No active ads found for {date_str}")
-                    continue
 
                 # Step 2: Get details for each ad with age/gender breakdown
                 print(f"  ├─ Step 2: Fetching demographic details for {len(ad_ids)} ads")
@@ -508,44 +615,12 @@ def run(customer):
 
             return dates
 
-        async def test_token_and_permissions(self):
-            """Testa o token e permissões básicas"""
-            print("\n" + "=" * 60)
-            print("TESTANDO TOKEN E PERMISSÕES")
-            print("=" * 60)
-
-            session = await self.get_session()
-
-            # Test 1: Token validation
-            url = f"{self.base_url}/me"
-            params = {"access_token": self.access_token}
-
-            try:
-                async with session.get(url, params=params) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        print(f"✓ Token válido - User: {data.get('name', 'N/A')} (ID: {data.get('id', 'N/A')})")
-                    else:
-                        error_data = await response.json()
-                        print(f"✗ Token inválido - Error: {error_data}")
-                        return False
-            except Exception as e:
-                print(f"✗ Erro ao validar token: {e}")
-                return False
-
-            # Test 2: Account access
-            for account_id in self.account_ids:
-                print(f"\nTestando acesso à conta: {account_id}")
-                await self.debug_account_permissions(account_id)
-
-            return True
-
         async def run(self):
             """Execute collection process"""
             try:
-                # Primeiro, testar token e permissões
-                if not await self.test_token_and_permissions():
-                    print("\nERRO: Problemas com token ou permissões. Abortando...")
+                # PRIMEIRO: Valida token e contas
+                if not await self.validate_token_and_accounts():
+                    print("\n❌ FALHA NA VALIDAÇÃO - Processo cancelado")
                     return
 
                 # Load custom conversion names at the beginning
@@ -581,14 +656,18 @@ def run(customer):
 
     async def main():
         print("\n" + "=" * 60)
-        print("FACEBOOK ADS COLLECTOR - WITH CUSTOM CONVERSIONS")
+        print("FACEBOOK ADS COLLECTOR - WITH TOKEN VALIDATION")
         print("=" * 60)
-        print(f"Accounts: {ACCOUNT_IDS}")  # FIX: Now it will display the list properly
+        print(f"Accounts to validate: {', '.join(ACCOUNT_IDS)}")
         print(f"Bucket: {BUCKET_NAME}")
         print(f"Start Date: {HISTORICAL_START_DATE}")
         print("=" * 60)
 
-        collector = FacebookAdsCollector(access_token=ACCESS_TOKEN, account_ids=ACCOUNT_IDS, bucket_name=BUCKET_NAME)
+        collector = FacebookAdsCollector(
+            access_token=ACCESS_TOKEN,
+            account_ids=ACCOUNT_IDS,
+            bucket_name=BUCKET_NAME
+        )
 
         await collector.run()
 
