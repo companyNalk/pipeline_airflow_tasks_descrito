@@ -1,44 +1,50 @@
 """
-Facebook Ads module for data extraction functions.
-This module contains functions specific to the Facebook Ads integration.
+Facebook Ads module for data extraction functions - UPDATE VERSION.
+This module contains functions specific to the Facebook Ads integration for updating last 14 days.
 """
 
-import tempfile
-import shutil
-from pathlib import Path
-from core import clickhouse
+from core import gcs
 
 
 def run(customer):
-    import pathlib
     import json
     import time
     import asyncio
     import aiohttp
     import pandas as pd
-    import uuid
     from datetime import datetime, timedelta
     from typing import List, Dict
     import traceback
+    from google.cloud import storage
+    import pathlib
 
     # Configuration
-    API_ACCESS_TOKEN = customer['access_token']
-    API_ACCOUNT_IDS = customer['accounts_ids'].split(',')
-    conta_bm = customer['conta_bm']
+    BUCKET_NAME = customer['bucket_name']
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'setup_automatico.json').as_posix()
-    print('API_ACCESS_TOKEN', API_ACCESS_TOKEN)
-    print('API_ACCOUNT_IDS', API_ACCOUNT_IDS)
-    print('conta_bm', conta_bm)
-    # Create a temporary directory for storing files
-    TEMP_DIR = Path(tempfile.gettempdir()) / f"facebook_ads_inc_{uuid.uuid4().hex}"
-    TEMP_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Created temporary directory: {TEMP_DIR}")
+
+    # MUDANÇA PRINCIPAL: Calcular start_date como data atual - 14 dias
+    HISTORICAL_START_DATE = (datetime.now().date() - timedelta(days=14)).strftime("%Y-%m-%d")
+
+    ACCESS_TOKEN = customer['access_token']
+
+    accounts_ids_raw = customer['accounts_ids']
+    if isinstance(accounts_ids_raw, str):
+        raw_ids = [acc.strip() for acc in accounts_ids_raw.split(',') if acc.strip()]
+    else:
+        raw_ids = accounts_ids_raw
+
+    ACCOUNT_IDS = []
+    for account_id in raw_ids:
+        if not account_id.startswith('act_'):
+            ACCOUNT_IDS.append(f'act_{account_id}')
+        else:
+            ACCOUNT_IDS.append(account_id)
 
     FIELDS = [
         'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
         'campaign_name', 'clicks', 'cost_per_action_type', 'ctr',
         'date_start', 'date_stop', 'frequency', 'impressions',
-        'objective', 'reach', 'spend', 'actions', 'object_url'
+        'objective', 'reach', 'spend', 'actions', 'action_values'
     ]
 
     ACTION_FIELDS = [
@@ -46,7 +52,6 @@ def run(customer):
         'onsite_conversion.messaging_conversation_started_7d', 'post_engagement', 'post_reaction'
     ]
 
-    # FIXED HEADER - Garantir que todos os arquivos tenham exatamente o mesmo header
     FIXED_COLUMNS = [
         'date', 'account_name', 'account_id', 'ad_id', 'ad_name', 'adset_name',
         'campaign', 'clicks', 'ctr', 'frequency', 'impressions', 'objective',
@@ -59,21 +64,20 @@ def run(customer):
         'cost_per_action_type_onsite_conversion_lead_grouped',
         'cost_per_action_type_onsite_conversion_messaging_conversation_started_7d',
         'cost_per_action_type_post_engagement', 'cost_per_action_type_post_reaction',
-        'instagram_permalink_url', 'link', 'object_url'
+        'custom_conversion_action_name', 'custom_conversion_action_count', 'custom_conversion_action_value',
+        'instagram_permalink_url', 'link'
     ]
 
     class FacebookAdsCollector:
-        def __init__(self, access_token: str, account_ids: List[str], clickhouse_params: Dict):
+        def __init__(self, access_token: str, account_ids: List[str], bucket_name: str):
             self.access_token = access_token
             self.account_ids = account_ids
             self.base_url = "https://graph.facebook.com/v19.0"
             self.session = None
-            self.clickhouse_params = clickhouse_params
-            self.temp_dir = TEMP_DIR
+            self.bucket = storage.Client.from_service_account_json(SERVICE_ACCOUNT_PATH).bucket(bucket_name)
             self.semaphore = asyncio.Semaphore(500)  # Paralelismo de 500
-            self.processed_files = []
-            self.all_data_frames = []  # Store all DataFrames for combined upload
-            self.clickhouse_client = clickhouse.get_client()
+            self.custom_conversion_names = {}  # Cache para nomes das conversões personalizadas
+            self.validated_accounts = {}  # Cache dos dados das contas validadas
 
         async def get_session(self):
             if not self.session:
@@ -85,12 +89,174 @@ def run(customer):
                 await self.session.close()
                 self.session = None
 
+        async def validate_token_and_accounts(self) -> bool:
+            """Valida o token e verifica se tem acesso às contas especificadas"""
+            print("\n" + "=" * 60)
+            print("VALIDANDO TOKEN E CONTAS DE ANÚNCIOS")
+            print("=" * 60)
+
+            session = await self.get_session()
+            valid_accounts = []
+
+            # Primeiro, verifica se o token está válido testando um endpoint básico
+            try:
+                url = f"{self.base_url}/me"
+                params = {"access_token": self.access_token, "fields": "id,name"}
+
+                async with session.get(url, params=params) as response:
+                    if response.status != 200:
+                        error_data = await response.json()
+                        print(f"❌ ERRO: Token inválido ou expirado")
+                        print(f"   Detalhes: {error_data.get('error', {}).get('message', 'Erro desconhecido')}")
+                        return False
+
+                    user_data = await response.json()
+                    print(
+                        f"✅ Token válido para usuário: {user_data.get('name', 'N/A')} (ID: {user_data.get('id', 'N/A')})")
+
+            except Exception as e:
+                print(f"❌ ERRO ao validar token: {e}")
+                return False
+
+            # Agora verifica a validade/expiração do token
+            try:
+                debug_url = f"{self.base_url}/debug_token"
+                debug_params = {
+                    "input_token": self.access_token,
+                    "access_token": self.access_token
+                }
+
+                async with session.get(debug_url, params=debug_params) as response:
+                    if response.status == 200:
+                        debug_data = await response.json()
+                        token_info = debug_data.get("data", {})
+
+                        # Informações do token
+                        app_id = token_info.get("app_id", "N/A")
+                        user_id = token_info.get("user_id", "N/A")
+                        is_valid = token_info.get("is_valid", False)
+                        expires_at = token_info.get("expires_at")
+
+                        print(f"📋 INFORMAÇÕES DO TOKEN:")
+                        print(f"   │ App ID: {app_id}")
+                        print(f"   │ User ID: {user_id}")
+                        print(f"   │ Status: {'✅ Válido' if is_valid else '❌ Inválido'}")
+
+                        if expires_at:
+                            # Converte timestamp para data legível
+                            expiry_date = datetime.fromtimestamp(expires_at)
+                            days_until_expiry = (expiry_date - datetime.now()).days
+
+                            print(f"   │ Expira em: {expiry_date.strftime('%d/%m/%Y às %H:%M:%S')}")
+
+                            if days_until_expiry > 30:
+                                print(f"   └ Tempo restante: ✅ {days_until_expiry} dias")
+                            elif days_until_expiry > 7:
+                                print(f"   └ Tempo restante: ⚠️  {days_until_expiry} dias (renovar em breve)")
+                            elif days_until_expiry > 0:
+                                print(f"   └ Tempo restante: 🚨 {days_until_expiry} dias (URGENTE: renovar!)")
+                            else:
+                                print(f"   └ Status: ❌ TOKEN EXPIRADO!")
+                                return False
+                        else:
+                            print(f"   └ Tipo: Token sem expiração ou de longa duração")
+
+                        # Verifica scopes/permissões
+                        scopes = token_info.get("scopes", [])
+                        if scopes:
+                            required_scopes = ['ads_read', 'ads_management']
+                            missing_scopes = [scope for scope in required_scopes if scope not in scopes]
+
+                            print(f"   │ Permissões: {', '.join(scopes) if scopes else 'Nenhuma'}")
+                            if missing_scopes:
+                                print(f"   └ ⚠️  Permissões faltando: {', '.join(missing_scopes)}")
+                            else:
+                                print(f"   └ ✅ Todas as permissões necessárias presentes")
+                    else:
+                        print(f"⚠️  Não foi possível verificar detalhes do token (status: {response.status})")
+
+            except Exception as e:
+                print(f"⚠️  Erro ao verificar detalhes do token: {e}")
+                print("   └ Continuando com validação básica...")
+
+            # Agora verifica cada conta de anúncio
+            print(f"\nVerificando acesso às {len(self.account_ids)} contas de anúncios...")
+
+            for account_id in self.account_ids:
+                try:
+                    # Remove 'act_' se existir para normalizar
+                    clean_account_id = account_id.replace('act_', '')
+                    account_id_with_act = f"act_{clean_account_id}"
+
+                    url = f"{self.base_url}/{account_id_with_act}"
+                    params = {
+                        "access_token": self.access_token,
+                        "fields": "id,name,account_status,currency,timezone_name,business"
+                    }
+
+                    async with session.get(url, params=params) as response:
+                        if response.status == 200:
+                            account_data = await response.json()
+
+                            # Armazena dados da conta validada
+                            self.validated_accounts[account_id_with_act] = {
+                                'id': account_data.get('id'),
+                                'name': account_data.get('name'),
+                                'status': account_data.get('account_status'),
+                                'currency': account_data.get('currency'),
+                                'timezone': account_data.get('timezone_name'),
+                                'business': account_data.get('business', {}).get('name') if account_data.get(
+                                    'business') else 'N/A'
+                            }
+
+                            print(f"✅ {account_id_with_act}")
+                            print(f"   │ Nome: {account_data.get('name', 'N/A')}")
+                            print(f"   │ Status: {account_data.get('account_status', 'N/A')}")
+                            print(f"   │ Moeda: {account_data.get('currency', 'N/A')}")
+                            print(f"   │ Fuso: {account_data.get('timezone_name', 'N/A')}")
+                            print(
+                                f"   └ Business: {account_data.get('business', {}).get('name', 'N/A') if account_data.get('business') else 'N/A'}")
+
+                            valid_accounts.append(account_id_with_act)
+
+                        else:
+                            error_data = await response.json()
+                            error_msg = error_data.get('error', {}).get('message', 'Erro desconhecido')
+                            print(f"❌ {account_id_with_act}: ACESSO NEGADO")
+                            print(f"   └ Erro: {error_msg}")
+
+                            # Códigos de erro comuns
+                            error_code = error_data.get('error', {}).get('code')
+                            if error_code == 190:
+                                print(f"   └ Sugestão: Token expirado ou inválido")
+                            elif error_code == 200:
+                                print(f"   └ Sugestão: Sem permissão para esta conta")
+                            elif error_code == 100:
+                                print(f"   └ Sugestão: Conta não encontrada ou ID inválido")
+
+                except Exception as e:
+                    print(f"❌ {account_id}: ERRO DE CONEXÃO")
+                    print(f"   └ Detalhes: {e}")
+
+            # Atualiza a lista de account_ids apenas com as contas válidas
+            if valid_accounts:
+                self.account_ids = valid_accounts
+                print(f"\n✅ VALIDAÇÃO CONCLUÍDA")
+                print(f"   └ {len(valid_accounts)} de {len(self.account_ids)} contas acessíveis")
+                print("=" * 60)
+                return True
+            else:
+                print(f"\n❌ FALHA NA VALIDAÇÃO")
+                print(f"   └ Nenhuma conta acessível com o token fornecido")
+                print("=" * 60)
+                return False
+
         async def get_custom_conversion_names(self) -> Dict[str, str]:
             """Consulta os nomes das conversões personalizadas uma única vez e armazena em cache"""
             print("  ├─ Carregando nomes das conversões personalizadas...")
             session = await self.get_session()
             names = {}
-            
+
             for account_id in self.account_ids:
                 clean_account_id = account_id.replace('act_', '')
                 url = f"{self.base_url}/act_{clean_account_id}/customconversions"
@@ -99,7 +265,7 @@ def run(customer):
                     "fields": "id,name",
                     "limit": 200
                 }
-                
+
                 try:
                     async with self.semaphore:
                         async with session.get(url, params=params) as response:
@@ -107,83 +273,16 @@ def run(customer):
                                 data = await response.json()
                                 for item in data.get("data", []):
                                     names[item["id"]] = item["name"]
-                                print(f"     └─ Account {account_id}: {len(data.get('data', []))} conversões personalizadas encontradas")
+                                print(
+                                    f"     └─ Account {account_id}: {len(data.get('data', []))} conversões personalizadas encontradas")
                             else:
-                                print(f"     └─ Account {account_id}: Erro {response.status} ao buscar conversões personalizadas")
+                                print(
+                                    f"     └─ Account {account_id}: Erro {response.status} ao buscar conversões personalizadas")
                 except Exception as e:
                     print(f"     └─ Account {account_id}: Erro ao buscar conversões personalizadas: {e}")
-            
+
             print(f"  └─ Total de conversões personalizadas carregadas: {len(names)}")
             return names
-
-        async def validate_credentials(self) -> bool:
-            """
-            Valida as credenciais antes de iniciar a coleta
-            """
-            print("\n" + "="*60)
-            print("VALIDANDO CREDENCIAIS")
-            print("="*60)
-            
-            session = await self.get_session()
-            
-            # 1. Testar token básico
-            url = f"{self.base_url}/me"
-            params = {"access_token": self.access_token, "fields": "id,name"}
-            
-            async with session.get(url, params=params) as response:
-                if response.status != 200:
-                    error_data = await response.json()
-                    msg = f"[ERRO] Token inválido: {error_data}"
-                    raise Exception(msg)
-                
-                user_data = await response.json()
-                print(f"[OK] Token válido para: {user_data.get('name', 'N/A')}")
-            
-            # 2. Testar acesso às contas
-            valid_accounts = 0
-            for account_id in self.account_ids:
-                url = f"{self.base_url}/{account_id}"
-                params = {"access_token": self.access_token, "fields": "account_id,name"}
-                
-                async with session.get(url, params=params) as response:
-                    if response.status == 200:
-                        account_data = await response.json()
-                        print(f"[OK] Acesso à conta: {account_data.get('name', account_id)}")
-                        valid_accounts += 1
-                    else:
-                        error_data = await response.json()
-                        msg = f"[ERRO] Sem acesso à conta {account_id}: {error_data}"
-                        print(msg)
-                        raise Exception(msg)
-            
-            # 3. Testar insights
-            if valid_accounts > 0:
-                test_date = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
-                url = f"{self.base_url}/{self.account_ids[0]}/insights"
-                params = {
-                    "access_token": self.access_token,
-                    "fields": "spend,impressions",
-                    "time_range": json.dumps({"since": test_date, "until": test_date}),
-                    "level": "account",
-                    "limit": 1
-                }
-                
-                async with session.get(url, params=params) as response:
-                    if response.status == 200:
-                        print(f"[OK] Acesso a insights confirmado")
-                    else:
-                        error_data = await response.json()
-                        msg = f"[ERRO] Sem acesso a insights: {error_data}"
-                        print(msg)
-                        raise Exception(msg)
-            
-            print("="*60)
-            if valid_accounts == len(self.account_ids):
-                print("[SUCESSO] Todas as validações passaram!")
-                return True
-            else:
-                print(f"[ERRO] Apenas {valid_accounts}/{len(self.account_ids)} contas válidas")
-                return False
 
         async def get_ad_details_with_demographics(self, ad_id: str, date_str: str) -> List[Dict]:
             """Get detailed metrics for ad_id broken down by age and gender"""
@@ -229,7 +328,6 @@ def run(customer):
 
             except Exception as e:
                 print(f"    └─ Ad {ad_id}: Error - {e}")
-                raise e
 
             return all_data
 
@@ -281,7 +379,6 @@ def run(customer):
             except Exception as e:
                 print(f"    └─ Error: {e}")
                 print(f"       Full traceback: {traceback.format_exc()}")
-                raise e
 
             unique_ads = list(set(ad_ids))
             print(f"  └─ Total unique active ads: {len(unique_ads)}")
@@ -296,7 +393,8 @@ def run(customer):
             all_data = []
 
             for account_id in self.account_ids:
-                print(f"\nAccount: {account_id}")
+                account_info = self.validated_accounts.get(account_id, {})
+                print(f"\nAccount: {account_id} ({account_info.get('name', 'N/A')})")
 
                 # Step 1: Get all active ads
                 ad_ids = await self.get_active_ads(account_id, date_str)
@@ -348,7 +446,7 @@ def run(customer):
                 custom_conversion_name = None
                 custom_conversion_count = 0
                 custom_conversion_value = 0
-                
+
                 # Extract custom conversions - only the first one found
                 for action in item.get("actions", []):
                     action_type = action.get("action_type", "")
@@ -356,7 +454,7 @@ def run(customer):
                         custom_id = action_type.split(".")[-1]
                         custom_conversion_name = self.custom_conversion_names.get(custom_id, f"custom_{custom_id}")
                         custom_conversion_count = float(action.get("value", 0))
-                        
+
                         # Try to find corresponding value
                         for val in item.get("action_values", []):
                             if val.get("action_type") == action_type:
@@ -386,8 +484,7 @@ def run(customer):
                     "custom_conversion_action_count": custom_conversion_count,
                     "custom_conversion_action_value": custom_conversion_value,
                     "instagram_permalink_url": None,
-                    "link": None,
-                    "object_url": item.get("object_url")
+                    "link": None
                 }
 
                 # Extract actions
@@ -422,8 +519,7 @@ def run(customer):
                     "custom_conversion_action_count": "sum",
                     "custom_conversion_action_value": "sum",
                     "instagram_permalink_url": "first",
-                    "link": "first",
-                    "object_url": "first"
+                    "link": "first"
                 }
 
                 # Add aggregation rules for action fields
@@ -461,9 +557,10 @@ def run(customer):
                     df[col] = None
 
             # Normalize column types
-            int_cols = ["clicks", "impressions", "reach"] + [f"actions_{a.replace('.', '_')}" for a in ACTION_FIELDS]
-            float_cols = ["frequency", "ctr", "totalcost"] + [f"cost_per_action_type_{a.replace('.', '_')}" for a in
-                                                              ACTION_FIELDS]
+            int_cols = ["clicks", "impressions", "reach", "custom_conversion_action_count"] + [
+                f"actions_{a.replace('.', '_')}" for a in ACTION_FIELDS]
+            float_cols = ["frequency", "ctr", "totalcost", "custom_conversion_action_value"] + [
+                f"cost_per_action_type_{a.replace('.', '_')}" for a in ACTION_FIELDS]
 
             for col in int_cols:
                 if col in df.columns:
@@ -478,8 +575,8 @@ def run(customer):
 
             return df
 
-        async def save_to_temp_file(self, df: pd.DataFrame, date_str: str) -> str:
-            """Save data to a temporary file with fixed columns"""
+        async def save_to_gcs(self, df: pd.DataFrame, date_str: str):
+            """Save data to Google Cloud Storage with fixed columns - SEMPRE SOBRESCREVE"""
             if df.empty:
                 print(f"WARNING: No data to save for {date_str}")
                 # Still save an empty file with fixed columns
@@ -489,155 +586,60 @@ def run(customer):
             df = self._ensure_fixed_columns(df)
 
             # Use facebook_ads_{date} format for filename
-            filename = f"facebook_ads_{date_str}.csv"
-            filepath = self.temp_dir / filename
-            
-            print(f"Saving to temporary file: {filepath}")
-            df.to_csv(filepath, index=False)
-            self.processed_files.append(filepath)
-            print(f"Successfully saved {len(df)} records to {filepath}")
-            
-            return str(filepath)
-        
-        def upload_all_data_to_clickhouse(self):
-            """Upload all collected data to ClickHouse in a single operation"""
-            if not self.all_data_frames:
-                print("WARNING: No data to upload to ClickHouse")
-                return
-            
-            # Combine all DataFrames into one
-            combined_df = pd.concat(self.all_data_frames, ignore_index=True)
-            combined_df['date'] = pd.to_datetime(combined_df['date'])
-            combined_df['conta_bm'] = conta_bm
-            if combined_df.empty:
-                print("WARNING: Combined DataFrame is empty, nothing to upload")
-                return
-            
-            print(f"Uploading combined data to ClickHouse ({len(combined_df)} rows)")
-            
-            # Create a client with the provided connection parameters
-            try:
-                # Get database name from connection params or use default
-                database = self.clickhouse_params.get('database', 'default')
-                table_name = self.clickhouse_params.get('table_name', 'raw_facebook_ads')
-                client = self.clickhouse_client
-                
-                # Generate CREATE TABLE query
-                create_table_query = clickhouse.get_create_table_query(combined_df, database, table_name)
-                
-                # Execute CREATE TABLE query
-                client.command(create_table_query)
-                print(f"Created or verified table: {database}.{table_name}")
-                # Insert data
-                result = clickhouse.insert_df_to_clickhouse(combined_df, database, table_name, client, False)
-                if result:
-                    print(f"Successfully uploaded {len(combined_df)} records to ClickHouse table {database}.{table_name}")
-                else:
-                    print(f"Failed to upload data to ClickHouse")
-            
-            except Exception as e:
-                print(f"Error uploading to ClickHouse: {e}")
-                traceback.print_exc()
+            blob_name = f"facebook_ads_{date_str}.csv"
+            blob = self.bucket.blob(blob_name)
 
-        def is_date_processed(self, date_str: str) -> bool:
-            """Check if date is already processed by checking ClickHouse"""
-            try:
-                database = self.clickhouse_params.get('database', 'default')
-                table_name = self.clickhouse_params.get('table_name', 'raw_facebook_ads')
-                client = self.clickhouse_client
-                
-                # Check if table exists
-                check_table_query = f"EXISTS TABLE {database}.{table_name}"
-                table_exists = client.command(check_table_query)
-                
-                if not table_exists:
-                    return False
-                
-                # Check if data for this date exists
-                check_query = f"SELECT count() FROM {database}.{table_name} WHERE date = '{date_str}' and conta_bm='{conta_bm}'"
-                result = client.query(check_query)
-                count = result.result_rows[0][0]
-                
-                return count > 0
-            except Exception as e:
-                print(f"Error checking if date is processed: {e}")
-                return False
+            print(f"Saving to GCS (OVERWRITING): {blob_name}")
+            csv_data = df.to_csv(index=False).encode('utf-8')
+            blob.upload_from_string(csv_data, content_type='text/csv')
+            print(f"Successfully saved {len(df)} records")
 
         def get_dates_to_process(self) -> List[str]:
-            """Get list of dates to process (últimos 14 dias excluindo hoje)"""
-            print(f"\nChecking dates for the last 14 days (excluding today)...")
-
-            # Calcula os últimos 14 dias, excluindo hoje
-            today = datetime.now().date()
-            start = today - timedelta(days=14)  # 14 dias atrás
-            end = today - timedelta(days=1)  # ontem
-
-            print(f"Date range: {start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}")
+            """Get list of dates to process - SEMPRE OS ÚLTIMOS 14 DIAS"""
+            print(f"\nProcessing last 14 days from {HISTORICAL_START_DATE} to yesterday...")
+            start = datetime.strptime(HISTORICAL_START_DATE, "%Y-%m-%d").date()
+            yesterday = datetime.now().date() - timedelta(days=1)  # Yesterday, not today
 
             dates = []
             current = start
-            while current <= end:
+            while current <= yesterday:
                 date_str = current.strftime("%Y-%m-%d")
-                if not self.is_date_processed(date_str):
-                    dates.append(date_str)
-                    print(f"   └─ {date_str}: Not processed [X]")
-                else:
-                    print(f"   └─ {date_str}: Already processed [✓]")
+                dates.append(date_str)
+                print(f"   └─ {date_str}: To be processed/updated")
                 current += timedelta(days=1)
 
             return dates
-        
-        def cleanup_temp_files(self):
-            """Clean up temporary files and directory"""
-            print(f"Cleaning up temporary files...")
-            try:
-                # Remove the temporary directory and all its contents
-                if self.temp_dir.exists():
-                    shutil.rmtree(self.temp_dir)
-                    print(f"Removed temporary directory: {self.temp_dir}")
-            except Exception as e:
-                print(f"Error cleaning up temporary files: {e}")
 
         async def run(self):
             """Execute collection process"""
             try:
-                # VALIDAÇÃO ANTES DE COMEÇAR
-                if not await self.validate_credentials():
-                    print("\n[ERRO CRITICO] Validação falhou. Interrompendo execução.")
-                    print("Verifique:")
-                    print("1. ACCESS_TOKEN está correto e não expirou")
-                    print("2. ACCOUNT_IDS estão corretos")
-                    print("3. Permissões do app incluem 'ads_read'")
+                # PRIMEIRO: Valida token e contas
+                if not await self.validate_token_and_accounts():
+                    print("\n❌ FALHA NA VALIDAÇÃO - Processo cancelado")
                     return
+
+                # Load custom conversion names at the beginning
+                self.custom_conversion_names = await self.get_custom_conversion_names()
 
                 dates = self.get_dates_to_process()
                 if not dates:
-                    print("\nAll dates already processed. Nothing to do!")
+                    print("\nNo dates to process!")
                     return
 
-                print(f"\nStarting collection for {len(dates)} dates")
+                print(f"\nStarting UPDATE collection for {len(dates)} dates")
                 print(f"Date range: {dates[0]} to {dates[-1]}")
+                print("⚠️  MODO UPDATE: Arquivos existentes serão SOBRESCRITOS")
                 print("=" * 40)
 
                 total_start_time = time.time()
 
-                # Process all dates and collect data
                 for i, date_str in enumerate(dates, 1):
                     print(f"\nProcessing ({i}/{len(dates)}): {date_str}")
                     df = await self.process_date(date_str)
-                    
-                    # Save to temp file for reference
-                    await self.save_to_temp_file(df, date_str)
-                    
-                    # Add to the list of DataFrames for combined upload
-                    if not df.empty:
-                        self.all_data_frames.append(df)
-
-                # Upload all collected data at once
-                self.upload_all_data_to_clickhouse()
+                    await self.save_to_gcs(df, date_str)
 
                 total_elapsed = time.time() - total_start_time
-                print(f"\nCollection Complete!")
+                print(f"\nUPDATE Collection Complete!")
                 print(f"Total execution time: {total_elapsed:.2f} seconds")
                 print(f"Average time per date: {total_elapsed / len(dates):.2f} seconds")
                 print("=" * 40)
@@ -645,23 +647,23 @@ def run(customer):
             except Exception as e:
                 print(f"\nCritical error: {e}")
                 traceback.print_exc()
-                raise e
             finally:
                 await self.close_session()
-                self.cleanup_temp_files()
 
     async def main():
         print("\n" + "=" * 60)
-        print("FACEBOOK ADS COLLECTOR - ÚLTIMOS 14 DIAS COM VALIDAÇÃO")
+        print("FACEBOOK ADS COLLECTOR - UPDATE MODE (LAST 14 DAYS)")
         print("=" * 60)
-        print(f"Accounts: {', '.join(API_ACCOUNT_IDS)}")
-        print(f"Collection: Last 14 days (excluding today)")
+        print(f"Accounts to validate: {', '.join(ACCOUNT_IDS)}")
+        print(f"Bucket: {BUCKET_NAME}")
+        print(f"Update Period: Last 14 days (from {HISTORICAL_START_DATE})")
+        print("⚠️  MODO UPDATE: Sobrescreverá arquivos existentes")
         print("=" * 60)
 
         collector = FacebookAdsCollector(
-            access_token=API_ACCESS_TOKEN,
-            account_ids=API_ACCOUNT_IDS,
-            clickhouse_params=customer['clickhouse_connection_params']
+            access_token=ACCESS_TOKEN,
+            account_ids=ACCOUNT_IDS,
+            bucket_name=BUCKET_NAME
         )
 
         await collector.run()
@@ -672,7 +674,7 @@ def run(customer):
 
 def get_extraction_tasks():
     """
-    Get the list of data extraction tasks for Facebook Ads.
+    Get the list of data extraction tasks for Facebook Ads - UPDATE VERSION.
 
     Returns:
         list: List of task configurations
