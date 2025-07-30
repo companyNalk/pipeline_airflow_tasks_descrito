@@ -68,27 +68,226 @@ def make_request_with_retry(func, max_retries=10, base_delay=1, max_delay=300):
     return response
 
 
+def run_conversions(customer):
+    """
+    Extract conversion data from RD Marketing API.
+    """
+    print(customer)
+    import requests
+    import pandas as pd
+    import datetime
+
+    # Configurações Iniciais
+    CLIENT_ID = customer['client_id']
+    CLIENT_SECRET = customer['client_secret']
+    TOKEN_URL = 'https://api.rd.services/auth/token'
+    CONVERSION_STATS_URL = 'https://api.rd.services/platform/analytics/conversions'
+    refresh_token = customer['refresh_token']
+    BUCKET_NAME = customer['bucket_name']
+    SAVE_DIR = customer['save_dir_conversoes']
+
+    def get_access_token():
+        """Obtém o token de acesso da API RD Station com retry."""
+
+        def make_token_request():
+            data = {
+                'client_id': CLIENT_ID,
+                'client_secret': CLIENT_SECRET,
+                'refresh_token': refresh_token,
+                'grant_type': 'refresh_token'
+            }
+            return requests.post(TOKEN_URL, data=data)
+
+        response = make_request_with_retry(make_token_request)
+        return response.json()['access_token']
+
+    def fetch_conversion_stats(start_date, end_date, access_token):
+        """Busca estatísticas de conversões da API RD Station com retry."""
+
+        def make_conversion_request():
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
+            }
+            params = {
+                'start_date': start_date,
+                'end_date': end_date
+            }
+            return requests.get(CONVERSION_STATS_URL, headers=headers, params=params)
+
+        response = make_request_with_retry(make_conversion_request)
+        return response.json()
+
+    def save_to_csv_and_upload(data, bucket_name, destination_blob_name):
+        """Salva os dados em um arquivo CSV e faz o upload para o GCS."""
+        if 'conversions' in data:
+            df = pd.json_normalize(data['conversions'])
+            if not df.empty:
+                credentials = gcs.load_credentials_from_env()
+                local_file_path = f"/tmp/{customer['project_id']}.rdmkt.run_conversions.csv"
+                df.to_csv(local_file_path, index=False)
+                gcs.write_file_to_gcs(
+                    bucket_name=bucket_name,
+                    local_file_path=local_file_path,
+                    destination_name=destination_blob_name,
+                    credentials=credentials
+                )
+                print(f"Arquivo salvo em no GCS: {destination_blob_name}.")
+            else:
+                print("DataFrame está vazio. Nenhum dado para salvar.")
+        else:
+            print("Nenhum dado para salvar.")
+
+    def main():
+        """Função principal para execução local."""
+        access_token = get_access_token()
+        # Coletar dados dos últimos 40 dias
+        end_date = datetime.date.today() - datetime.timedelta(days=1)
+        start_date = end_date - datetime.timedelta(days=40)
+
+        current_date = start_date
+        while current_date <= end_date:
+            next_date = current_date + datetime.timedelta(days=1)
+            date_str = current_date.strftime('%Y-%m-%d')
+            file_name = f"dados_conversoes_{current_date.strftime('%d_%m_%Y')}.csv"
+            destination_blob_name = f"{SAVE_DIR}/{file_name}"
+
+            print(f"Coletando dados de {date_str}")
+
+            # Adiciona um pequeno delay entre requisições para evitar rate limiting
+            time.sleep(0.5)
+
+            conversion_stats = fetch_conversion_stats(date_str, date_str, access_token)
+            save_to_csv_and_upload(conversion_stats, BUCKET_NAME, destination_blob_name)
+
+            current_date = next_date
+
+        return 'Data collection and upload completed'
+
+    main()
+
+
+def run_emails(customer):
+    """
+    Extract email data from RD Marketing API.
+    """
+    import requests
+    import pandas as pd
+    import datetime
+
+    # Configurações Iniciais
+    CLIENT_ID = customer['client_id']
+    CLIENT_SECRET = customer['client_secret']
+    TOKEN_URL = 'https://api.rd.services/auth/token'
+    EMAIL_STATS_URL = 'https://api.rd.services/platform/analytics/emails'
+    refresh_token = customer['refresh_token']
+    BUCKET_NAME = customer['bucket_name']
+    SAVE_DIR = customer['save_dir_email']
+
+    def get_access_token():
+        """Obtém o token de acesso da API RD Station com retry."""
+
+        def make_token_request():
+            data = {
+                'client_id': CLIENT_ID,
+                'client_secret': CLIENT_SECRET,
+                'refresh_token': refresh_token,
+                'grant_type': 'refresh_token'
+            }
+            return requests.post(TOKEN_URL, data=data)
+
+        response = make_request_with_retry(make_token_request)
+        return response.json()['access_token']
+
+    def fetch_email_stats(start_date, end_date, access_token):
+        """Busca estatísticas de e-mails da API RD Station com retry."""
+
+        def make_email_request():
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
+            }
+            params = {
+                'start_date': start_date,
+                'end_date': end_date
+            }
+            return requests.get(EMAIL_STATS_URL, headers=headers, params=params)
+
+        response = make_request_with_retry(make_email_request)
+        return response.json()
+
+    def save_to_csv_and_upload(data, bucket_name, destination_blob_name):
+        """Salva os dados em um arquivo CSV e faz o upload para o GCS."""
+        try:
+            if 'emails' in data:
+                df = pd.json_normalize(data['emails'])
+                if not df.empty:
+                    print(f"Arquivo salvo em {destination_blob_name}.")
+                    credentials = gcs.load_credentials_from_env()
+                    local_file_path = f"/tmp/{customer['project_id']}.rdmkt.run_emails.csv"
+                    df.to_csv(local_file_path, index=False)
+                    gcs.write_file_to_gcs(
+                        bucket_name=bucket_name,
+                        local_file_path=local_file_path,
+                        destination_name=destination_blob_name,
+                        credentials=credentials
+                    )
+                else:
+                    print("DataFrame está vazio. Nenhum dado para salvar.")
+            else:
+                print("Nenhum dado para salvar.")
+        except Exception as e:
+            print(f"Erro ao salvar dados no GCS: {str(e)}")
+            raise
+
+    def main():
+        """Função principal para execução local."""
+        access_token = get_access_token()
+        # Coletar dados dos últimos 43 dias
+        end_date = datetime.date.today() - datetime.timedelta(days=1)
+        start_date = end_date - datetime.timedelta(days=43)
+
+        current_date = start_date
+        while current_date <= end_date:
+            next_date = current_date + datetime.timedelta(days=1)
+            date_str = current_date.strftime('%Y-%m-%d')
+            file_name = f"dados_emails_{current_date.strftime('%d_%m_%Y')}.csv"
+            destination_blob_name = f"{SAVE_DIR}/{file_name}"
+
+            print(f"Coletando dados de {date_str}")
+
+            # Adiciona um pequeno delay entre requisições para evitar rate limiting
+            time.sleep(0.5)
+
+            email_stats = fetch_email_stats(date_str, date_str, access_token)
+            save_to_csv_and_upload(email_stats, BUCKET_NAME, destination_blob_name)
+
+            current_date = next_date
+
+    main()
+
+
 def run_webhook_register(customer):
     import requests
 
     # Configurações Iniciais
     BASE_URL = 'https://webhook-rd.nalk.com.br'
-    X_API_KEY = customer['x_api_key']
+    API_KEY = customer['x_api_key']
 
     # Dados da empresa
-    NAME = customer['name']
-    ALIAS = customer['alias']
-    COMPANY_ID = customer['company_id']
-    PROJECT_ID = customer['project_id']
-    BUCKET_NAME = customer['bucket_name']
+    name = customer['name']
+    alias = customer['alias']
+    company_id = customer['company_id']
+    project_id = customer['project_id']
+    bucket_name = customer['bucket_name']
 
     # Dados RD Station
-    RD_CLIENT_ID = customer['client_id']
-    RD_CLIENT_SECRET = customer['client_secret']
-    RD_REFRESH_TOKEN = customer['refresh_token']
+    rd_client_id = customer['client_id']
+    rd_client_secret = customer['client_secret']
+    rd_refresh_token = customer['refresh_token']
 
     headers = {
-        'X-API-KEY': X_API_KEY,
+        'X-API-KEY': API_KEY,
         'accept': 'application/json',
         'Content-Type': 'application/json'
     }
@@ -98,7 +297,7 @@ def run_webhook_register(customer):
 
         def make_check_request():
             url = f"{BASE_URL}/api/v1/company?alias={alias}"
-            return requests.get(url, headers={'X-API-KEY': X_API_KEY, 'accept': 'application/json'})
+            return requests.get(url, headers={'X-API-KEY': API_KEY, 'accept': 'application/json'})
 
         try:
             response = make_request_with_retry(make_check_request)
@@ -115,11 +314,11 @@ def run_webhook_register(customer):
         def make_create_request():
             url = f"{BASE_URL}/api/v1/company"
             data = {
-                'name': NAME,
-                'alias': ALIAS,
-                'google_company_id': COMPANY_ID,
-                'google_project_id': PROJECT_ID,
-                'google_bucket_name': BUCKET_NAME
+                'name': name,
+                'alias': alias,
+                'google_company_id': company_id,
+                'google_project_id': project_id,
+                'google_bucket_name': bucket_name
             }
             return requests.post(url, headers=headers, json=data)
 
@@ -132,11 +331,11 @@ def run_webhook_register(customer):
         def make_webhook_request():
             url = f"{BASE_URL}/api/v1/rd-station/register-webhook/{alias}"
             webhook_headers = {
-                'X-API-KEY': X_API_KEY,
+                'X-API-KEY': API_KEY,
                 'accept': 'application/json',
-                'rd-client-id': RD_CLIENT_ID,
-                'rd-client-secret': RD_CLIENT_SECRET,
-                'rd-refresh-token': RD_REFRESH_TOKEN,
+                'rd-client-id': rd_client_id,
+                'rd-client-secret': rd_client_secret,
+                'rd-refresh-token': rd_refresh_token,
                 'Content-Type': 'application/json'
             }
             data = {
@@ -152,18 +351,18 @@ def run_webhook_register(customer):
 
     def main():
         """Função principal para registro de webhooks."""
-        ALIAS = customer['alias']
-        print(f"Verificando empresa: {ALIAS}")
+        alias = customer['alias']
+        print(f"Verificando empresa: {alias}")
 
         # Verifica se a empresa existe
-        existed_alias = check_company_exists(ALIAS)
+        existed_alias = check_company_exists(alias)
 
         if not existed_alias:
             print("Empresa não encontrada. Criando nova empresa...")
             alias = create_company()
             print(f"Empresa criada com ID: {alias}")
         else:
-            print(f"Empresa encontrada com ID: {ALIAS}")
+            print(f"Empresa encontrada com ID: {alias}")
 
         # Registra os webhooks
         event_types = ['WEBHOOK.CONVERTED', 'WEBHOOK.MARKED_OPPORTUNITY']
@@ -184,14 +383,15 @@ def run_webhook_leads(customer):
 
     # Configurações Iniciais
     BASE_URL = 'https://webhook-rd.nalk.com.br'
-    X_API_KEY = customer['x_api_key']
+    API_KEY = customer['x_api_key']
     BUCKET_NAME = customer['bucket_name']
+    SAVE_DIR = customer.get('save_dir_webhook', 'webhook_users')
 
     # Dados da empresa
-    ALIAS = customer['alias']
+    alias = customer['alias']
 
     headers = {
-        'X-API-KEY': X_API_KEY,
+        'X-API-KEY': API_KEY,
         'accept': 'application/json'
     }
 
@@ -226,7 +426,7 @@ def run_webhook_leads(customer):
         def make_leads_request():
             url = f"{BASE_URL}/api/v1/raw-data/by-company"
             params = {
-                'company_alias': ALIAS,
+                'company_alias': alias,
                 'limit': limit,
                 'offset': offset
             }
@@ -337,7 +537,7 @@ def run_webhook_leads(customer):
         """
         Função principal para extração de leads do webhook.
         """
-        print(f"Iniciando extração de leads do webhook para empresa: {ALIAS}")
+        print(f"Iniciando extração de leads do webhook para empresa: {alias}")
 
         # Busca todos os leads
         all_leads = get_all_webhook_leads()
@@ -348,7 +548,7 @@ def run_webhook_leads(customer):
 
         # Nome do arquivo
         file_name = f"webhook_users.csv"
-        destination_blob_name = f"webhook_users/{file_name}"
+        destination_blob_name = f"{SAVE_DIR}/{file_name}"
 
         # Salva e faz upload
         save_leads_to_csv_and_upload(all_leads, BUCKET_NAME, destination_blob_name)
@@ -366,6 +566,14 @@ def get_extraction_tasks():
         list: List of task configurations
     """
     return [
+        {
+            'task_id': 'run_conversions',
+            'python_callable': run_conversions
+        },
+        {
+            'task_id': 'run_emails',
+            'python_callable': run_emails
+        },
         {
             'task_id': 'run_webhook_register',
             'python_callable': run_webhook_register
