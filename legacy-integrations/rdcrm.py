@@ -235,7 +235,7 @@ def run(customer):
         """Define uma data de início fixa de 01/07/2024"""
         print("Usando data fixa de 01/07/2024 como ponto de partida para a coleta")
         # Retorna a data fixa de 01/07/2024
-        return datetime(2024, 7, 1)
+        return datetime(2022, 1, 1)
 
     def fetch_all_deals_for_period(start_date, end_date):
         """Busca as negociações para um período específico"""
