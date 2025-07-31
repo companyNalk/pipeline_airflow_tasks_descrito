@@ -360,7 +360,7 @@ def run(customer):
         def get_earliest_date():
             """Define uma data de início fixa de 01/07/2024"""
             logger.info("Usando data fixa de 01/07/2024 como ponto de partida")
-            return datetime(2024, 7, 1)
+            return datetime(2022, 1, 1)
 
         def fetch_all_deals_for_period_safe(start_date, end_date):
             """Busca negociações com tratamento robusto de erro."""
