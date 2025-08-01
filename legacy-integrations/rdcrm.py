@@ -987,6 +987,164 @@ def run_contacts(customer):
     main()
 
 
+def run_teams_data(customer):
+    import logging
+    import time
+    import tracemalloc
+    import pathlib
+    import os
+    import pandas as pd
+    from pandas import json_normalize
+    import requests
+    from google.cloud import storage
+
+    # Configuração de logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # Configuração da chave de serviço
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    # Configurações
+    TOKEN = customer['token']
+    BUCKET_NAME = customer['bucket_name']
+    FOLDER_NAME = "equipes"
+
+    def fetch_teams_data(token, base_url='https://crm.rdstation.com/api/v1/'):
+        """
+        Fetch teams data from RDCRM API.
+
+        Args:
+            token (str): RDCRM API token
+            base_url (str): Base URL for RDCRM API
+
+        Returns:
+            dict: JSON response from API or None if request fails
+        """
+        url = f"{base_url}teams?token={token}"
+        headers = {"accept": "application/json"}
+
+        logging.info(f"Fetching teams data from {url}")
+        start_time = time.time()
+        tracemalloc.start()
+
+        try:
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+
+            logging.info(f"Successfully fetched teams data in {time.time() - start_time:.2f} seconds")
+            memory_used = tracemalloc.get_traced_memory()[0] / 1024 / 1024
+            logging.info(f"Memory used: {memory_used:.2f} MB")
+
+            return response.json()
+
+        except requests.RequestException as e:
+            logging.error(f"Failed to fetch teams data: {str(e)}")
+            return None
+        finally:
+            tracemalloc.stop()
+
+    def normalize_data(data):
+        """
+        Normalize teams data into separate DataFrames.
+
+        Args:
+            data (dict): Raw teams data from API
+
+        Returns:
+            tuple: (teams_df, team_users_df, user_ids_df) DataFrames
+        """
+        logging.info("Normalizing teams data")
+        start_time = time.time()
+
+        try:
+            teams = data.get('teams', [])
+            teams_df = json_normalize(teams)
+
+            team_users_list = []
+            user_ids_list = []
+
+            for team in teams:
+                team_id = team['id']
+                for user in team.get('team_users', []):
+                    user['team_id'] = team_id
+                    team_users_list.append(user)
+                for user_id in team.get('user_ids', []):
+                    user_ids_list.append({'team_id': team_id, 'user_id': user_id})
+
+            team_users_df = pd.DataFrame(team_users_list)
+            user_ids_df = pd.DataFrame(user_ids_list)
+
+            teams_df['team_users'] = teams_df['team_users'].apply(
+                lambda x: ', '.join([f"{user['name']} ({user['email']})" for user in x]) if isinstance(x, list) else ''
+            )
+            teams_df['user_ids'] = teams_df['user_ids'].apply(
+                lambda x: ', '.join(x) if isinstance(x, list) else ''
+            )
+
+            logging.info(f"Data normalized in {time.time() - start_time:.2f} seconds")
+            return teams_df, team_users_df, user_ids_df
+
+        except Exception as e:
+            logging.error(f"Error normalizing data: {str(e)}")
+            raise
+
+    def upload_to_gcs(bucket_name, folder_name, file_name, data_frame):
+        """
+        Upload DataFrame to Google Cloud Storage as CSV.
+
+        Args:
+            bucket_name (str): GCS bucket name
+            folder_name (str): GCS folder path
+            file_name (str): Name of the file to upload
+            data_frame (pd.DataFrame): DataFrame to upload
+        """
+        logging.info(f"Uploading {file_name} to GCS bucket {bucket_name}/{folder_name}")
+        start_time = time.time()
+
+        try:
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(f"{folder_name}/{file_name}")
+
+            csv_data = data_frame.to_csv(index=False, sep=',', quoting=1)
+            blob.upload_from_string(csv_data, 'text/csv')
+
+            logging.info(f"Successfully uploaded {file_name} in {time.time() - start_time:.2f} seconds")
+
+        except Exception as e:
+            logging.error(f"Failed to upload {file_name}: {str(e)}")
+            raise
+
+    def main():
+
+        logging.info(f"Starting teams data extraction for customer with bucket {BUCKET_NAME}")
+
+        # Fetch and process data
+        data = fetch_teams_data(TOKEN)
+
+        if data:
+            try:
+                teams_df, team_users_df, user_ids_df = normalize_data(data)
+
+                # Upload to GCS
+                upload_to_gcs(BUCKET_NAME, FOLDER_NAME, "teams.csv", teams_df)
+                upload_to_gcs(BUCKET_NAME, FOLDER_NAME, "team_users.csv", team_users_df)
+                upload_to_gcs(BUCKET_NAME, FOLDER_NAME, "user_ids.csv", user_ids_df)
+
+                logging.info("Teams data extraction and upload completed successfully")
+
+            except Exception as e:
+                logging.error(f"Error processing teams data: {str(e)}")
+                raise
+        else:
+            logging.error("No data retrieved from API")
+            raise ValueError("Failed to retrieve teams data from API")
+
+    # START
+    main()
+
+
 def get_extraction_tasks():
     """
     Get the list of data extraction tasks for RDCRM.
@@ -1002,5 +1160,10 @@ def get_extraction_tasks():
         {
             'task_id': 'run_contacts',
             'python_callable': run_contacts
+        }
+        ,
+        {
+            'task_id': 'run_teams_data',
+            'python_callable': run_teams_data
         }
     ]
