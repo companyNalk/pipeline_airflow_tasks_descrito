@@ -109,8 +109,8 @@ def run(customer):
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
                 tentativas_sem_dados += 1
-                pagina += 1
                 logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
                 continue
 
             dados = response.json()
@@ -207,7 +207,9 @@ def run(customer):
         with requests.Session() as session:
             session.headers.update({'Content-type': 'application/json'})
             logger.info("Iniciando coleta de pedidos tipo N")
-            pagina, total_ids, paginas_com_erro = 1, 0, []
+            pagina = 1
+            total_ids = 0
+            paginas_com_erro = []
 
             while tentativas_sem_dados < 10:
                 payload = {
@@ -224,9 +226,10 @@ def run(customer):
                 if not resp:
                     tentativas_sem_dados += 1
                     paginas_com_erro.append(pagina)
-                    pagina += 1
                     logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
-                    if len(paginas_com_erro) > 10: break
+                    pagina += 1  # CRÍTICO: sempre incrementar a página
+                    if len(paginas_com_erro) > 10:
+                        break
                     continue
 
                 try:
@@ -236,7 +239,7 @@ def run(customer):
                         tentativas_sem_dados += 1
                         logger.warning(
                             f"Nenhum pedido na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
-                        pagina += 1
+                        pagina += 1  # CRÍTICO: sempre incrementar a página
                         continue
 
                     tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
@@ -245,8 +248,10 @@ def run(customer):
                         try:
                             # Verifica duplicatas
                             id_pedido = p.get('cabecalho', {}).get('codigo_pedido')
-                            if id_pedido and id_pedido in ids_coletados: continue
-                            if id_pedido: ids_coletados.add(id_pedido)
+                            if id_pedido and id_pedido in ids_coletados:
+                                continue
+                            if id_pedido:
+                                ids_coletados.add(id_pedido)
 
                             # Processa e adiciona
                             pedido_processado = p.copy()
@@ -256,7 +261,8 @@ def run(customer):
                             # Remove campos originais para evitar duplicação
                             for campo in ["cabecalho", "det", "lista_parcelas", "frete", "infoCadastro",
                                           "informacoes_adicionais", "total_pedido"]:
-                                if campo in pedido_processado: del pedido_processado[campo]
+                                if campo in pedido_processado:
+                                    del pedido_processado[campo]
 
                             resultados.append(pedido_processado)
                             novos_pedidos += 1
@@ -266,18 +272,28 @@ def run(customer):
                     total_ids += novos_pedidos
                     logger.info(f"Página {pagina}: +{novos_pedidos} pedidos. Total: {total_ids}")
 
-                    if len(pedidos) < 200: break
+                    # Verifica se chegou ao fim das páginas
+                    total_paginas = dados.get('total_de_paginas', 0)
+                    if total_paginas > 0 and pagina >= total_paginas:
+                        logger.info(f"Fim das páginas alcançado: {pagina}/{total_paginas}")
+                        break
+
+                    # Se retornou menos registros que o solicitado, provavelmente é a última página
+                    if len(pedidos) < 200:
+                        logger.info(f"Última página detectada (registros: {len(pedidos)})")
+                        break
+
                     pagina += 1
 
                 except Exception as e:
                     logger.error(f"Erro na página {pagina}: {e}")
                     paginas_com_erro.append(pagina)
-                    pagina += 1
+                    pagina += 1  # CRÍTICO: sempre incrementar a página
 
-            # Recupera páginas com erro
-            if paginas_com_erro:
+            # Recupera páginas com erro (limitando a 5 tentativas)
+            if paginas_com_erro and resultados:  # Só tenta recuperar se já coletou algo
                 logger.warning(f"Tentando recuperar {len(paginas_com_erro)} páginas com erro")
-                for pag_erro in paginas_com_erro[:5]:
+                for pag_erro in paginas_com_erro[:5]:  # Limita a 5 páginas para evitar loops
                     try:
                         payload = {
                             "call": "ListarPedidos",
@@ -290,7 +306,8 @@ def run(customer):
                         }
 
                         resp = fazer_requisicao_com_retry(URL, payload, session=session, timeout=60)
-                        if not resp: continue
+                        if not resp:
+                            continue
 
                         dados = resp.json()
                         pedidos = dados.get('pedido_venda_produto', [])
@@ -316,7 +333,7 @@ def run(customer):
                         logger.info(f"Recuperados +{recuperados} pedidos da página {pag_erro}")
                     except Exception as e:
                         logger.error(f"Erro ao recuperar página {pag_erro}: {e}")
-                        raise
+                        continue  # Não quebra o processo por erro de recuperação
 
         if not resultados:
             logger.warning("Nenhum pedido coletado.")
@@ -346,8 +363,8 @@ def run(customer):
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
                 tentativas_sem_dados += 1
-                pagina += 1
                 logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
                 continue
 
             dados = response.json()
@@ -395,8 +412,8 @@ def run(customer):
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
                 tentativas_sem_dados += 1
-                pagina += 1
                 logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
                 continue
 
             dados = response.json()
@@ -474,8 +491,8 @@ def run(customer):
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
                 tentativas_sem_dados += 1
-                pagina += 1
                 logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
                 continue
 
             dados = response.json()
@@ -519,8 +536,8 @@ def run(customer):
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
                 tentativas_sem_dados += 1
-                pagina += 1
                 logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
                 continue
 
             dados = response.json()
