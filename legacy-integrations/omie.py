@@ -95,10 +95,11 @@ def run(customer):
         URL = "https://app.omie.com.br/api/v1/geral/categorias/"
         ENDPOINT_NAME = "listar_categorias"
         pagina, resultados = 1, []
+        tentativas_sem_dados = 0
         inicio = datetime.now()
 
         logger.info("Iniciando coleta de categorias...")
-        while True:
+        while tentativas_sem_dados < 10:
             payload = {
                 "call": "ListarCategorias",
                 "app_key": API_KEY, "app_secret": API_SECRET,
@@ -107,13 +108,20 @@ def run(customer):
 
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
+                tentativas_sem_dados += 1
                 pagina += 1
+                logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
                 continue
 
             dados = response.json()
             categorias = dados.get('categoria_cadastro', [])
-            if not categorias: break
+            if not categorias:
+                tentativas_sem_dados += 1
+                logger.warning(f"Nenhuma categoria na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
 
+            tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
             for categoria in categorias:
                 categoria.update(extrair_dados_aninhados_categorias(categoria))
                 resultados.append(categoria)
@@ -194,13 +202,14 @@ def run(customer):
         ENDPOINT_NAME = "listar_produtos_pedidos"
         inicio = datetime.now()
         ids_coletados, resultados = set(), []
+        tentativas_sem_dados = 0
 
         with requests.Session() as session:
             session.headers.update({'Content-type': 'application/json'})
             logger.info("Iniciando coleta de pedidos tipo N")
             pagina, total_ids, paginas_com_erro = 1, 0, []
 
-            while True:
+            while tentativas_sem_dados < 10:
                 payload = {
                     "call": "ListarPedidos",
                     "app_key": API_KEY, "app_secret": API_SECRET,
@@ -213,16 +222,24 @@ def run(customer):
 
                 resp = fazer_requisicao_com_retry(URL, payload, session=session)
                 if not resp:
+                    tentativas_sem_dados += 1
                     paginas_com_erro.append(pagina)
                     pagina += 1
+                    logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
                     if len(paginas_com_erro) > 10: break
                     continue
 
                 try:
                     dados = resp.json()
                     pedidos = dados.get('pedido_venda_produto', [])
-                    if not pedidos: break
+                    if not pedidos:
+                        tentativas_sem_dados += 1
+                        logger.warning(
+                            f"Nenhum pedido na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                        pagina += 1
+                        continue
 
+                    tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
                     novos_pedidos = 0
                     for p in pedidos:
                         try:
@@ -315,10 +332,11 @@ def run(customer):
         URL = "https://app.omie.com.br/api/v1/geral/vendedores/"
         ENDPOINT_NAME = "vendedores"
         pagina, resultados = 1, []
+        tentativas_sem_dados = 0
         inicio = datetime.now()
 
         logger.info("Iniciando coleta de vendedores...")
-        while True:
+        while tentativas_sem_dados < 10:
             payload = {
                 "call": "ListarVendedores",
                 "app_key": API_KEY, "app_secret": API_SECRET,
@@ -327,14 +345,20 @@ def run(customer):
 
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
+                tentativas_sem_dados += 1
                 pagina += 1
+                logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
                 continue
 
             dados = response.json()
             vendedores = dados.get('cadastro', [])
             if not vendedores:
-                break
+                tentativas_sem_dados += 1
+                logger.warning(f"Nenhum vendedor na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
 
+            tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
             resultados.extend(vendedores)
             logger.info(f"Página {pagina}: +{len(vendedores)} vendedores. Total: {len(resultados)}")
 
@@ -352,10 +376,11 @@ def run(customer):
         URL = "https://app.omie.com.br/api/v1/geral/produtos/"
         ENDPOINT_NAME = "listar_produtos"
         pagina, resultados = 1, []
+        tentativas_sem_dados = 0
         inicio = datetime.now()
 
         logger.info("Iniciando coleta de produtos...")
-        while True:
+        while tentativas_sem_dados < 10:
             payload = {
                 "call": "ListarProdutos",
                 "app_key": API_KEY, "app_secret": API_SECRET,
@@ -369,14 +394,20 @@ def run(customer):
 
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
+                tentativas_sem_dados += 1
                 pagina += 1
+                logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
                 continue
 
             dados = response.json()
             produtos = dados.get('produto_servico_cadastro', [])
             if not produtos:
-                break
+                tentativas_sem_dados += 1
+                logger.warning(f"Nenhum produto na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
 
+            tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
             resultados.extend(produtos)
             if len(resultados) % 500 == 0:
                 logger.info(f"Total coletado: {len(resultados)}")
@@ -395,36 +426,45 @@ def run(customer):
         URL = "https://app.omie.com.br/api/v1/geral/motivodevolucao/"
         ENDPOINT_NAME = "listar_motivo_devolucao"
         inicio = datetime.now()
+        tentativas_sem_dados = 0
 
         logger.info("Iniciando coleta de motivos de devolução...")
-        payload = {
-            "call": "ListarMotivosDevol",
-            "app_key": API_KEY, "app_secret": API_SECRET,
-            "param": [{"nPagina": 1, "nRegPorPagina": 100}]
-        }
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarMotivosDevol",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"nPagina": 1, "nRegPorPagina": 100}]
+            }
 
-        response = fazer_requisicao_com_retry(URL, payload)
-        if not response:
-            logger.error("Falha ao coletar motivos de devolução.")
-            return
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                logger.warning(f"Sem resposta. Tentativa sem dados {tentativas_sem_dados}/10")
+                continue
 
-        dados = response.json()
-        motivos = dados.get('listaMotivo', [])
+            dados = response.json()
+            motivos = dados.get('listaMotivo', [])
+            if not motivos:
+                tentativas_sem_dados += 1
+                logger.warning(f"Nenhum motivo de devolução. Tentativa sem dados {tentativas_sem_dados}/10")
+                continue
 
-        if motivos:
+            tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
             df = pd.DataFrame(motivos)
             upload_to_gcs(df, f"{ENDPOINT_NAME}/motivos_devolucao.csv")
             logger.info(f"Coleta finalizada em {datetime.now() - inicio}. Total: {len(motivos)}")
+            break
 
     def coletar_etapas_pedido():
         """Coleta etapas de pedido"""
         URL = "https://app.omie.com.br/api/v1/produtos/pedidoetapas/"
         ENDPOINT_NAME = "listar_pedidos_etapas"
         pagina, resultados = 1, []
+        tentativas_sem_dados = 0
         inicio = datetime.now()
 
         logger.info("Iniciando coleta de etapas de pedido...")
-        while True:
+        while tentativas_sem_dados < 10:
             payload = {
                 "call": "ListarEtapasPedido",
                 "app_key": API_KEY, "app_secret": API_SECRET,
@@ -433,14 +473,20 @@ def run(customer):
 
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
+                tentativas_sem_dados += 1
                 pagina += 1
+                logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
                 continue
 
             dados = response.json()
             etapas = dados.get('etapasPedido', [])
             if not etapas:
-                break
+                tentativas_sem_dados += 1
+                logger.warning(f"Nenhuma etapa na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
 
+            tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
             resultados.extend(etapas)
             if len(resultados) % 500 == 0:
                 logger.info(f"Total coletado: {len(resultados)}")
@@ -459,10 +505,11 @@ def run(customer):
         URL = "https://app.omie.com.br/api/v1/produtos/etapafat/"
         ENDPOINT_NAME = "etapafat"
         pagina, resultados = 1, []
+        tentativas_sem_dados = 0
         inicio = datetime.now()
 
         logger.info("Iniciando coleta de etapas de faturamento...")
-        while True:
+        while tentativas_sem_dados < 10:
             payload = {
                 "call": "ListarEtapasFaturamento",
                 "app_key": API_KEY, "app_secret": API_SECRET,
@@ -471,14 +518,20 @@ def run(customer):
 
             response = fazer_requisicao_com_retry(URL, payload)
             if not response:
+                tentativas_sem_dados += 1
                 pagina += 1
+                logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
                 continue
 
             dados = response.json()
             etapas = dados.get('cadastros', [])
             if not etapas:
-                break
+                tentativas_sem_dados += 1
+                logger.warning(f"Nenhuma etapa na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
 
+            tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
             resultados.extend(etapas)
             logger.info(f"Página {pagina}: +{len(etapas)} etapas. Total: {len(resultados)}")
 
