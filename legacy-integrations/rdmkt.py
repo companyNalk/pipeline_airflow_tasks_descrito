@@ -180,6 +180,8 @@ def run_webhook_register(customer):
 def run_webhook_leads(customer):
     import requests
     import pandas as pd
+    import time
+    import random
     from typing import Any, Dict, List
 
     # Configurações Iniciais
@@ -218,6 +220,43 @@ def run_webhook_leads(customer):
                 items.append((new_key, v))
         return dict(items)
 
+    def make_request_with_retry(request_func, max_retries: int = 11):
+        """
+        Função de retry modificada para tratar 404 como caso especial
+        """
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = request_func()
+
+                # Se for 404, não faz retry - retorna imediatamente
+                if response.status_code == 404:
+                    return response
+
+                # Se for sucesso, retorna
+                if response.status_code == 200:
+                    return response
+
+                # Para outros erros, faz retry
+                if attempt < max_retries:
+                    wait_time = random.uniform(1, 2)
+                    print(
+                        f"Erro HTTP {response.status_code}. Tentativa {attempt}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                    time.sleep(wait_time)
+                else:
+                    # Última tentativa - deixa o erro ser tratado pela função que chama
+                    response.raise_for_status()
+
+            except Exception as e:
+                if attempt < max_retries:
+                    wait_time = random.uniform(1, 2)
+                    print(
+                        f"Erro na requisição: {str(e)}. Tentativa {attempt}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                    time.sleep(wait_time)
+                else:
+                    raise
+
+        return response
+
     def fetch_webhook_leads(limit: int = 500, offset: int = 0) -> Dict[str, Any]:
         """
         Busca dados de leads do webhook com retry.
@@ -236,6 +275,10 @@ def run_webhook_leads(customer):
 
         if response.status_code == 200:
             return response.json()
+        elif response.status_code == 404:
+            # Empresa nova ou sem registros - retorna estrutura vazia válida
+            print(f"Empresa {ALIAS} não possui registros no webhook (404). Isso é normal para cadastros novos.")
+            return {'data': [], 'total_count': 0, 'returned_count': 0}
         else:
             print(f"Erro na requisição: Status {response.status_code}")
             return {}
@@ -343,8 +386,8 @@ def run_webhook_leads(customer):
         all_leads = get_all_webhook_leads()
 
         if not all_leads:
-            print("Nenhum lead encontrado.")
-            return 'No leads found'
+            print(f"Nenhum lead encontrado para empresa {ALIAS}. Isso é normal para cadastros novos.")
+            return f'No leads found for company {ALIAS} - this is normal for new registrations'
 
         # Nome do arquivo
         file_name = f"webhook_users.csv"
