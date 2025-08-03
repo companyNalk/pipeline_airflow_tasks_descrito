@@ -20,7 +20,7 @@ def run_get_deals(customer):
     # =======================================================================
     # CONFIGURAÇÃO
     # =======================================================================
-    URL_BASE = customer['URL_BASE']
+    URL_BASE = customer['url_base']
     BUCKET_NAME = customer['bucket_name']
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
@@ -200,7 +200,7 @@ def run_get_leads(customer):
     # ==============================================================================
     # CONFIGURAÇÃO
     # ==============================================================================
-    URL_BASE = customer['URL_BASE']
+    URL_BASE = customer['url_base']
     BUCKET_NAME = customer['bucket_name']
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
