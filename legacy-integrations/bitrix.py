@@ -108,8 +108,8 @@ def run_get_deals(customer):
         print("[PASSO 3] Buscando negócios (método paginado)...")
         all_deals = []
         start = 0
-        periods = 6  # Buscando dados dos últimos 6 dias para teste. Mude para relativedelta(months=periods) se necessário.
-        data_filtro = date.today() - relativedelta(days=periods)
+        periods = 12
+        data_filtro = date.today() - relativedelta(months=periods)
         data_iso = data_filtro.strftime('%Y-%m-%dT00:00:00-03:00')
 
         # Usando '*' é mais simples e garante que todos os campos, inclusive STAGE_ID, sejam trazidos.
@@ -283,7 +283,7 @@ def run_get_leads(customer):
         print("[PASSO 3] Buscando todos os leads...")
         all_leads = []
         start = 0
-        periods = 6
+        periods = 12
         data_filtro = date.today() - relativedelta(months=periods)
         formatted_date = data_filtro.strftime('%Y-%m-%dT00:00:00-03:00')
         search_params = {
