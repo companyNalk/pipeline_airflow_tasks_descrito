@@ -32,9 +32,7 @@ def run_extract_locations(customer):
         raw_ids = accounts_ids_raw
 
     SUBACCOUNT_IDS = raw_ids
-    print(SUBACCOUNT_IDS)
 
-    # SUBACCOUNT_IDS = customer['subaccount_ids']
     START_DATE = customer['start_date']
     END_DATE = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')  # Até ontem
 
@@ -556,7 +554,15 @@ def run_extract_keywords(customer):
     CLIENT_SECRET = customer['client_secret']
     REFRESH_TOKEN = customer['refresh_token']
     LOGIN_CUSTOMER_ID = customer['login_customer_id']
-    SUBACCOUNT_IDS = customer['subaccount_ids']
+
+    accounts_ids_raw = customer['subaccount_ids']
+    if isinstance(accounts_ids_raw, str):
+        raw_ids = [acc.strip() for acc in accounts_ids_raw.split(',') if acc.strip()]
+    else:
+        raw_ids = accounts_ids_raw
+
+    SUBACCOUNT_IDS = raw_ids
+
     START_DATE = customer['start_date']
     END_DATE = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')  # Até ontem
 
