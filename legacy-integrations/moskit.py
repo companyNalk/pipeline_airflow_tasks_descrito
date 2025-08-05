@@ -416,7 +416,7 @@ def run(customer):
     print("[COMPLETE] Processo finalizado com sucesso!")
 
 
-def refactor_deals_custom_fields(customer):
+def deals_custom_fields(customer):
     import pandas as pd
     import time
 
@@ -594,7 +594,7 @@ def refactor_deals_custom_fields(customer):
         deals_list = df_clean.to_dict('records')
 
         # Usar a função upload_to_gcs que trabalha com lista de dicionários
-        upload_to_gcs(deals_list, "refactor_deals_custom_fields/refactor_deals_custom_fields.csv")
+        upload_to_gcs(deals_list, "deals_custom_fields/deals_custom_fields.csv")
 
     fetch_moskit_deals_with_custom_fields()
 
@@ -612,7 +612,7 @@ def get_extraction_tasks():
             'python_callable': run
         },
         {
-            'task_id': 'refactor_deals_custom_fields',
-            'python_callable': refactor_deals_custom_fields
+            'task_id': 'deals_custom_fields',
+            'python_callable': deals_custom_fields
         },
     ]
