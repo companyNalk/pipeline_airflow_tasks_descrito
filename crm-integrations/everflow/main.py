@@ -14,23 +14,25 @@ logger = AppInitializer.initialize()
 CONFIG = {
     "rate_limit": 100,
     "endpoints": {
-        "clientes": {"path": "v1/clientes", "data_key": "itens"},
-        "contratos": {"path": "v1/contratos", "data_key": "itens"},
-        "fornecedores": {"path": "v1/fornecedores", "data_key": "itens"},
-        "movimento_bancarios": {"path": "v1/movimentosBancarios", "data_key": "itens"},
-        "orcamentos": {"path": "v1/orcamentos", "data_key": "itens"},
-        "orcamentos_propostas": {"path": "v1/orcamentos/propostas", "data_key": "itens"},
-        "orcamentos_propostas_kanban": {"path": "v1/orcamentos/propostas/kanban", "data_key": "itens"},
-        "gestao_servicos_ordens_servico": {"path": "v1/gestaoServicos/OrdensServico", "data_key": "itens"},
-        "ordens_servico_tarefas": {"path": "v1/ordensServico/tarefas", "data_key": "itens"},
-        "pagars": {"path": "v1/pagars", "data_key": "itens"},
-        "pedidos_venda": {"path": "v1/pedidosVenda", "data_key": "itens"},
-        "recebers": {"path": "v1/recebers", "data_key": "itens"},
+        "clientes": {"path": "v1/clientes", "data_key": "itens", "pagination_disabled": True},
+        "contratos": {"path": "v1/contratos", "data_key": "itens", "pagination_disabled": True},
+        "fornecedores": {"path": "v1/fornecedores", "data_key": "itens", "pagination_disabled": True},
+        "movimento_bancarios": {"path": "v1/movimentosBancarios", "data_key": "itens", "pagination_disabled": True},
+        "orcamentos": {"path": "v1/orcamentos", "data_key": "itens", "pagination_disabled": True},
+        "orcamentos_propostas": {"path": "v1/orcamentos/propostas", "data_key": "itens", "pagination_disabled": True},
+        "orcamentos_propostas_kanban": {"path": "v1/orcamentos/propostas/kanban", "data_key": "itens", "pagination_disabled": True},
+        "gestao_servicos_ordens_servico": {"path": "v1/gestaoServicos/OrdensServico", "data_key": "itens", "pagination_disabled": False},
+        "ordens_servico_tarefas": {"path": "v1/ordensServico/tarefas", "data_key": "itens", "pagination_disabled": False},
+        "pagars": {"path": "v1/pagars", "data_key": "itens", "pagination_disabled": True},
+        "pedidos_venda": {"path": "v1/pedidosVenda", "data_key": "itens", "pagination_disabled": True},
+        "recebers": {"path": "v1/recebers", "data_key": "itens", "pagination_disabled": True},
 
-        "consultores": {"path": "v1/consultores", "data_key": None},
-        "equipamentos": {"path": "v1/equipamentos", "data_key": None},
+        # SEM DATA KEY
+        "consultores": {"path": "v1/consultores", "data_key": None, "pagination_disabled": True},
+        "equipamentos": {"path": "v1/equipamentos", "data_key": None, "pagination_disabled": True},
 
-        "funcionarios": {"path": "v1/funcionarios", "data_key": "data.itens"},
+        # DATA.ITENS
+        "funcionarios": {"path": "v1/funcionarios", "data_key": "data.itens", "pagination_disabled": True},
     }
 }
 
@@ -82,44 +84,67 @@ def get_pagination_info(data, data_key):
     }
 
 
-def fetch_all_data(http_client, endpoint_name, endpoint_config, token):
-    """Busca todos os dados de um endpoint."""
-    logger.info(f"📚 Buscando dados para: {endpoint_name}")
+def build_url_with_params(path, pagination_disabled, params=None):
+    """Constrói a URL com parâmetros adequados baseado no tipo de endpoint."""
+    base_params = {}
+
+    if pagination_disabled:
+        base_params['DesabilitarPaginacao'] = 'True'
+
+    if params:
+        base_params.update(params)
+
+    if not base_params:
+        return path
+
+    param_string = '&'.join([f"{k}={v}" for k, v in base_params.items()])
+    separator = '&' if '?' in path else '?'
+    return f"{path}{separator}{param_string}"
+
+
+def fetch_single_request(http_client, endpoint_name, endpoint_config, token):
+    """Faz uma única requisição para endpoints com paginação desabilitada."""
+    logger.info(f"📚 Fazendo requisição única para: {endpoint_name}")
+    start_time = time.time()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Constrói a URL com DesabilitarPaginacao=True
+    url = build_url_with_params(endpoint_config['path'], endpoint_config['pagination_disabled'])
+
+    logger.info(f"🔗 URL da requisição: {url}")
+
+    data = http_client.get(url, headers=headers)
+    items = extract_data_from_response(data, endpoint_config['data_key'])
+
+    duration = time.time() - start_time
+    logger.info(f"✅ Endpoint {endpoint_name}: requisição única com {len(items)} itens em {duration:.2f}s")
+
+    return items, len(items)
+
+
+def fetch_paginated_data(http_client, endpoint_name, endpoint_config, token):
+    """Busca dados com paginação ativa."""
+    logger.info(f"📚 Buscando dados paginados para: {endpoint_name}")
     start_time = time.time()
     all_items = []
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Endpoint sem paginação
-    if endpoint_config['data_key'] is None:
-        data = http_client.get(endpoint_config['path'], headers=headers)
-        items = extract_data_from_response(data, None)
-        duration = time.time() - start_time
-        logger.info(f"✅ Endpoint {endpoint_name}: requisição única com {len(items)} itens em {duration:.2f}s")
-        return items, len(items)
-
-    # Endpoint com paginação
     page_num = 1
     total_records_expected = 0
 
     while True:
-        # CORREÇÃO 1: Sempre incluir o parâmetro page, mesmo na primeira página
+        # Parâmetros de paginação
         params = {"pageSize": 500, "page": page_num}
+        url = build_url_with_params(endpoint_config['path'], False, params)
 
-        logger.info(f"🔄 Fazendo requisição para página {page_num} com params: {params}")
+        logger.info(f"🔄 Fazendo requisição para página {page_num}")
 
-        data = http_client.get(endpoint_config['path'], headers=headers, params=params)
-
-        # CORREÇÃO 2: Log da resposta para debug
-        logger.info(f"📊 Resposta da página {page_num}: tipo={type(data)}")
-        if isinstance(data, dict):
-            logger.info(f"📊 Chaves da resposta: {list(data.keys())}")
-
+        data = http_client.get(url, headers=headers)
         items = extract_data_from_response(data, endpoint_config['data_key'])
 
-        # CORREÇÃO 3: Log detalhado dos itens extraídos
         logger.info(f"📦 Página {page_num}: extraídos {len(items)} itens")
 
-        # CORREÇÃO 4: Verificar se não há itens para evitar loop infinito
+        # Verificar se não há itens para evitar loop infinito
         if not items and page_num > 1:
             logger.info(f"⚠️ Página {page_num} sem itens - finalizando paginação")
             break
@@ -128,7 +153,7 @@ def fetch_all_data(http_client, endpoint_name, endpoint_config, token):
         if page_num == 1:
             total_records_expected = pagination_info['total_records']
 
-        # CORREÇÃO PRINCIPAL: Limitar itens ao total_records_expected
+        # Limitar itens ao total_records_expected
         remaining_records = total_records_expected - len(all_items)
         if remaining_records <= 0:
             logger.info(f"🎯 Limite de registros atingido: {len(all_items)}/{total_records_expected}")
@@ -137,8 +162,7 @@ def fetch_all_data(http_client, endpoint_name, endpoint_config, token):
         # Se esta página tem mais itens do que o necessário, cortar
         if len(items) > remaining_records:
             items = items[:remaining_records]
-            logger.info(
-                f"✂️ Cortando página {page_num}: usando apenas {len(items)} de {len(extract_data_from_response(data, endpoint_config['data_key']))} itens")
+            logger.info(f"✂️ Cortando página {page_num}: usando apenas {len(items)} itens")
 
         all_items.extend(items)
 
@@ -149,29 +173,36 @@ def fetch_all_data(http_client, endpoint_name, endpoint_config, token):
 
         total_pages = pagination_info['total_pages']
 
-        # CORREÇÃO 5: Log da informação de paginação
-        logger.info(
-            f"📄 Paginação - Página atual: {page_num}, Total páginas: {total_pages}, Total registros: {pagination_info['total_records']}")
+        logger.info(f"📄 Paginação - Página atual: {page_num}, Total páginas: {total_pages}")
 
         if page_num == 1 or page_num == total_pages or page_num % 20 == 0:
             logger.info(
-                f"📄 {endpoint_name}: página {page_num}/{total_pages} com {len(items)} itens (total coletado até agora: {len(all_items)})")
+                f"📄 {endpoint_name}: página {page_num}/{total_pages} com {len(items)} itens (total: {len(all_items)})")
 
-        # CORREÇÃO 6: Verificar múltiplas condições de parada
+        # Verificar condições de parada
         if page_num >= total_pages or len(items) == 0:
-            logger.info(
-                f"🏁 Finalizando paginação - Página: {page_num}, Total páginas: {total_pages}, Itens na página: {len(items)}")
+            logger.info(f"🏁 Finalizando paginação - Página: {page_num}, Total páginas: {total_pages}")
             break
 
         page_num += 1
         time.sleep(0.5)
 
-    # CORREÇÃO 7: Log final detalhado
     duration = time.time() - start_time
-    logger.info(
-        f"✅ Endpoint {endpoint_name}: {len(all_items)} itens coletados (esperados: {total_records_expected}) em {duration:.2f}s")
+    logger.info(f"✅ Endpoint {endpoint_name}: {len(all_items)} itens coletados em {duration:.2f}s")
 
     return all_items, total_records_expected
+
+
+def fetch_all_data(http_client, endpoint_name, endpoint_config, token):
+    """Busca todos os dados de um endpoint, escolhendo a estratégia adequada."""
+
+    # MELHORIA PRINCIPAL: Verificar se a paginação está desabilitada
+    if endpoint_config.get('pagination_disabled', False):
+        logger.info(f"🚀 Endpoint {endpoint_name}: Paginação desabilitada - fazendo requisição única")
+        return fetch_single_request(http_client, endpoint_name, endpoint_config, token)
+    else:
+        logger.info(f"📖 Endpoint {endpoint_name}: Paginação ativa - processando páginas")
+        return fetch_paginated_data(http_client, endpoint_name, endpoint_config, token)
 
 
 def process_endpoint(endpoint_name, endpoint_config, args):
@@ -211,7 +242,7 @@ def main():
         for endpoint_name, endpoint_config in CONFIG["endpoints"].items():
             endpoint_stats[endpoint_name] = process_endpoint(endpoint_name, endpoint_config, args)
             logger.info(
-                f"✅ {endpoint_name}: {endpoint_stats[endpoint_name]['registros']} esperados, {endpoint_stats[endpoint_name]['registros_coletados']} coletados em {endpoint_stats[endpoint_name]['tempo']:.2f}s")  # noqa
+                f"✅ {endpoint_name}: {endpoint_stats[endpoint_name]['registros']} esperados, {endpoint_stats[endpoint_name]['registros_coletados']} coletados em {endpoint_stats[endpoint_name]['tempo']:.2f}s")
 
         if not ReportGenerator.final_summary(logger, endpoint_stats, global_start_time):
             raise Exception("Falhas encontradas na execução")
