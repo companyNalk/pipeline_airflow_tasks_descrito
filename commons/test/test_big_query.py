@@ -480,6 +480,255 @@ class TestDataPreprocessorCoverage:
 
         logger.error.assert_called_once()
 
+    def test_normalize_decimal_precision_basic(self):
+        """Testa normalização básica de decimais."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value;other_col\n12.123456789;data\n34.987654321;info\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        assert result > 0
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "12.123457"
+        assert df.iloc[1, 0] == "34.987654"
+        logger.info.assert_any_call("🔢 Normalizando decimais para no máximo 6 casas...")
+        os.unlink(csv_path)
+
+    def test_normalize_decimal_precision_custom_max_decimals(self):
+        """Testa normalização com número personalizado de casas decimais."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value\n12.123456789\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger, max_decimals=3)
+
+        # THEN
+        assert result > 0
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "12.123"
+        logger.info.assert_any_call("🔢 Normalizando decimais para no máximo 3 casas...")
+        os.unlink(csv_path)
+
+    def test_normalize_decimal_precision_no_decimals_needed(self):
+        """Testa quando não há valores que precisem de normalização."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value;text_col\n12.123;data\n34.56;info\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        assert result == 0
+        logger.info.assert_any_call("ℹ️  Nenhuma normalização decimal necessária")
+        os.unlink(csv_path)
+
+    def test_normalize_decimal_precision_mixed_values(self):
+        """Testa normalização com valores mistos (com e sem decimais)."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value;int_value;text_value\n12.123456789;100;text_data\n56;200;more_text\n78.987654321;300;data\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        assert result == 2
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "12.123457"
+        assert df.iloc[1, 0] == "56"
+        assert df.iloc[2, 0] == "78.987654"
+        os.unlink(csv_path)
+
+    def test_normalize_decimal_precision_remove_trailing_zeros(self):
+        """Testa remoção de zeros desnecessários após normalização."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value\n12.100000000\n34.500000000\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        assert result > 0
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "12.1"
+        assert df.iloc[1, 0] == "34.5"
+        os.unlink(csv_path)
+
+    def test_normalize_decimal_precision_integer_after_normalization(self):
+        """Testa quando normalização resulta em número inteiro."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value\n12.000000000\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        assert result > 0
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "12"
+        os.unlink(csv_path)
+
+    def test_normalize_decimal_precision_creates_backup(self):
+        """Testa criação de backup quando há normalizações."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value\n12.123456789\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        assert result > 0
+        backup_path = f"{csv_path}.backup_decimals"
+        assert os.path.exists(backup_path)
+        logger.info.assert_any_call(f"💾 Backup criado: {backup_path}")
+
+        os.unlink(csv_path)
+        os.unlink(backup_path)
+
+    def test_normalize_decimal_precision_no_backup_if_exists(self):
+        """Testa que não cria backup se já existe."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value\n12.123456789\n")
+            csv_path = f.name
+
+        backup_path = f"{csv_path}.backup_decimals"
+        with open(backup_path, 'w') as f:
+            f.write("existing_backup\n")
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        assert result > 0
+        with open(backup_path, 'r') as f:
+            backup_content = f.read()
+        assert "existing_backup" in backup_content
+
+        os.unlink(csv_path)
+        os.unlink(backup_path)
+
+    def test_normalize_decimal_precision_multiple_columns(self):
+        """Testa normalização em múltiplas colunas."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("col1;col2;col3\n12.123456789;34.987654321;text\n56.111111111;78.222222222;data\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        assert result == 4
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "12.123457"
+        assert df.iloc[0, 1] == "34.987654"
+        assert df.iloc[1, 0] == "56.111111"
+        assert df.iloc[1, 1] == "78.222222"
+
+        logger.info.assert_any_call("   ✅ col1: 2 valores normalizados")
+        logger.info.assert_any_call("   ✅ col2: 2 valores normalizados")
+        os.unlink(csv_path)
+
+    def test_normalize_decimal_precision_custom_delimiter(self):
+        """Testa normalização com delimitador personalizado."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value,other\n12.123456789,data\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger, delimiter=',')
+
+        # THEN
+        assert result > 0
+        df = pd.read_csv(csv_path, delimiter=',', dtype=str)
+        assert df.iloc[0, 0] == "12.123457"
+        os.unlink(csv_path)
+
+    def test_normalize_decimal_precision_error_handling(self):
+        """Testa tratamento de erro na função."""
+        # GIVEN
+        csv_path = "nonexistent_file.csv"
+        logger = Mock()
+
+        # WHEN & THEN
+        with pytest.raises(FileNotFoundError):
+            DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        logger.error.assert_called_once()
+
+    def test_normalize_decimal_precision_negative_values(self):
+        """Testa normalização com valores negativos."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value\n-12.123456789\n-34.987654321\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        result = DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        assert result > 0
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert df.iloc[0, 0] == "-12.123457"
+        assert df.iloc[1, 0] == "-34.987654"
+        os.unlink(csv_path)
+
+    def test_normalize_decimal_precision_scientific_notation(self):
+        """Testa tratamento de notação científica."""
+        # GIVEN
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write("value\n1.23456789e-5\n4.56789123e+3\n")
+            csv_path = f.name
+
+        logger = Mock()
+
+        # WHEN
+        DataPreprocessor.normalize_decimal_precision(csv_path, None, logger)
+
+        # THEN
+        df = pd.read_csv(csv_path, delimiter=';', dtype=str)
+        assert len(df) == 2
+        os.unlink(csv_path)
+
 
 class TestReportGeneratorCoverage:
     """Testes para garantir cobertura completa da classe ReportGenerator."""

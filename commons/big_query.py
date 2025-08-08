@@ -816,6 +816,93 @@ class DataPreprocessor:
             logger.error(f"❌ Erro na correção de datas: {e}")
             raise
 
+    @staticmethod
+    def normalize_decimal_precision(csv_path, schema_json=None, logger=None, delimiter=';', max_decimals=6):
+        """
+        Normaliza valores decimais para no máximo 6 casas decimais.
+        Isso evita problemas de precisão excessiva que causam conversão para STRING.
+        """
+        if logger is None:
+            logger = logging.getLogger(__name__)
+
+        try:
+            logger.info(f"🔢 Normalizando decimais para no máximo {max_decimals} casas...")
+
+            # Carregar CSV
+            df = pd.read_csv(csv_path, delimiter=delimiter, dtype=str, low_memory=False)
+            logger.info(f"📄 Arquivo carregado: {len(df)} linhas, {len(df.columns)} colunas")
+
+            total_normalizations = 0
+            columns_affected = []
+
+            # Processar cada coluna
+            for col_name in df.columns:
+                col_normalizations = 0
+
+                for idx, value in enumerate(df[col_name]):
+                    if pd.isna(value):
+                        continue
+
+                    original_value = str(value).strip()
+
+                    # Pular valores que não são numéricos com decimais
+                    if '.' not in original_value:
+                        continue
+
+                    # Tentar normalizar apenas valores que parecem decimais
+                    try:
+                        # Verificar se é um número válido
+                        float_val = float(original_value)
+
+                        # Contar casas decimais atuais
+                        decimal_part = original_value.split('.')[1] if '.' in original_value else ''
+
+                        # Se tem mais casas decimais que o limite, normalizar
+                        if len(decimal_part) > max_decimals:
+                            # Formatar com no máximo max_decimals casas decimais
+                            normalized_value = f"{float_val:.{max_decimals}f}"
+                            # Remover zeros desnecessários à direita
+                            normalized_value = normalized_value.rstrip('0').rstrip('.')
+
+                            # Se o valor mudou, aplicar
+                            if original_value != normalized_value:
+                                df.at[idx, col_name] = normalized_value
+                                col_normalizations += 1
+
+                    except (ValueError, OverflowError, IndexError):
+                        # Se não conseguir processar, manter valor original
+                        continue
+
+                if col_normalizations > 0:
+                    total_normalizations += col_normalizations
+                    columns_affected.append(col_name)
+                    logger.info(f"   ✅ {col_name}: {col_normalizations} valores normalizados")
+
+            # Salvar se houve normalizações
+            if total_normalizations > 0:
+                # Fazer backup do arquivo original
+                backup_path = f"{csv_path}.backup_decimals"
+                if not Path(backup_path).exists():
+                    # Carregar arquivo original para backup
+                    df_original = pd.read_csv(csv_path, delimiter=delimiter, dtype=str, low_memory=False)
+                    df_original.to_csv(backup_path, sep=delimiter, index=False, encoding='utf-8')
+                    logger.info(f"💾 Backup criado: {backup_path}")
+
+                # Salvar arquivo normalizado
+                df.to_csv(csv_path, sep=delimiter, index=False, encoding='utf-8')
+                logger.info(f"✅ {total_normalizations} valores decimais normalizados com sucesso!")
+                logger.info(
+                    f"📊 Colunas afetadas: {len(columns_affected)} ({', '.join(columns_affected[:5])}{'...' if len(columns_affected) > 5 else ''})")
+                logger.info(f"📁 Arquivo atualizado: {csv_path}")
+            else:
+                logger.info("ℹ️  Nenhuma normalização decimal necessária")
+
+            return total_normalizations
+
+        except Exception as e:
+            logger.error(f"❌ Erro na normalização de decimais: {e}")
+            raise
+
 
 class ReportGenerator:
     """Handles generation of inconsistency reports."""
@@ -944,6 +1031,7 @@ class BigQueryTableManager:
                 schema_json = json.load(f)
 
             # Reprocessamento
+            DataPreprocessor.normalize_decimal_precision(csv_path, schema_json, logger)
             DataPreprocessor.fix_invalid_date_values(csv_path, schema_json, logger)
             DataPreprocessor.convert_date_br_to_iso(csv_path, schema_json, logger)
             DataPreprocessor.convert_timestamp_br_to_iso(csv_path, schema_json, logger)
@@ -1115,6 +1203,8 @@ class BigQuery:
     def _process_single_csv(self, csv_path):
         """Processa um único arquivo CSV."""
         try:
+            DataPreprocessor.normalize_decimal_precision(csv_path, logger=self.logger)
+
             # Usar with para gerenciar recursos
             df = pd.read_csv(csv_path, delimiter=self.CSV_DELIMITER, dtype=str, low_memory=False)
             self._thread_safe_log('info',
