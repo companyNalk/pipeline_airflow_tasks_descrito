@@ -42,6 +42,12 @@ CONFIG = {
             "start_date": "01/01/2025",
             "max_months": 3,
             "param_name": "estab"
+        },
+        "vendas": {
+            "path": "vendas",
+            "use_date_range": True,
+            "start_date": "01/01/2025",
+            "max_days": 2
         }
     }
 }
@@ -51,7 +57,7 @@ def get_arguments():
     """Configura e retorna os argumentos da linha de comando."""
     return (ArgumentManager("Script para coletar e processar dados da API Belle Software")
             .add("API_AUTH_TOKEN", "Token de autenticação da API", required=True)
-            .add("API_COD_ESTAB_LIST", "Lista de códigos de estabelecimento separados por vírgula (ex: 1,2,3,4,5,8)", required=True)
+            .add("API_COD_ESTAB_LIST", "Lista de códigos de estabelecimento separados por vírgula (ex: 1,2,3,5,8)", required=True)
             .add("PROJECT_ID", "ID do projeto Google Cloud", required=True)
             .add("CRM_TYPE", "Nome da ferramenta", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credencial GCS", required=True)
@@ -63,35 +69,56 @@ def get_current_date():
     return datetime.now().strftime("%d/%m/%Y")
 
 
-def get_date_ranges(start_date_str, max_months=None):
+def get_date_ranges(start_date_str, max_months=None, max_days=None):
     """
-    Gera intervalos de datas considerando limite máximo de meses.
+    Gera intervalos de datas considerando limite máximo de meses ou dias.
     Para contas_receber, divide em períodos de 3 meses.
+    Para vendas, divide em períodos de 5 dias.
     """
     start_date = datetime.strptime(start_date_str, "%d/%m/%Y")
     end_date = datetime.now()
 
-    if not max_months:
+    if max_days:
+        # Divide em períodos de dias (para vendas)
+        date_ranges = []
+        current_start = start_date
+
+        while current_start < end_date:
+            current_end = current_start + relativedelta(days=max_days)
+            if current_end > end_date:
+                current_end = end_date
+
+            date_ranges.append((
+                current_start.strftime("%d/%m/%Y"),
+                current_end.strftime("%d/%m/%Y")
+            ))
+
+            current_start = current_end + relativedelta(days=1)
+
+        return date_ranges
+
+    elif max_months:
+        # Divide em períodos de meses (para contas_receber)
+        date_ranges = []
+        current_start = start_date
+
+        while current_start < end_date:
+            current_end = current_start + relativedelta(months=max_months)
+            if current_end > end_date:
+                current_end = end_date
+
+            date_ranges.append((
+                current_start.strftime("%d/%m/%Y"),
+                current_end.strftime("%d/%m/%Y")
+            ))
+
+            current_start = current_end + relativedelta(days=1)
+
+        return date_ranges
+
+    else:
         # Sem limite, retorna período único
         return [(start_date_str, get_current_date())]
-
-    # Com limite, divide em períodos
-    date_ranges = []
-    current_start = start_date
-
-    while current_start < end_date:
-        current_end = current_start + relativedelta(months=max_months)
-        if current_end > end_date:
-            current_end = end_date
-
-        date_ranges.append((
-            current_start.strftime("%d/%m/%Y"),
-            current_end.strftime("%d/%m/%Y")
-        ))
-
-        current_start = current_end + relativedelta(days=1)
-
-    return date_ranges
 
 
 def fetch_endpoint_data(http_client, endpoint_config, cod_estab, token, dt_inicio=None, dt_fim=None):
@@ -147,8 +174,9 @@ def process_endpoint(endpoint_name, endpoint_config, cod_estab, token):
             # Endpoints que usam intervalo de datas
             start_date = endpoint_config["start_date"]
             max_months = endpoint_config.get("max_months")
+            max_days = endpoint_config.get("max_days")
 
-            date_ranges = get_date_ranges(start_date, max_months)
+            date_ranges = get_date_ranges(start_date, max_months, max_days)
 
             logger.info(f"📅 Coletando dados em {len(date_ranges)} período(s)")
 
