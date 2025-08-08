@@ -166,9 +166,9 @@ def fetch_all_data(http_client, endpoint_config, user_key):
                 # Se a URL já contém o domínio completo, extrair apenas a parte do path
                 if next_url.startswith("https://"):
                     next_url = next_url.split(".com/", 1)[1] if ".com/" in next_url else next_url
-                logger.info(f"📄 Próxima página encontrada")
+                logger.info("📄 Próxima página encontrada")
             else:
-                logger.info(f"✅ Não há mais páginas disponíveis")
+                logger.info("✅ Não há mais páginas disponíveis")
 
             # Pausa entre requisições para evitar rate limit
             if next_url:

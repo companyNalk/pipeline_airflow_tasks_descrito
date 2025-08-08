@@ -1,5 +1,13 @@
+# SUBIR BANCO LOCALMENTE
 docker run --name mysql-restore -e MYSQL_ROOT_PASSWORD=senha123 -p 3306:3306 -d mysql:8.0 && \
 sleep 30 && \
 docker exec -i mysql-restore mysql -u root -psenha123 -e "CREATE DATABASE ksi_correta;" && \
 docker exec -i mysql-restore mysql -u root -psenha123 ksi_correta < ~/Downloads/KSI_MYSQL_2fae20faed2006fcd6e6d17038b7758a067a01a9a0f9e44f30981ed46e502469_segunda.sql
 
+docker run --rm --name kurole
+-e API_USERNAME="backup2025"
+-e API_PASSWORD="correta264"
+-e CRM_TYPE="kurole"
+-e PROJECT_ID="correta-nalk"
+-e GOOGLE_APPLICATION_CREDENTIALS="/home/hamerski/PycharmProjects/airflow-tasks/crm-integrations/kurole/gcp/key.json"
+-v /var/run/docker.sock:/var/run/docker.sock   kurole

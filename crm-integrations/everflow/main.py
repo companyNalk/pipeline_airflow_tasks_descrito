@@ -241,8 +241,7 @@ def main():
     try:
         for endpoint_name, endpoint_config in CONFIG["endpoints"].items():
             endpoint_stats[endpoint_name] = process_endpoint(endpoint_name, endpoint_config, args)
-            logger.info(
-                f"✅ {endpoint_name}: {endpoint_stats[endpoint_name]['registros']} esperados, {endpoint_stats[endpoint_name]['registros_coletados']} coletados em {endpoint_stats[endpoint_name]['tempo']:.2f}s")
+            logger.info(f"✅ {endpoint_name}: {endpoint_stats[endpoint_name]['registros']} esperados, {endpoint_stats[endpoint_name]['registros_coletados']} coletados em {endpoint_stats[endpoint_name]['tempo']:.2f}s")  # noqa
 
         if not ReportGenerator.final_summary(logger, endpoint_stats, global_start_time):
             raise Exception("Falhas encontradas na execução")

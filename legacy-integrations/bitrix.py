@@ -294,8 +294,6 @@ def run_get_leads(customer):
         print("[PASSO 3] Buscando Leads (método paginado)...")
         all_leads = []
         start = 0
-        batch_size = 50
-        # Ajuste o período conforme necessário. Ex: relativedelta(months=6)
         periods = 6
         data_filtro = date.today() - relativedelta(months=periods)
         data_iso = data_filtro.strftime('%Y-%m-%dT00:00:00-03:00')
