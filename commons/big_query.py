@@ -151,8 +151,8 @@ class DataTypeDetector:
             return 'timestamp'
 
         # YYYY-MM-DD HH:MM:SS -> sempre TIMESTAMP
-        if re.match(r'^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}:\d{2}$', v.strip()):
-            return 'timestamp'
+        if re.match(r'^\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}(:\d{2})?$', v.strip()):
+                return 'timestamp'
 
         try:
             dt = date_parser.parse(v, fuzzy=False)
