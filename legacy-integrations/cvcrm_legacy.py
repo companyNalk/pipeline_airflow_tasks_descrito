@@ -910,6 +910,423 @@ def run_historico_situacoes(customer):
         raise
 
 
+def run_atendimentos(customer):
+    if not str(customer['cvdw_active']).strip().lower() == 'true':
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_atendimentos.")
+        return
+
+    import requests
+    import pandas as pd
+    import os
+    import time
+    import pathlib
+    import random
+    from google.cloud import bigquery
+    from requests.exceptions import HTTPError, RequestException
+
+    DOMINIO = customer['api_dominio']
+    EMAIL = customer['api_email']
+    ACCESS_TOKEN = customer['api_access_token']
+    PROJECT_ID = customer['project_id']
+    SERVICE_ACCOUNT_FILE = pathlib.Path('config', 'setup_automatico.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_FILE
+
+    URL_BASE = f"https://{DOMINIO}.cvcrm.com.br/api/v1/cvdw/atendimentos"
+
+    dataset_id = 'cvcrm'
+    table_id = 'cvcrm_atendimentos'
+
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "email": EMAIL,
+        "token": ACCESS_TOKEN
+    }
+    data = {
+        "pagina": 1,
+        "registros_por_pagina": 500
+    }
+
+    # Inicialização de variáveis
+    todas_dados = []
+    pagina_atual = 1
+    max_retries = 5
+    continuar_paginacao = True
+
+    print(f"Iniciando coleta de dados de atendimentos...")
+
+    while continuar_paginacao:
+        data["pagina"] = pagina_atual
+        retry_count = 0
+        success = False
+
+        while not success and retry_count < max_retries:
+            try:
+                response = requests.get(URL_BASE, headers=headers, json=data, timeout=30)
+
+                if response.status_code == 204:
+                    print(f"Recebido código 204 (No Content) na página {pagina_atual}. Fim da paginação.")
+                    continuar_paginacao = False
+                    success = True
+                    break
+
+                response.raise_for_status()
+
+                try:
+                    response_data = response.json()
+                except ValueError:
+                    if response.status_code == 200 and not response.text.strip():
+                        print(f"Resposta vazia na página {pagina_atual}. Fim da paginação.")
+                        continuar_paginacao = False
+                        success = True
+                        break
+                    else:
+                        raise ValueError(f"Resposta não é um JSON válido na página {pagina_atual}")
+
+                page_data = response_data.get("dados", [])
+
+                if not page_data:
+                    print(f"Página {pagina_atual} retornou array de dados vazio. Fim da paginação.")
+                    continuar_paginacao = False
+                    success = True
+                    break
+
+                todas_dados.extend(page_data)
+                print(f"Página {pagina_atual} processada com sucesso. Registros: {len(page_data)}")
+                success = True
+
+            except HTTPError as e:
+                if e.response.status_code == 429:
+                    retry_count += 1
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
+                    print(
+                        f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Erro HTTP na página {pagina_atual}: {e}")
+                    raise
+            except RequestException as e:
+                retry_count += 1
+                wait_time = (4 ** retry_count) + random.uniform(0, 1)
+                print(
+                    f"Erro de rede na página {pagina_atual}. Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                time.sleep(wait_time)
+            except ValueError as e:
+                print(f"Erro de validação na página {pagina_atual}: {e}")
+                raise
+            except Exception as e:
+                print(f"Erro inesperado na página {pagina_atual}: {e}")
+                raise
+
+        if not success:
+            print(f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados coletados.")
+            raise
+
+        if continuar_paginacao:
+            pagina_atual += 1
+            time.sleep(5)
+
+    if not todas_dados:
+        print("Nenhum dado foi coletado. Encerrando sem atualizar o BigQuery.")
+        return
+
+    df_atendimentos = pd.DataFrame(todas_dados)
+    total_registros = len(df_atendimentos)
+    print(f"Total de registros coletados: {total_registros}")
+
+    try:
+        client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
+        table_ref = client.dataset(dataset_id).table(table_id)
+        job_config = bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            autodetect=True
+        )
+        load_job = client.load_table_from_dataframe(df_atendimentos, table_ref, job_config=job_config)
+        load_job.result()
+        print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
+    except Exception as e:
+        print(f"Erro ao carregar dados no BigQuery: {e}")
+        raise
+
+
+def run_atendimentos_workflow_tempo(customer):
+    if not str(customer['cvdw_active']).strip().lower() == 'true':
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_atendimentos_workflow_tempo.")
+        return
+
+    import requests
+    import pandas as pd
+    import os
+    import time
+    import pathlib
+    import random
+    from google.cloud import bigquery
+    from requests.exceptions import HTTPError, RequestException
+
+    DOMINIO = customer['api_dominio']
+    EMAIL = customer['api_email']
+    ACCESS_TOKEN = customer['api_access_token']
+    PROJECT_ID = customer['project_id']
+    SERVICE_ACCOUNT_FILE = pathlib.Path('config', 'setup_automatico.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_FILE
+
+    URL_BASE = f"https://{DOMINIO}.cvcrm.com.br/api/v1/cvdw/atendimentos/workflow/tempo"
+
+    dataset_id = 'cvcrm'
+    table_id = 'cvcrm_atendimentos_workflow_tempo'
+
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "email": EMAIL,
+        "token": ACCESS_TOKEN
+    }
+    data = {
+        "pagina": 1,
+        "registros_por_pagina": 500
+    }
+
+    # Inicialização de variáveis
+    todas_dados = []
+    pagina_atual = 1
+    max_retries = 5
+    continuar_paginacao = True
+
+    print(f"Iniciando coleta de dados de workflow tempo de atendimentos...")
+
+    while continuar_paginacao:
+        data["pagina"] = pagina_atual
+        retry_count = 0
+        success = False
+
+        while not success and retry_count < max_retries:
+            try:
+                response = requests.get(URL_BASE, headers=headers, json=data, timeout=30)
+
+                if response.status_code == 204:
+                    print(f"Recebido código 204 (No Content) na página {pagina_atual}. Fim da paginação.")
+                    continuar_paginacao = False
+                    success = True
+                    break
+
+                response.raise_for_status()
+
+                try:
+                    response_data = response.json()
+                except ValueError:
+                    if response.status_code == 200 and not response.text.strip():
+                        print(f"Resposta vazia na página {pagina_atual}. Fim da paginação.")
+                        continuar_paginacao = False
+                        success = True
+                        break
+                    else:
+                        raise ValueError(f"Resposta não é um JSON válido na página {pagina_atual}")
+
+                page_data = response_data.get("dados", [])
+
+                if not page_data:
+                    print(f"Página {pagina_atual} retornou array de dados vazio. Fim da paginação.")
+                    continuar_paginacao = False
+                    success = True
+                    break
+
+                todas_dados.extend(page_data)
+                print(f"Página {pagina_atual} processada com sucesso. Registros: {len(page_data)}")
+                success = True
+
+            except HTTPError as e:
+                if e.response.status_code == 429:
+                    retry_count += 1
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
+                    print(
+                        f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Erro HTTP na página {pagina_atual}: {e}")
+                    raise
+            except RequestException as e:
+                retry_count += 1
+                wait_time = (4 ** retry_count) + random.uniform(0, 1)
+                print(
+                    f"Erro de rede na página {pagina_atual}. Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                time.sleep(wait_time)
+            except ValueError as e:
+                print(f"Erro de validação na página {pagina_atual}: {e}")
+                raise
+            except Exception as e:
+                print(f"Erro inesperado na página {pagina_atual}: {e}")
+                raise
+
+        if not success:
+            print(f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados coletados.")
+            raise
+
+        if continuar_paginacao:
+            pagina_atual += 1
+            time.sleep(5)
+
+    if not todas_dados:
+        print("Nenhum dado foi coletado. Encerrando sem atualizar o BigQuery.")
+        return
+
+    df_workflow_tempo = pd.DataFrame(todas_dados)
+    total_registros = len(df_workflow_tempo)
+    print(f"Total de registros coletados: {total_registros}")
+
+    try:
+        client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
+        table_ref = client.dataset(dataset_id).table(table_id)
+        job_config = bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            autodetect=True
+        )
+        load_job = client.load_table_from_dataframe(df_workflow_tempo, table_ref, job_config=job_config)
+        load_job.result()
+        print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
+    except Exception as e:
+        print(f"Erro ao carregar dados no BigQuery: {e}")
+        raise
+
+
+def run_atendimentos_tarefas(customer):
+    if not str(customer['cvdw_active']).strip().lower() == 'true':
+        print(f"CVDW não está ativo para este cliente. Pulando execução da função run_atendimentos_tarefas.")
+        return
+
+    import requests
+    import pandas as pd
+    import os
+    import time
+    import pathlib
+    import random
+    from google.cloud import bigquery
+    from requests.exceptions import HTTPError, RequestException
+
+    DOMINIO = customer['api_dominio']
+    EMAIL = customer['api_email']
+    ACCESS_TOKEN = customer['api_access_token']
+    PROJECT_ID = customer['project_id']
+    SERVICE_ACCOUNT_FILE = pathlib.Path('config', 'setup_automatico.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_FILE
+
+    URL_BASE = f"https://{DOMINIO}.cvcrm.com.br/api/v1/cvdw/atendimentos/tarefas"
+
+    dataset_id = 'cvcrm'
+    table_id = 'cvcrm_atendimentos_tarefas'
+
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "email": EMAIL,
+        "token": ACCESS_TOKEN
+    }
+    data = {
+        "pagina": 1,
+        "registros_por_pagina": 500
+    }
+
+    # Inicialização de variáveis
+    todas_dados = []
+    pagina_atual = 1
+    max_retries = 5
+    continuar_paginacao = True
+
+    print(f"Iniciando coleta de dados de tarefas de atendimentos...")
+
+    while continuar_paginacao:
+        data["pagina"] = pagina_atual
+        retry_count = 0
+        success = False
+
+        while not success and retry_count < max_retries:
+            try:
+                response = requests.get(URL_BASE, headers=headers, json=data, timeout=30)
+
+                if response.status_code == 204:
+                    print(f"Recebido código 204 (No Content) na página {pagina_atual}. Fim da paginação.")
+                    continuar_paginacao = False
+                    success = True
+                    break
+
+                response.raise_for_status()
+
+                try:
+                    response_data = response.json()
+                except ValueError:
+                    if response.status_code == 200 and not response.text.strip():
+                        print(f"Resposta vazia na página {pagina_atual}. Fim da paginação.")
+                        continuar_paginacao = False
+                        success = True
+                        break
+                    else:
+                        raise ValueError(f"Resposta não é um JSON válido na página {pagina_atual}")
+
+                page_data = response_data.get("dados", [])
+
+                if not page_data:
+                    print(f"Página {pagina_atual} retornou array de dados vazio. Fim da paginação.")
+                    continuar_paginacao = False
+                    success = True
+                    break
+
+                todas_dados.extend(page_data)
+                print(f"Página {pagina_atual} processada com sucesso. Registros: {len(page_data)}")
+                success = True
+
+            except HTTPError as e:
+                if e.response.status_code == 429:
+                    retry_count += 1
+                    wait_time = (4 ** retry_count) + random.uniform(0, 1)
+                    print(
+                        f"Erro 429 (Too Many Requests). Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Erro HTTP na página {pagina_atual}: {e}")
+                    raise
+            except RequestException as e:
+                retry_count += 1
+                wait_time = (4 ** retry_count) + random.uniform(0, 1)
+                print(
+                    f"Erro de rede na página {pagina_atual}. Tentativa {retry_count}/{max_retries}. Aguardando {wait_time:.2f} segundos...")
+                time.sleep(wait_time)
+            except ValueError as e:
+                print(f"Erro de validação na página {pagina_atual}: {e}")
+                raise
+            except Exception as e:
+                print(f"Erro inesperado na página {pagina_atual}: {e}")
+                raise
+
+        if not success:
+            print(f"Falha ao processar a página {pagina_atual} após {max_retries} tentativas. Continuando com os dados coletados.")
+            raise
+
+        if continuar_paginacao:
+            pagina_atual += 1
+            time.sleep(5)
+
+    if not todas_dados:
+        print("Nenhum dado foi coletado. Encerrando sem atualizar o BigQuery.")
+        return
+
+    df_tarefas = pd.DataFrame(todas_dados)
+    total_registros = len(df_tarefas)
+    print(f"Total de registros coletados: {total_registros}")
+
+    try:
+        client = bigquery.Client.from_service_account_json(SERVICE_ACCOUNT_FILE, project=PROJECT_ID)
+        table_ref = client.dataset(dataset_id).table(table_id)
+        job_config = bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            autodetect=True
+        )
+        load_job = client.load_table_from_dataframe(df_tarefas, table_ref, job_config=job_config)
+        load_job.result()
+        print(f"Dados carregados com sucesso para {dataset_id}.{table_id}. Total: {total_registros} registros.")
+    except Exception as e:
+        print(f"Erro ao carregar dados no BigQuery: {e}")
+        raise
+
+
 def run_lead(customer):
     import requests
     import pandas as pd
@@ -1170,6 +1587,18 @@ def get_extraction_tasks():
         #     'task_id': 'run_historico_situacoes',
         #     'python_callable': run_historico_situacoes,
         # },
+        {
+            'task_id': 'run_atendimentos',
+            'python_callable': run_atendimentos,
+        },
+        {
+            'task_id': 'run_atendimentos_workflow_tempo',
+            'python_callable': run_atendimentos_workflow_tempo,
+        },
+        {
+            'task_id': 'run_atendimentos_tarefas',
+            'python_callable': run_atendimentos_tarefas,
+        },
         {
             'task_id': 'run_lead',
             'python_callable': run_lead,
