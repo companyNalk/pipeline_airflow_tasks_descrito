@@ -1,6 +1,8 @@
 import time
 
 from commons.app_inicializer import AppInitializer
+from commons.big_query import BigQuery
+from commons.memory_monitor import MemoryMonitor
 from commons.report_generator import ReportGenerator
 from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
@@ -15,8 +17,14 @@ ENDPOINTS = {
     "deal_groups": "api/3/dealGroups",
     "deal_stages": "api/3/dealStages",
     "deal_custom_field_meta": "api/3/dealCustomFieldMeta",
-    "deal_custom_field_data": "api/3/dealCustomFieldData"
+    "contacts": "api/3/contacts",
 }
+
+# ENDPOINTS DEPENDENTES
+DEPENDENT_ENDPOINTS = [
+    "contact_tags",  # /api/3/contacts/{id}/contactTags
+    "tags"  # /api/3/contactTags/{id}/tag
+]
 
 
 def get_arguments():
@@ -40,14 +48,34 @@ def fetch_data(endpoint, token, offset=0, params=None, debug_info=None):
     return http_client.get(endpoint, headers=headers, params=params, debug_info=debug_info)
 
 
+def fetch_single_item(endpoint, token, debug_info=None):
+    """Busca um item único de um endpoint (para endpoints de dependência)."""
+    headers = {"Api-Token": token}
+    debug_info = debug_info or endpoint
+    return http_client.get(endpoint, headers=headers, debug_info=debug_info)
+
+
+def get_data_key_for_endpoint(endpoint_path):
+    """Retorna a chave de dados baseada no endpoint."""
+    if "contacts/" in endpoint_path and "contactTags" in endpoint_path:
+        return "contactTags"
+    elif "contactTags/" in endpoint_path and "tag" in endpoint_path:
+        return "tag"
+    elif endpoint_path == "api/3/contacts":
+        return "scoreValues"
+    else:
+        # Para endpoints normais, pega o último segmento da URL
+        return endpoint_path.split('/')[-1]
+
+
 def fetch_page(endpoint, token, offset=0):
     """Busca uma página específica de um endpoint."""
     try:
         data = fetch_data(endpoint, token, offset)
 
         # Extrair dados baseado na estrutura do endpoint
-        endpoint_name = endpoint.split('/')[-1]  # Pega o último segmento da URL
-        items = data.get(endpoint_name, [])
+        data_key = get_data_key_for_endpoint(endpoint)
+        items = data.get(data_key, [])
 
         # Informações de paginação da ActiveCampaign
         meta = data.get('meta', {})
@@ -123,6 +151,73 @@ def fetch_all_pages(endpoint, token):
     return all_items
 
 
+def process_contact_tags(contact_ids, token):
+    """Processa contactTags para uma lista de contact IDs."""
+    logger.info(f"\n🔍 PROCESSANDO CONTACT TAGS para {len(contact_ids)} contatos")
+    start_time = time.time()
+
+    all_contact_tags = []
+    processed_count = 0
+
+    for contact_id in contact_ids:
+        try:
+            endpoint = f"api/3/contacts/{contact_id}/contactTags"
+            data = fetch_single_item(endpoint, token, f"contactTags:{contact_id}")
+
+            contact_tags = data.get('contactTags', [])
+            all_contact_tags.extend(contact_tags)
+
+            processed_count += 1
+            if processed_count % 100 == 0:
+                logger.info(f"📄 Processados {processed_count}/{len(contact_ids)} contatos")
+
+            # Pausa rate limit
+            time.sleep(0.2)
+
+        except Exception as e:
+            logger.error(f"❌ Erro ao buscar contactTags para contato {contact_id}: {str(e)}")
+            continue
+
+    duration = time.time() - start_time
+    logger.info(f"✅ ContactTags: {len(all_contact_tags)} registros de {len(contact_ids)} contatos em {duration:.2f}s")
+    return all_contact_tags
+
+
+def process_tags(contact_tag_ids, token):
+    """Processa tags para uma lista de contactTag IDs."""
+    logger.info(f"\n🔍 PROCESSANDO TAGS para {len(contact_tag_ids)} contactTags")
+    start_time = time.time()
+
+    all_tags = []
+    processed_count = 0
+    unique_tags = set()  # Para evitar duplicatas
+
+    for contact_tag_id in contact_tag_ids:
+        try:
+            endpoint = f"api/3/contactTags/{contact_tag_id}/tag"
+            data = fetch_single_item(endpoint, token, f"tag:{contact_tag_id}")
+
+            tag_data = data.get('tag', {})
+            if tag_data and tag_data.get('id') not in unique_tags:
+                all_tags.append(tag_data)
+                unique_tags.add(tag_data.get('id'))
+
+            processed_count += 1
+            if processed_count % 100 == 0:
+                logger.info(f"📄 Processadas {processed_count}/{len(contact_tag_ids)} tags")
+
+            # Pausa rate limit
+            time.sleep(0.2)
+
+        except Exception as e:
+            logger.error(f"❌ Erro ao buscar tag para contactTag {contact_tag_id}: {str(e)}")
+            continue
+
+    duration = time.time() - start_time
+    logger.info(f"✅ Tags: {len(all_tags)} registros únicos de {len(contact_tag_ids)} contactTags em {duration:.2f}s")
+    return all_tags
+
+
 def process_endpoint(endpoint_name, endpoint_path, token):
     """Processa um endpoint específico e retorna estatísticas."""
     try:
@@ -141,7 +236,8 @@ def process_endpoint(endpoint_name, endpoint_path, token):
         return {
             "registros": len(processed_data),
             "status": "Sucesso",
-            "tempo": endpoint_duration
+            "tempo": endpoint_duration,
+            "data": raw_data  # Retorna os dados para uso em endpoints dependentes
         }
 
     except Exception as e:
@@ -149,8 +245,87 @@ def process_endpoint(endpoint_name, endpoint_path, token):
         return {
             "registros": 0,
             "status": f"Falha: {type(e).__name__}: {str(e)}",
+            "tempo": 0,
+            "data": []
+        }
+
+
+def process_dependent_endpoints(contacts_data, token):
+    """Processa os endpoints dependentes baseados nos dados de contatos."""
+    dependent_stats = {}
+
+    # Extrair IDs dos contatos
+    contact_ids = [contact.get('contact') for contact in contacts_data if contact.get('contact')]
+
+    if not contact_ids:
+        logger.warning("⚠️  Nenhum contact ID encontrado para processar endpoints dependentes")
+        return dependent_stats
+
+    # 1. Processar contact_tags
+    try:
+        logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO ENDPOINT: CONTACT_TAGS\n{'=' * 50}")
+        contact_tags_start = time.time()
+
+        contact_tags_data = process_contact_tags(contact_ids, token)
+
+        # Salvar dados
+        logger.info(f"💾 Salvando {len(contact_tags_data)} registros para contact_tags")
+        processed_contact_tags = Utils.process_and_save_data(contact_tags_data, "contact_tags")
+
+        contact_tags_duration = time.time() - contact_tags_start
+        dependent_stats["contact_tags"] = {
+            "registros": len(processed_contact_tags),
+            "status": "Sucesso",
+            "tempo": contact_tags_duration
+        }
+
+    except Exception as e:
+        logger.exception("❌ Falha no endpoint contact_tags")
+        dependent_stats["contact_tags"] = {
+            "registros": 0,
+            "status": f"Falha: {type(e).__name__}: {str(e)}",
             "tempo": 0
         }
+        contact_tags_data = []
+
+    # 2. Processar tags
+    try:
+        logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO ENDPOINT: TAGS\n{'=' * 50}")
+        tags_start = time.time()
+
+        # Extrair IDs dos contactTags
+        contact_tag_ids = [ct.get('id') for ct in contact_tags_data if ct.get('id')]
+
+        if contact_tag_ids:
+            tags_data = process_tags(contact_tag_ids, token)
+
+            # Salvar dados
+            logger.info(f"💾 Salvando {len(tags_data)} registros para tags")
+            processed_tags = Utils.process_and_save_data(tags_data, "tags")
+
+            tags_duration = time.time() - tags_start
+            dependent_stats["tags"] = {
+                "registros": len(processed_tags),
+                "status": "Sucesso",
+                "tempo": tags_duration
+            }
+        else:
+            logger.warning("⚠️  Nenhum contactTag ID encontrado para processar tags")
+            dependent_stats["tags"] = {
+                "registros": 0,
+                "status": "Nenhum contactTag ID disponível",
+                "tempo": 0
+            }
+
+    except Exception as e:
+        logger.exception("❌ Falha no endpoint tags")
+        dependent_stats["tags"] = {
+            "registros": 0,
+            "status": f"Falha: {type(e).__name__}: {str(e)}",
+            "tempo": 0
+        }
+
+    return dependent_stats
 
 
 def main():
@@ -170,16 +345,43 @@ def main():
     # 3. Iniciar relatório
     global_start_time = ReportGenerator.init_report(logger)
     endpoint_stats = {}
+    contacts_data = []
 
     try:
-        # 4. Processar todos os endpoints
+        # 4. Processar todos os endpoints principais
         for endpoint_name, endpoint_path in ENDPOINTS.items():
-            endpoint_stats[endpoint_name] = process_endpoint(endpoint_name, endpoint_path, api_token)
+            result = process_endpoint(endpoint_name, endpoint_path, api_token)
+            endpoint_stats[endpoint_name] = {
+                "registros": result["registros"],
+                "status": result["status"],
+                "tempo": result["tempo"]
+            }
+
+            # Guardar dados de contatos para processar endpoints dependentes
+            if endpoint_name == "contacts":
+                contacts_data = result.get("data", [])
+
             logger.info(
                 f"✅ {endpoint_name}: {endpoint_stats[endpoint_name]['registros']} registros em {endpoint_stats[endpoint_name]['tempo']:.2f}s")
 
-        # 5. Gerar resumo final
+        # 5. Processar endpoints dependentes
+        dependent_stats = process_dependent_endpoints(contacts_data, api_token)
+
+        # Adicionar estatísticas dos endpoints dependentes
+        for endpoint_name, stats in dependent_stats.items():
+            endpoint_stats[endpoint_name] = stats
+            logger.info(f"✅ {endpoint_name}: {stats['registros']} registros em {stats['tempo']:.2f}s")
+
+        # 6. Gerar resumo final
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
+
+        with MemoryMonitor(logger):
+            BigQuery.process_csv_files()
+
+        tables = Utils.get_existing_folders(logger)
+        for table in tables:
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
+                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         # Se houver falhas, lançar exceção
         if not success:
