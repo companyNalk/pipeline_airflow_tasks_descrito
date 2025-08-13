@@ -131,8 +131,7 @@ def fetch_all_pages(endpoint, token):
             page_data = fetch_page(endpoint, token, current_offset)
             all_items.extend(page_data['items'])
 
-            # Pausa otimizada - 0.2s permite ~5 req/s respeitando rate limit
-            time.sleep(0.2)
+            # Rate limiter já controla - sem sleep adicional
 
             # Próximo offset
             current_offset += 100
@@ -151,31 +150,52 @@ def fetch_all_pages(endpoint, token):
     return all_items
 
 
+def fetch_contact_tags_batch(contact_ids, token):
+    """Busca contactTags para um batch de contact IDs sequencialmente."""
+    contact_tags = []
+    
+    # Processamento 100% sequencial para evitar rate limit
+    for contact_id in contact_ids:
+        try:
+            endpoint = f"api/3/contacts/{contact_id}/contactTags"
+            data = fetch_single_item(endpoint, token, f"contactTags:{contact_id}")
+            tags = data.get('contactTags', [])
+            contact_tags.extend(tags)
+            
+            # Pausa controlada para respeitar 5 req/s (0.2s por request)
+            time.sleep(0.25)  # Um pouco mais conservador
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao buscar contactTags para contato {contact_id}: {str(e)}")
+            continue
+    
+    return contact_tags
+
+
 def process_contact_tags(contact_ids, token):
-    """Processa contactTags para uma lista de contact IDs."""
+    """Processa contactTags para uma lista de contact IDs com paralelismo."""
     logger.info(f"\n🔍 PROCESSANDO CONTACT TAGS para {len(contact_ids)} contatos")
     start_time = time.time()
 
     all_contact_tags = []
     processed_count = 0
+    batch_size = 10  # Lotes pequenos para processamento sequencial
 
-    for contact_id in contact_ids:
+    # Processar em batches
+    for i in range(0, len(contact_ids), batch_size):
+        batch = contact_ids[i:i + batch_size]
+        
         try:
-            endpoint = f"api/3/contacts/{contact_id}/contactTags"
-            data = fetch_single_item(endpoint, token, f"contactTags:{contact_id}")
-
-            contact_tags = data.get('contactTags', [])
-            all_contact_tags.extend(contact_tags)
-
-            processed_count += 1
-            if processed_count % 100 == 0:
-                logger.info(f"📄 Processados {processed_count}/{len(contact_ids)} contatos")
-
-            # Pausa rate limit
-            time.sleep(0.2)
-
+            batch_tags = fetch_contact_tags_batch(batch, token)
+            all_contact_tags.extend(batch_tags)
+            
+            processed_count += len(batch)
+            logger.info(f"📄 Processados {processed_count}/{len(contact_ids)} contatos")
+            
+            # Sem pausa entre batches - sleep interno já controla
+                
         except Exception as e:
-            logger.error(f"❌ Erro ao buscar contactTags para contato {contact_id}: {str(e)}")
+            logger.error(f"❌ Erro no batch {i}-{i+len(batch)}: {str(e)}")
             continue
 
     duration = time.time() - start_time
@@ -183,34 +203,58 @@ def process_contact_tags(contact_ids, token):
     return all_contact_tags
 
 
+def fetch_tags_batch(contact_tag_ids, token):
+    """Busca tags para um batch de contactTag IDs sequencialmente."""
+    tags = []
+    unique_tag_ids = set()  # Para evitar duplicatas
+    
+    # Processamento 100% sequencial para evitar rate limit
+    for contact_tag_id in contact_tag_ids:
+        try:
+            endpoint = f"api/3/contactTags/{contact_tag_id}/tag"
+            data = fetch_single_item(endpoint, token, f"tag:{contact_tag_id}")
+            tag_data = data.get('tag', {})
+            
+            if tag_data and tag_data.get('id'):
+                if tag_data.get('id') not in unique_tag_ids:
+                    unique_tag_ids.add(tag_data.get('id'))
+                    tags.append(tag_data)
+            
+            # Pausa controlada para respeitar 5 req/s (0.2s por request)
+            time.sleep(0.25)  # Um pouco mais conservador
+                    
+        except Exception as e:
+            logger.error(f"❌ Erro ao buscar tag para contactTag {contact_tag_id}: {str(e)}")
+            continue
+    
+    return tags
+
+
 def process_tags(contact_tag_ids, token):
-    """Processa tags para uma lista de contactTag IDs."""
+    """Processa tags para uma lista de contactTag IDs com paralelismo."""
     logger.info(f"\n🔍 PROCESSANDO TAGS para {len(contact_tag_ids)} contactTags")
     start_time = time.time()
 
     all_tags = []
     processed_count = 0
-    unique_tags = set()  # Para evitar duplicatas
+    batch_size = 10  # Lotes pequenos para processamento sequencial
 
-    for contact_tag_id in contact_tag_ids:
+    # Processar em batches
+    for i in range(0, len(contact_tag_ids), batch_size):
+        batch = contact_tag_ids[i:i + batch_size]
+        
         try:
-            endpoint = f"api/3/contactTags/{contact_tag_id}/tag"
-            data = fetch_single_item(endpoint, token, f"tag:{contact_tag_id}")
-
-            tag_data = data.get('tag', {})
-            if tag_data and tag_data.get('id') not in unique_tags:
-                all_tags.append(tag_data)
-                unique_tags.add(tag_data.get('id'))
-
-            processed_count += 1
-            if processed_count % 100 == 0:
-                logger.info(f"📄 Processadas {processed_count}/{len(contact_tag_ids)} tags")
-
-            # Pausa rate limit
-            time.sleep(0.2)
-
+            batch_tags = fetch_tags_batch(batch, token)
+            all_tags.extend(batch_tags)
+            
+            processed_count += len(batch)
+            logger.info(f"📄 Processadas {processed_count}/{len(contact_tag_ids)} tags")
+            
+            # Sem pausa entre batches - rate limiter controla  
+            # Rate limiter interno já gerencia o limite
+                
         except Exception as e:
-            logger.error(f"❌ Erro ao buscar tag para contactTag {contact_tag_id}: {str(e)}")
+            logger.error(f"❌ Erro no batch {i}-{i+len(batch)}: {str(e)}")
             continue
 
     duration = time.time() - start_time
@@ -339,7 +383,7 @@ def main():
     api_base_url = f"https://{account_name}.api-us1.com"
     api_token = args.API_TOKEN
 
-    rate_limiter = RateLimiter(requests_per_window=5, window_seconds=1, logger=logger)  # 5 req/s
+    rate_limiter = RateLimiter(requests_per_window=4, window_seconds=1, max_rate_limit_attempts=10000, logger=logger)  # Mais conservador
     http_client = HttpClient(base_url=api_base_url, rate_limiter=rate_limiter, logger=logger)
 
     # 3. Iniciar relatório
