@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 from commons.app_inicializer import AppInitializer
 from commons.big_query import BigQuery
@@ -281,7 +282,14 @@ def process_endpoint(endpoint_name, endpoint_path, token, args):
         if processed_data:
             logger.info(f"🔧 Criando schema e tabelas no BigQuery para {endpoint_name}")
             with MemoryMonitor(logger):
-                BigQuery.process_csv_files(f"output/{endpoint_name}")
+                # Processar apenas o CSV específico do endpoint
+                csv_path = Path(f"output/{endpoint_name}/{endpoint_name}.csv")
+                if csv_path.exists():
+                    bigquery_generator = BigQuery()
+                    bigquery_generator._process_single_csv(csv_path)
+                    logger.info(f"✅ Schema gerado para {endpoint_name}")
+                else:
+                    logger.warning(f"⚠️ Arquivo CSV não encontrado: {csv_path}")
             
             BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=endpoint_name,
                                     credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
@@ -333,7 +341,14 @@ def process_dependent_endpoints(contacts_data, token, args):
         if processed_contact_tags:
             logger.info(f"🔧 Criando schema e tabelas no BigQuery para contact_tags")
             with MemoryMonitor(logger):
-                BigQuery.process_csv_files(f"output/contact_tags")
+                # Processar apenas o CSV específico do endpoint
+                csv_path = Path("output/contact_tags/contact_tags.csv")
+                if csv_path.exists():
+                    bigquery_generator = BigQuery()
+                    bigquery_generator._process_single_csv(csv_path)
+                    logger.info(f"✅ Schema gerado para contact_tags")
+                else:
+                    logger.warning(f"⚠️ Arquivo CSV não encontrado: {csv_path}")
             
             BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name="contact_tags",
                                     credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
@@ -374,7 +389,14 @@ def process_dependent_endpoints(contacts_data, token, args):
             if processed_tags:
                 logger.info(f"🔧 Criando schema e tabelas no BigQuery para tags")
                 with MemoryMonitor(logger):
-                    BigQuery.process_csv_files(f"output/tags")
+                    # Processar apenas o CSV específico do endpoint
+                    csv_path = Path("output/tags/tags.csv")
+                    if csv_path.exists():
+                        bigquery_generator = BigQuery()
+                        bigquery_generator._process_single_csv(csv_path)
+                        logger.info(f"✅ Schema gerado para tags")
+                    else:
+                        logger.warning(f"⚠️ Arquivo CSV não encontrado: {csv_path}")
                 
                 BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name="tags",
                                         credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
