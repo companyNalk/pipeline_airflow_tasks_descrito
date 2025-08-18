@@ -32,6 +32,9 @@ def get_arguments():
     return (ArgumentManager("Script para coletar e processar dados da API ActiveCampaign")
             .add("ACCOUNT_NAME", "Nome da conta ActiveCampaign", required=True)
             .add("API_TOKEN", "Token de autenticação", required=True)
+            .add("PROJECT_ID", "ID do projeto no BigQuery", required=True)
+            .add("CRM_TYPE", "Tipo do CRM", required=True)
+            .add("GOOGLE_APPLICATION_CREDENTIALS", "Caminho para as credenciais do Google", required=True)
             .parse())
 
 
@@ -262,7 +265,7 @@ def process_tags(contact_tag_ids, token):
     return all_tags
 
 
-def process_endpoint(endpoint_name, endpoint_path, token):
+def process_endpoint(endpoint_name, endpoint_path, token, args):
     """Processa um endpoint específico e retorna estatísticas."""
     try:
         logger.info(f"\n{'=' * 50}\n🔍 PROCESSANDO ENDPOINT: {endpoint_name.upper()}\n{'=' * 50}")
@@ -273,6 +276,16 @@ def process_endpoint(endpoint_name, endpoint_path, token):
         # Processar e salvar dados
         logger.info(f"💾 Processando e salvando {len(raw_data)} registros para {endpoint_name}")
         processed_data = Utils.process_and_save_data(raw_data, endpoint_name)
+
+        # Processar schema e criar tabelas no BigQuery imediatamente
+        if processed_data:
+            logger.info(f"🔧 Criando schema e tabelas no BigQuery para {endpoint_name}")
+            with MemoryMonitor(logger):
+                BigQuery.process_csv_files(f"output/{endpoint_name}")
+            
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=endpoint_name,
+                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
+            logger.info(f"✅ Schema e tabelas criadas para {endpoint_name}")
 
         endpoint_duration = time.time() - endpoint_start
 
@@ -294,7 +307,7 @@ def process_endpoint(endpoint_name, endpoint_path, token):
         }
 
 
-def process_dependent_endpoints(contacts_data, token):
+def process_dependent_endpoints(contacts_data, token, args):
     """Processa os endpoints dependentes baseados nos dados de contatos."""
     dependent_stats = {}
 
@@ -315,6 +328,16 @@ def process_dependent_endpoints(contacts_data, token):
         # Salvar dados
         logger.info(f"💾 Salvando {len(contact_tags_data)} registros para contact_tags")
         processed_contact_tags = Utils.process_and_save_data(contact_tags_data, "contact_tags")
+
+        # Processar schema e criar tabelas no BigQuery imediatamente
+        if processed_contact_tags:
+            logger.info(f"🔧 Criando schema e tabelas no BigQuery para contact_tags")
+            with MemoryMonitor(logger):
+                BigQuery.process_csv_files(f"output/contact_tags")
+            
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name="contact_tags",
+                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
+            logger.info(f"✅ Schema e tabelas criadas para contact_tags")
 
         contact_tags_duration = time.time() - contact_tags_start
         dependent_stats["contact_tags"] = {
@@ -346,6 +369,16 @@ def process_dependent_endpoints(contacts_data, token):
             # Salvar dados
             logger.info(f"💾 Salvando {len(tags_data)} registros para tags")
             processed_tags = Utils.process_and_save_data(tags_data, "tags")
+
+            # Processar schema e criar tabelas no BigQuery imediatamente
+            if processed_tags:
+                logger.info(f"🔧 Criando schema e tabelas no BigQuery para tags")
+                with MemoryMonitor(logger):
+                    BigQuery.process_csv_files(f"output/tags")
+                
+                BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name="tags",
+                                        credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
+                logger.info(f"✅ Schema e tabelas criadas para tags")
 
             tags_duration = time.time() - tags_start
             dependent_stats["tags"] = {
@@ -394,7 +427,7 @@ def main():
     try:
         # 4. Processar todos os endpoints principais
         for endpoint_name, endpoint_path in ENDPOINTS.items():
-            result = process_endpoint(endpoint_name, endpoint_path, api_token)
+            result = process_endpoint(endpoint_name, endpoint_path, api_token, args)
             endpoint_stats[endpoint_name] = {
                 "registros": result["registros"],
                 "status": result["status"],
@@ -409,7 +442,7 @@ def main():
                 f"✅ {endpoint_name}: {endpoint_stats[endpoint_name]['registros']} registros em {endpoint_stats[endpoint_name]['tempo']:.2f}s")
 
         # 5. Processar endpoints dependentes
-        dependent_stats = process_dependent_endpoints(contacts_data, api_token)
+        dependent_stats = process_dependent_endpoints(contacts_data, api_token, args)
 
         # Adicionar estatísticas dos endpoints dependentes
         for endpoint_name, stats in dependent_stats.items():
@@ -418,14 +451,6 @@ def main():
 
         # 6. Gerar resumo final
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
-
-        with MemoryMonitor(logger):
-            BigQuery.process_csv_files()
-
-        tables = Utils.get_existing_folders(logger)
-        for table in tables:
-            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
-                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         # Se houver falhas, lançar exceção
         if not success:
