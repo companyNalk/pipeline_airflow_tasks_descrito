@@ -85,49 +85,58 @@ def clean_text_data(value):
     return value
 
 
-# def flatten_dict(d, parent_key='', sep='_'):
-#     """Achata dicionário recursivamente, incluindo listas"""
-#     items = []
-#
-#     if isinstance(d, dict):
-#         for k, v in d.items():
-#             new_key = f"{parent_key}{sep}{k}" if parent_key else k
-#
-#             if isinstance(v, dict):
-#                 items.extend(flatten_dict(v, new_key, sep=sep).items())
-#             elif isinstance(v, list):
-#                 # Para listas, criar uma coluna para cada índice com número no final
-#                 for i, item in enumerate(v):
-#                     list_key = f"{new_key}_{i}"
-#                     if isinstance(item, (dict, list)):
-#                         items.extend(flatten_dict(item, list_key, sep=sep).items())
-#                     else:
-#                         # Limpar texto antes de adicionar
-#                         clean_item = clean_text_data(item)
-#                         items.append((list_key, clean_item))
-#                 # Também salvar o tamanho da lista
-#                 items.append((f"{new_key}_length", len(v)))
-#             else:
-#                 # Limpar texto antes de adicionar
-#                 clean_value = clean_text_data(v)
-#                 items.append((new_key, clean_value))
-#     elif isinstance(d, list):
-#         # Se o item raiz for uma lista
-#         for i, item in enumerate(d):
-#             list_key = f"{parent_key}_{i}" if parent_key else str(i)
-#             if isinstance(item, (dict, list)):
-#                 items.extend(flatten_dict(item, list_key, sep=sep).items())
-#             else:
-#                 # Limpar texto antes de adicionar
-#                 clean_item = clean_text_data(item)
-#                 items.append((list_key, clean_item))
-#         items.append((f"{parent_key}_length" if parent_key else "length", len(d)))
-#     else:
-#         # Limpar texto antes de adicionar
-#         clean_value = clean_text_data(d)
-#         items.append((parent_key, clean_value))
-#
-#     return dict(items)
+def create_field_mappings(fields_data):
+    """Cria mapeamentos tanto para key->name quanto para option_id->label"""
+    field_map = {}
+    options_map = {}
+
+    for field in fields_data['data']:
+        # Mapeamento básico key -> name
+        field_map[field['key']] = field['name']
+
+        # Mapeamento de options para campos enum
+        if field.get('field_type') == 'enum' and field.get('options'):
+            field_key = field['key']
+            options_map[field_key] = {
+                str(option['id']): option['label']
+                for option in field['options']
+            }
+
+    return field_map, options_map
+
+
+def convert_custom_fields_with_options(data, field_map, options_map):
+    """Converte custom_fields incluindo mapeamento de options"""
+    converted_count = 0
+    total_conversions = 0
+
+    for item in data['data']:
+        if 'custom_fields' in item and item['custom_fields']:
+            new_custom_fields = {}
+            item_conversions = 0
+
+            for key, value in item['custom_fields'].items():
+                # Converter key para nome do campo
+                field_name = field_map.get(key, key)
+
+                # Se o campo tem options e o valor é um ID, converter para label
+                if key in options_map and value is not None:
+                    value_str = str(value)
+                    if value_str in options_map[key]:
+                        value = options_map[key][value_str]
+                        logger.debug(f"  Convertido: {field_name} = {value_str} -> {value}")
+
+                new_custom_fields[field_name] = value
+
+                if key in field_map:
+                    item_conversions += 1
+                    total_conversions += 1
+
+            item['custom_fields'] = new_custom_fields
+            if item_conversions > 0:
+                converted_count += 1
+
+    return converted_count, total_conversions
 
 
 def flatten_json_to_csv():
@@ -145,7 +154,6 @@ def flatten_json_to_csv():
     for original_file in original_files:
         filename = os.path.basename(original_file)
         base_name = filename.replace('.json', '')
-        # csv_name = f"{base_name}.csv"
 
         # ORDEM: original_data → normalized → converted
         # 1. Verificar se existe versão convertida (prioridade máxima)
@@ -180,24 +188,6 @@ def flatten_json_to_csv():
                 logger.warning(f"⚠️ Nenhum registro encontrado em {filename}")
                 continue
 
-            # Achatar cada registro completamente
-            # flattened_records = []
-            # for record in records:
-            # flattened = flatten_dict(record)
-            # flattened_records.append(flattened)
-
-            # # Converter para DataFrame
-            # df = pd.DataFrame(flattened_records)
-            #
-            # # Criar pasta para o CSV (ex: deals/ para deals.csv)
-            # csv_folder = os.path.join(CSV_DIR, base_name)
-            # os.makedirs(csv_folder, exist_ok=True)
-            #
-            # # Salvar CSV dentro da pasta específica
-            # csv_path = os.path.join(csv_folder, csv_name)
-            # df.to_csv(csv_path, index=False, encoding='utf-8')
-            #
-            # logger.info(f"✅ {base_name}/{csv_name} salvo: {len(df)} linhas x {len(df.columns)} colunas")
             Utils.process_and_save_data(records, base_name)
 
         except Exception as e:
@@ -356,9 +346,10 @@ def convert_lead_keys_to_field_names():
     with open(fields_path, 'r', encoding='utf-8') as f:
         lead_fields = json.load(f)
 
-    # Criar mapa key -> name
-    field_map = {field['key']: field['name'] for field in lead_fields['data']}
+    # Criar mapeamentos (incluindo options para leads)
+    field_map, options_map = create_field_mappings(lead_fields)
     logger.info(f"📊 Mapeamento criado com {len(field_map)} campos")
+    logger.info(f"📊 {len(options_map)} campos com options encontrados")
 
     # Converter leads
     converted_count = 0
@@ -375,6 +366,14 @@ def convert_lead_keys_to_field_names():
             if key in field_map:
                 field_name = field_map[key]
                 value = lead[key]
+
+                # Se o campo tem options e o valor é um ID, converter para label
+                if key in options_map and value is not None:
+                    value_str = str(value)
+                    if value_str in options_map[key]:
+                        value = options_map[key][value_str]
+                        logger.debug(f"  Lead convertido: {field_name} = {value_str} -> {value}")
+
                 del lead[key]  # Remove a chave SHA-1
                 lead[field_name] = value  # Adiciona com o nome do campo
                 lead_conversions += 1
@@ -391,15 +390,15 @@ def convert_lead_keys_to_field_names():
     logger.info("✅ Conversão concluída:")
     logger.info(f"   • {converted_count} leads convertidos")
     logger.info(f"   • {total_conversions} campos SHA-1 substituídos")
+    logger.info(f"   • Options mapeadas para {len(options_map)} campos enum")
     logger.info(f"   • Arquivo salvo: {output_path}")
 
 
 def normalize_custom_fields_across_entities():
-    """Converte custom_fields para todos os outros tipos de dados"""
-    logger.info("🔄 INICIANDO CONVERSÃO DOS CUSTOM FIELDS")
+    """Converte custom_fields para todos os outros tipos de dados com mapeamento de options"""
+    logger.info("🔄 INICIANDO CONVERSÃO DOS CUSTOM FIELDS COM OPTIONS")
     logger.info("=" * 50)
 
-    # Encontrar todos os arquivos *_fields_normalized.json exceto lead_fields
     field_files = glob.glob(os.path.join(NORMALIZED_DIR, '*_fields_normalized.json'))
     field_files = [f for f in field_files if 'lead_fields' not in f]
 
@@ -408,51 +407,34 @@ def normalize_custom_fields_across_entities():
         return
 
     for field_file in field_files:
-        # Extrair o tipo base (ex: deal_fields_normalized.json -> deal)
         base_name = os.path.basename(field_file)
         data_type = base_name.replace('_fields_normalized.json', '')
+        data_file = os.path.join(OUTPUT_DIR, f'{data_type}s.json')
 
-        # Caminhos dos arquivos
-        data_file = os.path.join(OUTPUT_DIR, f'{data_type}s.json')  # deals.json, organizations.json, etc.
-
-        # Verificar se o arquivo de dados existe
         if not os.path.exists(data_file):
             logger.warning(f"⚠️ Arquivo de dados não encontrado: {data_file}")
             continue
 
         logger.info(f"🔄 Processando: {data_type}s")
 
-        # Carregar os arquivos
+        # Carregar arquivos
         with open(data_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
         with open(field_file, 'r', encoding='utf-8') as f:
             fields = json.load(f)
 
-        # Criar mapa key -> name
-        field_map = {field['key']: field['name'] for field in fields['data']}
+        # Criar mapeamentos
+        field_map, options_map = create_field_mappings(fields)
 
-        # Converter custom_fields
-        converted_count = 0
-        total_conversions = 0
+        logger.info(f"📊 {len(options_map)} campos com options encontrados")
 
-        for item in data['data']:
-            if 'custom_fields' in item and item['custom_fields']:
-                new_custom_fields = {}
-                item_conversions = 0
+        # Converter com options
+        converted_count, total_conversions = convert_custom_fields_with_options(
+            data, field_map, options_map
+        )
 
-                for key, value in item['custom_fields'].items():
-                    field_name = field_map.get(key, key)  # Se não encontrar, usa a key original
-                    new_custom_fields[field_name] = value
-                    if key in field_map:
-                        item_conversions += 1
-                        total_conversions += 1
-
-                item['custom_fields'] = new_custom_fields
-                if item_conversions > 0:
-                    converted_count += 1
-
-        # Salvar resultado na pasta converted
+        # Salvar resultado
         output_path = os.path.join(CONVERTED_DIR, f'{data_type}s_converted.json')
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -460,6 +442,7 @@ def normalize_custom_fields_across_entities():
         logger.info(f"✅ {data_type}s convertido:")
         logger.info(f"   • {converted_count} itens com custom_fields convertidos")
         logger.info(f"   • {total_conversions} campos convertidos")
+        logger.info(f"   • Options mapeadas para {len(options_map)} campos enum")
         logger.info(f"   • Arquivo salvo: {output_path}")
 
 
@@ -543,6 +526,76 @@ def collect_leads():
     return fetch_and_save('leads', 'leads', 'v1')
 
 
+def collect_deal_products():
+    """16. GET /api/v2/deals/products - Coleta produtos de todos os deals"""
+    try:
+        logger.info("🔄 Coletando deal products...")
+
+        # Primeiro, verificar se temos o arquivo de deals
+        deals_file = os.path.join(OUTPUT_DIR, 'deals.json')
+        if not os.path.exists(deals_file):
+            logger.warning("⚠️ Arquivo deals.json não encontrado. Execute collect_deals() primeiro.")
+            return None
+
+        # Carregar deals para extrair IDs
+        with open(deals_file, 'r', encoding='utf-8') as f:
+            deals_data = json.load(f)
+
+        deal_ids = [str(deal['id']) for deal in deals_data.get('data', [])]
+
+        if not deal_ids:
+            logger.warning("⚠️ Nenhum deal ID encontrado.")
+            return None
+
+        logger.info(f"📊 Encontrados {len(deal_ids)} deals para buscar produtos")
+
+        all_data = []
+        batch_size = 100  # Máximo permitido pela API
+
+        # Processar em lotes de 100 deal IDs
+        for i in range(0, len(deal_ids), batch_size):
+            batch_ids = deal_ids[i:i + batch_size]
+            deal_ids_param = ','.join(batch_ids)
+
+            url = f"{BASE_URL}/v2/deals/products"
+            params = {
+                'deal_ids': deal_ids_param,
+                'api_token': args.API_TOKEN
+            }
+
+            logger.info(f"🔄 Processando lote {i // batch_size + 1}/{(len(deal_ids) + batch_size - 1) // batch_size}")
+
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get('data'):
+                all_data.extend(data['data'])
+
+            time.sleep(0.2)  # Pausa entre lotes
+
+        # Salvar dados completos
+        final_data = {
+            'success': True,
+            'data': all_data,
+            'total_count': len(all_data)
+        }
+
+        filepath = os.path.join(OUTPUT_DIR, "deal_products.json")
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(final_data, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"✅ deal_products salvo: {len(all_data)} registros")
+        return final_data
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Erro ao coletar deal_products: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Erro geral deal_products: {e}")
+        return None
+
+
 def main():
     """Executar coleta e normalização completa"""
     logger.info("🚀 INICIANDO COLETA E NORMALIZAÇÃO PIPEDRIVE")
@@ -570,6 +623,7 @@ def main():
         collect_products,
         collect_users,
         collect_deals,
+        # collect_deal_products,
         collect_activities,
         collect_leads
     ]
@@ -611,6 +665,7 @@ def main():
     logger.info("📊 Arquivos *_fields.json normalizados com sucesso")
     logger.info("📊 Leads convertidos com campos legíveis")
     logger.info("📊 Custom fields convertidos para todos os tipos de dados")
+    logger.info("📊 Options de campos enum convertidas para texto legível")
     logger.info("📊 Todos os arquivos convertidos para CSV achatados")
 
     with MemoryMonitor(logger):
