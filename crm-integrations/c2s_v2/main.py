@@ -47,12 +47,11 @@ CONFIG = {
 def get_arguments():
     """Configura e retorna os argumentos da linha de comando."""
     return (ArgumentManager("Script para coletar e processar dados da API Contact2Sale")
-            .add("API_BASE_URL", "URL base da API Contact2Sale (ex: https://api.contact2sale.com/integration)",
-                 required=True)
+            .add("API_BASE_URL", "URL base da API Contact2Sale (ex: https://api.contact2sale.com/integration)", required=True)
             .add("API_AUTH_TOKEN", "Token de autenticação Bearer para Contact2Sale", required=True)
-            # .add("PROJECT_ID", "ID do projeto GCP", required=True)
-            .add("TOOL_NAME", "Nome da ferramenta", required=True)
-            # .add("GOOGLE_APPLICATION_CREDENTIALS", "Credencial GCS", required=True)
+            .add("CRM_TYPE", "Nome da ferramenta", required=True)
+            .add("PROJECT_ID", "ID do projeto Google Cloud", required=True)
+            .add("GOOGLE_APPLICATION_CREDENTIALS", "Credencial GCS", required=True)
             .parse())
 
 
@@ -341,10 +340,9 @@ def main():
         with MemoryMonitor(logger):
             BigQuery.process_csv_files()
 
-        for endpoint_name in endpoint_order:
-            if endpoint_name in CONFIG["endpoints"]:
-                BigQuery.start_pipeline(args.PROJECT_ID, args.TOOL_NAME, table_name=endpoint_name,
-                                        credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
+        tables = Utils.get_existing_folders(logger)
+        BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=tables,
+                                credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         logger.info("🎉 Processo Contact2Sale finalizado com sucesso!")
 
