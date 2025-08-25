@@ -341,8 +341,9 @@ def main():
             BigQuery.process_csv_files()
 
         tables = Utils.get_existing_folders(logger)
-        BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=tables,
-                                credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
+        for table in tables:
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
+                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         logger.info("🎉 Processo Contact2Sale finalizado com sucesso!")
 
