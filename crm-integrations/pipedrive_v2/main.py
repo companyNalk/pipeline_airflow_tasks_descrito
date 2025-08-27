@@ -623,7 +623,7 @@ def main():
         collect_products,
         collect_users,
         collect_deals,
-        # collect_deal_products,
+        collect_deal_products,
         collect_activities,
         collect_leads
     ]
