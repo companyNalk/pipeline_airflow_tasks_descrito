@@ -24,6 +24,7 @@ def run_extract_locations(customer):
     CLIENT_SECRET = customer['client_secret']
     REFRESH_TOKEN = customer['refresh_token']
     LOGIN_CUSTOMER_ID = customer['login_customer_id']
+    GCS_FOLDER = "google_ads_locations"
 
     accounts_ids_raw = customer['subaccount_ids']
     if isinstance(accounts_ids_raw, str):
@@ -128,7 +129,7 @@ def run_extract_locations(customer):
             """Verifica se a data já foi processada no GCS"""
             date_parts = date_str.split('-')
             filename = f"google_ads_locations_{date_parts[2]}_{date_parts[1]}_{date_parts[0]}.csv"
-            blob_name = f"google_ads_locations/{filename}"
+            blob_name = f"{GCS_FOLDER}/{filename}"
             return self.bucket.blob(blob_name).exists()
 
         def get_dates_to_process(self, start_date: str, end_date: str) -> list:
@@ -430,7 +431,7 @@ def run_extract_locations(customer):
             # Nome do arquivo: google_ads_locations_02_08_2025.csv
             date_parts = date.split('-')
             filename = f"google_ads_locations_{date_parts[2]}_{date_parts[1]}_{date_parts[0]}.csv"
-            blob_name = f"google_ads_locations/{filename}"
+            blob_name = f"{GCS_FOLDER}/{filename}"
 
             try:
                 # Criar DataFrame e converter para CSV
@@ -519,7 +520,7 @@ def run_extract_locations(customer):
         print(f"{'=' * 50}")
         print(f"☁️ Arquivos salvos no GCS: {len(files_created)}")
         print(f"📊 Total de registros: {total_records:,}")
-        print(f"📂 Bucket GCS: {BUCKET_NAME}/google_ads_locations/")
+        print(f"📂 Bucket GCS: {BUCKET_NAME}/{GCS_FOLDER}/")
 
         if files_created:
             print(f"\n📋 Últimos arquivos gerados:")
@@ -530,7 +531,7 @@ def run_extract_locations(customer):
                 print(f"   ... e mais {len(files_created) - 3} arquivos")
 
         print(f"\n✅ Pronto! Dados de localização salvos no Google Cloud Storage")
-        print(f"   └─ Bucket: gs://{BUCKET_NAME}/google_ads_locations/")
+        print(f"   └─ Bucket: gs://{BUCKET_NAME}/{GCS_FOLDER}/")
 
     # START
     main()
@@ -554,6 +555,8 @@ def run_extract_keywords(customer):
     CLIENT_SECRET = customer['client_secret']
     REFRESH_TOKEN = customer['refresh_token']
     LOGIN_CUSTOMER_ID = customer['login_customer_id']
+    GCS_FOLDER = "google_ads_keywords"
+    OUTPUT_FOLDER = 'google_ads_exports'
 
     accounts_ids_raw = customer['subaccount_ids']
     if isinstance(accounts_ids_raw, str):
@@ -568,9 +571,6 @@ def run_extract_keywords(customer):
 
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
-
-    # 📁 Pasta de saída local (backup)
-    OUTPUT_FOLDER = 'google_ads_exports'
 
     # 🔧 Configuração de logs
     logging.basicConfig(level=logging.WARNING)  # Só mostrar erros importantes
@@ -1019,9 +1019,9 @@ def run_extract_keywords(customer):
                         files_created.append(gcs_path)
 
                     # Salvar backup local
-                    # local_path = extractor.save_local_backup(day_data, date)
-                    # if local_path:
-                    #     backups_created.append(local_path)
+                    local_path = extractor.save_local_backup(day_data, date)
+                    if local_path:
+                        backups_created.append(local_path)
 
                     total_records += len(day_data)
                 else:
@@ -1039,7 +1039,7 @@ def run_extract_keywords(customer):
         print(f"☁️ Arquivos salvos no GCS: {len(files_created)}")
         print(f"💾 Backups locais criados: {len(backups_created)}")
         print(f"📊 Total de registros: {total_records:,}")
-        print(f"📂 Bucket GCS: {BUCKET_NAME}/google_ads_keywords/")
+        print(f"📂 Bucket GCS: {BUCKET_NAME}/{GCS_FOLDER}/")
         print(f"📁 Pasta local: {OUTPUT_FOLDER}/")
 
         if files_created:
@@ -1051,7 +1051,7 @@ def run_extract_keywords(customer):
                 print(f"   ... e mais {len(files_created) - 3} arquivos")
 
         print(f"\n✅ Pronto! Dados salvos no Google Cloud Storage")
-        print(f"   └─ Bucket: gs://{BUCKET_NAME}/google_ads_keywords/")
+        print(f"   └─ Bucket: gs://{BUCKET_NAME}/{GCS_FOLDER}/")
 
     # START
     main()
