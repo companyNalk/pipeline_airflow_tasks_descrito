@@ -540,7 +540,6 @@ def run_extract_locations(customer):
 def run_extract_keywords(customer):
     from datetime import timedelta
     from google.ads.googleads.client import GoogleAdsClient
-    from google.ads.googleads.errors import GoogleAdsException
     import logging
     import pandas as pd
     from datetime import datetime
@@ -657,7 +656,7 @@ def run_extract_keywords(customer):
             """Verifica se a data já foi processada no GCS"""
             date_parts = date_str.split('-')
             filename = f"google_ads_keywords_{date_parts[2]}_{date_parts[1]}_{date_parts[0]}.csv"
-            blob_name = f"google_ads_keywords/{filename}"
+            blob_name = f"{GCS_FOLDER}/{filename}"
             return self.bucket.blob(blob_name).exists()
 
         def get_dates_to_process(self, start_date: str, end_date: str) -> list:
@@ -923,7 +922,7 @@ def run_extract_keywords(customer):
             # Nome do arquivo: google_ads_keywords_02_08_2025.csv
             date_parts = date.split('-')
             filename = f"google_ads_keywords_{date_parts[2]}_{date_parts[1]}_{date_parts[0]}.csv"
-            blob_name = f"google_ads_keywords/{filename}"
+            blob_name = f"{GCS_FOLDER}/{filename}"
 
             try:
                 # Criar DataFrame e converter para CSV
@@ -1065,10 +1064,10 @@ def get_extraction_tasks():
         list: List of task configurations
     """
     return [
-        {
-            'task_id': 'run_extract_locations',
-            'python_callable': run_extract_locations
-        },
+        # {
+        #     'task_id': 'run_extract_locations',
+        #     'python_callable': run_extract_locations
+        # },
         {
             'task_id': 'run_extract_keywords',
             'python_callable': run_extract_keywords
