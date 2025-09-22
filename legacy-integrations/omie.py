@@ -587,6 +587,99 @@ def run(customer):
             upload_to_gcs(df, f"{ENDPOINT_NAME}/pedidos_venda_etapa_{c_etapa}.csv")
             logger.info(f"Coleta finalizada em {datetime.now() - inicio}. Total: {len(pedidos)}")
 
+    def coletar_resumo_vendas(data_inicio="01/01/2024", data_fim="22/09/2025"):
+        """Coleta resumo de vendas da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/produtos/vendas-resumo/"
+        ENDPOINT_NAME = "vendas_resumo"
+        inicio = datetime.now()
+
+        logger.info(f"Iniciando coleta de resumo de vendas ({data_inicio} a {data_fim})...")
+
+        payload = {
+            "call": "ObterResumoProdutos",
+            "app_key": API_KEY,
+            "app_secret": API_SECRET,
+            "param": [{
+                "dDataInicio": data_inicio,
+                "dDataFim": data_fim,
+                "lApenasResumo": True
+            }]
+        }
+
+        response = fazer_requisicao_com_retry(URL, payload, timeout=60)
+        if not response:
+            logger.error("Falha ao obter resumo de vendas.")
+            return
+
+        dados = response.json()
+
+        # Processar dados aninhados para estrutura tabular
+        resultados = []
+
+        # Dados principais do período
+        resultado_base = {
+            "data_inicio": dados.get("dDataInicio", ""),
+            "data_fim": dados.get("dDataFim", ""),
+            "data_coleta": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        # Processar pedidoVenda se existir
+        if dados.get("pedidoVenda"):
+            pedido_venda = dados["pedidoVenda"].copy()
+            pedido_venda.update(resultado_base)
+            pedido_venda["tipo_resumo"] = "pedido_venda"
+
+            # Processar faturarHoje se existir
+            if pedido_venda.get("faturarHoje"):
+                for k, v in pedido_venda["faturarHoje"].items():
+                    pedido_venda[f"faturar_hoje_{k}"] = v
+                del pedido_venda["faturarHoje"]
+
+            resultados.append(pedido_venda)
+
+        # Processar faturamentoResumo se existir
+        if dados.get("faturamentoResumo"):
+            faturamento_resumo = dados["faturamentoResumo"].copy()
+            faturamento_resumo.update(resultado_base)
+            faturamento_resumo["tipo_resumo"] = "faturamento_resumo"
+            resultados.append(faturamento_resumo)
+
+        # Processar outros painéis se existirem (mesmo que sejam null, registrar)
+        paineis = [
+            "painelNfeVenda", "painelCteVenda", "painelCfeSat",
+            "painelNfce", "painelCupom", "faturamentoCupomResumo", "propostaVenda"
+        ]
+
+        for painel in paineis:
+            if painel in dados:
+                painel_data = dados[painel] if dados[painel] else {}
+                if isinstance(painel_data, dict):
+                    painel_data.update(resultado_base)
+                    painel_data["tipo_resumo"] = painel
+                    resultados.append(painel_data)
+                else:
+                    # Se for null ou outro tipo, criar registro básico
+                    registro_painel = resultado_base.copy()
+                    registro_painel["tipo_resumo"] = painel
+                    registro_painel["status"] = "null" if dados[painel] is None else str(dados[painel])
+                    resultados.append(registro_painel)
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+
+            # Definir ordem das colunas principais
+            colunas_principais = ["data_inicio", "data_fim", "data_coleta", "tipo_resumo"]
+            colunas_existentes = [col for col in colunas_principais if col in df.columns]
+            outras_colunas = [col for col in df.columns if col not in colunas_principais]
+            colunas_ordenadas = colunas_existentes + sorted(outras_colunas)
+
+            df = df[colunas_ordenadas]
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/resumo_vendas.csv")
+            logger.info(
+                f"Coleta de resumo de vendas finalizada em {datetime.now() - inicio}. Total de registros: {len(resultados)}")
+        else:
+            logger.warning("Nenhum dado de resumo de vendas encontrado.")
+
     # === FUNÇÃO EXECUTOR E MAIN ===
     def executar_todas_coletas():
         """Executa todas as coletas sequencialmente"""
@@ -600,9 +693,10 @@ def run(customer):
             {"nome": "Vendedores", "func": coletar_vendedores},
             {"nome": "Produtos", "func": coletar_produtos},
             {"nome": "Motivos de Devolução", "func": coletar_motivos_devolucao},
-            # {"nome": "Etapas de Pedido", "func": coletar_etapas_pedido},
+            {"nome": "Etapas de Pedido", "func": coletar_etapas_pedido},
             {"nome": "Etapas de Faturamento", "func": coletar_etapas_faturamento},
-            {"nome": "Pedidos de Venda (etapa 50)", "func": lambda: coletar_pedidos_venda("50")}
+            {"nome": "Pedidos de Venda (etapa 50)", "func": lambda: coletar_pedidos_venda("50")},
+            {"nome": "Resumo de Vendas", "func": coletar_resumo_vendas}
         ]
 
         for i, coleta in enumerate(coletas, 1):
