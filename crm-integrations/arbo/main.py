@@ -14,8 +14,16 @@ logger = AppInitializer.initialize()
 CONFIG = {
     "rate_limit": 100,
     "endpoints": {
-        "leads": {"path": "leads", "url_key": "API_BASE_URL_LEADS", "token_key": "API_AUTH_TOKEN_LEADS"},
-        "imoveis": {"path": "imoveis", "url_key": "API_BASE_URL_IMOVEIS", "token_key": "Authorization"},
+        "leads": {
+            "path": "leads",
+            "url_key": "API_BASE_URL_LEADS",
+            "token_key": "API_AUTH_TOKEN_LEADS"
+        },
+        "imoveis": {
+            "path": "imoveis",
+            "url_key": "API_BASE_URL_IMOVEIS",
+            "token_key": "API_AUTH_TOKEN_IMOVEIS"  # corrigido
+        },
     }
 }
 
@@ -26,7 +34,7 @@ def get_arguments():
             .add("API_BASE_URL_LEADS", "URL base para leads", required=True)
             .add("API_AUTH_TOKEN_LEADS", "Token de autenticação para leads", required=True)
             .add("API_BASE_URL_IMOVEIS", "URL base para imóveis", required=True)
-            .add("Authorization", "Token de autenticação para imóveis", required=True)
+            .add("API_AUTH_TOKEN_IMOVEIS", "Token de autenticação para imóveis", required=True)  # corrigido
             .add("PROJECT_ID", "ID do projeto GCS", required=True)
             .add("CRM_TYPE", "Ferramenta: Nome aba sheets", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credenciais GCS", required=True)
@@ -41,7 +49,7 @@ def fetch_all_data(http_client, endpoint, token):
 
     # Buscar primeira página
     page_num = 1
-    headers = {"Authorization": token}
+    headers = {"Authorization": token}  # Authorization no header HTTP
 
     while True:
         try:
