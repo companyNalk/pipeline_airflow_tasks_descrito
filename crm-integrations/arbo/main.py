@@ -25,7 +25,7 @@ CONFIG = {
             "path": "imoveis",
             "url_key": "API_BASE_URL_IMOVEIS",
             "token_key": "API_AUTH_TOKEN_IMOVEIS",
-            "paginated": False  # ✅ imoveis NÃO tem paginação
+            "paginated": True   # ✅ agora imoveis também pagina
         },
     }
 }
@@ -45,14 +45,14 @@ def get_arguments():
 
 
 def fetch_all_data(http_client, endpoint_config, token):
-    """Busca todos os dados de um endpoint (paginado ou não)."""
+    """Busca todos os dados de um endpoint (com paginação)."""
     endpoint = endpoint_config["path"]
     headers = {"Authorization": token}
     all_items = []
     start_time = time.time()
 
-    if endpoint_config.get("paginated", True):
-        # 🔹 Leads com paginação
+    if endpoint == "leads":
+        # 🔹 Leads com paginação normal
         page_num = 1
         while True:
             params = {"page": page_num, "perPage": 500}
@@ -70,20 +70,29 @@ def fetch_all_data(http_client, endpoint_config, token):
             page_num += 1
             time.sleep(0.5)
     else:
-        # 🔹 Imoveis sem paginação, mas com filtro de 365 dias
+        # 🔹 Imoveis pagina como no teste validado
+        # Sempre aplica filtro de 365 dias
         end_date = datetime.now().date()
         start_date = end_date - timedelta(days=365)
-        params = {
-            "startDate": start_date.isoformat(),
-            "endDate": end_date.isoformat()
-        }
 
-        data = http_client.get(endpoint, headers=headers, params=params)
+        # primeira chamada para descobrir lastPage
+        url = f"{endpoint}?perPage=100"
+        params = {"startDate": start_date.isoformat(), "endDate": end_date.isoformat()}
+        data = http_client.get(url, headers=headers, params=params)
+
+        total_pages = int(data.get("lastPage", 1))
         all_items.extend(data.get("data", []))
-        logger.info(
-            f"📄 Endpoint {endpoint}: retorno único de {len(all_items)} itens "
-            f"entre {start_date.isoformat()} e {end_date.isoformat()}"
-        )
+        logger.info(f"📄 Endpoint {endpoint}: página 1/{total_pages} com {len(data.get('data', []))} itens")
+
+        # laço de paginação
+        for page_num in range(2, total_pages + 1):
+            url = f"{endpoint}?perPage=100&page={page_num}"
+            data = http_client.get(url, headers=headers, params=params)
+
+            items = data.get("data", [])
+            all_items.extend(items)
+            logger.info(f"📄 Endpoint {endpoint}: página {page_num}/{total_pages} com {len(items)} itens")
+            time.sleep(0.5)
 
     duration = time.time() - start_time
     logger.info(f"✅ Endpoint {endpoint}: {len(all_items)} itens obtidos em {duration:.2f}s")
