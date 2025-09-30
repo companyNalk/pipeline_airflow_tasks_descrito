@@ -17,16 +17,12 @@ CONFIG = {
         "leads": {
             "path": "leads",
             "url_key": "API_BASE_URL_LEADS",
-            "token_key": "API_AUTH_TOKEN_LEADS",
-            "auth_header": "Authorization",
-            "scheme": "Bearer "
+            "token_key": "API_AUTH_TOKEN_LEADS"
         },
         "imoveis": {
             "path": "imoveis",
             "url_key": "API_BASE_URL_IMOVEIS",
-            "token_key": "API_AUTH_TOKEN_IMOVEIS",
-            "auth_header": "Authorization",
-            "scheme": "Bearer "
+            "token_key": "API_AUTH_TOKEN_IMOVEIS"  # continua usando a env certa
         },
     }
 }
@@ -45,25 +41,19 @@ def get_arguments():
             .parse())
 
 
-def fetch_all_data(http_client, endpoint_config, token):
+def fetch_all_data(http_client, endpoint, token, endpoint_name):
     """Busca todos os dados de um endpoint."""
-    endpoint = endpoint_config['path']
-    auth_header = endpoint_config.get('auth_header', 'Authorization')
-    scheme = endpoint_config.get('scheme', '')
-
-    # Montar header com prefixo "Bearer " se necessário
-    raw_token = (token or "").strip()
-    if scheme and raw_token and not raw_token.lower().startswith(scheme.lower()):
-        header_value = f"{scheme}{raw_token}"
-    else:
-        header_value = raw_token
-
-    headers = {auth_header: header_value}
-
-    logger.info(f"📚 Buscando dados para: {endpoint} | header={auth_header}")
+    logger.info(f"📚 Buscando dados para: {endpoint}")
     start_time = time.time()
     all_items = []
+
     page_num = 1
+
+    # Ajuste: imóveis usa Authorization puro, leads mantém Bearer
+    if endpoint_name == "imoveis":
+        headers = {"Authorization": token}
+    else:
+        headers = {"Authorization": f"Bearer {token}"}
 
     while True:
         try:
@@ -81,7 +71,7 @@ def fetch_all_data(http_client, endpoint_config, token):
                 break
 
             page_num += 1
-            time.sleep(0.5)
+            time.sleep(0.5)  # Pausa entre requisições
 
         except Exception as e:
             logger.error(f"❌ Erro na página {page_num} para {endpoint}: {str(e)}")
@@ -107,7 +97,7 @@ def process_endpoint(endpoint_name, endpoint_config, args):
 
         # Buscar e processar dados
         start_time = time.time()
-        raw_data = fetch_all_data(http_client, endpoint_config, token)
+        raw_data = fetch_all_data(http_client, endpoint_config['path'], token, endpoint_name)
 
         # Processar dados
         logger.info(f"💾 Processando e salvando {len(raw_data)} registros para {endpoint_name}")
