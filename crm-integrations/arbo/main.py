@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta
 
 from commons.app_inicializer import AppInitializer
 from commons.big_query import BigQuery
@@ -17,12 +18,14 @@ CONFIG = {
         "leads": {
             "path": "leads",
             "url_key": "API_BASE_URL_LEADS",
-            "token_key": "API_AUTH_TOKEN_LEADS"
+            "token_key": "API_AUTH_TOKEN_LEADS",
+            "paginated": True   # ✅ leads tem paginação
         },
         "imoveis": {
             "path": "imoveis",
             "url_key": "API_BASE_URL_IMOVEIS",
-            "token_key": "API_AUTH_TOKEN_IMOVEIS"
+            "token_key": "API_AUTH_TOKEN_IMOVEIS",
+            "paginated": False  # ✅ imoveis NÃO tem paginação
         },
     }
 }
@@ -41,41 +44,49 @@ def get_arguments():
             .parse())
 
 
-def fetch_all_data(http_client, endpoint, token):
-    """Busca todos os dados de um endpoint."""
-    logger.info(f"📚 Buscando dados para: {endpoint}")
-    start_time = time.time()
-    all_items = []
-
-    page_num = 1
-
-    # Ambos endpoints usam Authorization puro (sem Bearer)
+def fetch_all_data(http_client, endpoint_config, token):
+    """Busca todos os dados de um endpoint (paginado ou não)."""
+    endpoint = endpoint_config["path"]
     headers = {"Authorization": token}
+    all_items = []
+    start_time = time.time()
 
-    while True:
-        try:
+    if endpoint_config.get("paginated", True):
+        # 🔹 Leads com paginação
+        page_num = 1
+        while True:
             params = {"page": page_num, "perPage": 500}
             data = http_client.get(endpoint, headers=headers, params=params)
 
-            items = data.get('data', [])
+            items = data.get("data", [])
             all_items.extend(items)
 
-            total_pages = int(data.get('lastPage', 1))
-            if page_num == 1 or page_num == total_pages or page_num % 20 == 0:
-                logger.info(f"📄 Endpoint {endpoint}: página {page_num}/{total_pages} com {len(items)} itens")
+            total_pages = int(data.get("lastPage", 1))
+            logger.info(f"📄 Endpoint {endpoint}: página {page_num}/{total_pages} com {len(items)} itens")
 
             if page_num >= total_pages:
                 break
 
             page_num += 1
-            time.sleep(0.5)  # Pausa entre requisições
+            time.sleep(0.5)
+    else:
+        # 🔹 Imoveis sem paginação, mas com filtro de 365 dias
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=365)
+        params = {
+            "startDate": start_date.isoformat(),
+            "endDate": end_date.isoformat()
+        }
 
-        except Exception as e:
-            logger.error(f"❌ Erro na página {page_num} para {endpoint}: {str(e)}")
-            raise
+        data = http_client.get(endpoint, headers=headers, params=params)
+        all_items.extend(data.get("data", []))
+        logger.info(
+            f"📄 Endpoint {endpoint}: retorno único de {len(all_items)} itens "
+            f"entre {start_date.isoformat()} e {end_date.isoformat()}"
+        )
 
     duration = time.time() - start_time
-    logger.info(f"✅ Endpoint {endpoint}: {total_pages} páginas com {len(all_items)} itens obtidos em {duration:.2f}s")
+    logger.info(f"✅ Endpoint {endpoint}: {len(all_items)} itens obtidos em {duration:.2f}s")
     return all_items
 
 
@@ -94,7 +105,7 @@ def process_endpoint(endpoint_name, endpoint_config, args):
 
         # Buscar e processar dados
         start_time = time.time()
-        raw_data = fetch_all_data(http_client, endpoint_config['path'], token)
+        raw_data = fetch_all_data(http_client, endpoint_config, token)
 
         # Processar dados
         logger.info(f"💾 Processando e salvando {len(raw_data)} registros para {endpoint_name}")
@@ -121,7 +132,8 @@ def main():
         for endpoint_name, endpoint_config in CONFIG["endpoints"].items():
             endpoint_stats[endpoint_name] = process_endpoint(endpoint_name, endpoint_config, args)
             logger.info(
-                f"✅ {endpoint_name}: {endpoint_stats[endpoint_name]['registros']} registros em {endpoint_stats[endpoint_name]['tempo']:.2f}s")
+                f"✅ {endpoint_name}: {endpoint_stats[endpoint_name]['registros']} registros em {endpoint_stats[endpoint_name]['tempo']:.2f}s"
+            )
 
         if not ReportGenerator.final_summary(logger, endpoint_stats, global_start_time):
             raise Exception("Falhas encontradas na execução")
