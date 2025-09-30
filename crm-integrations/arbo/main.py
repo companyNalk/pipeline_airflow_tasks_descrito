@@ -15,7 +15,7 @@ CONFIG = {
     "rate_limit": 100,
     "endpoints": {
         "leads": {"path": "leads", "url_key": "API_BASE_URL_LEADS", "token_key": "API_AUTH_TOKEN_LEADS"},
-        "imoveis": {"path": "imoveis", "url_key": "API_BASE_URL_IMOVEIS", "token_key": "API_AUTH_TOKEN_IMOVEIS"},
+        "imoveis": {"path": "imoveis", "url_key": "API_BASE_URL_IMOVEIS", "token_key": "Authorization"},
     }
 }
 
@@ -26,7 +26,7 @@ def get_arguments():
             .add("API_BASE_URL_LEADS", "URL base para leads", required=True)
             .add("API_AUTH_TOKEN_LEADS", "Token de autenticação para leads", required=True)
             .add("API_BASE_URL_IMOVEIS", "URL base para imóveis", required=True)
-            .add("API_AUTH_TOKEN_IMOVEIS", "Token de autenticação para imóveis", required=True)
+            .add("Authorization", "Token de autenticação para imóveis", required=True)
             .add("PROJECT_ID", "ID do projeto GCS", required=True)
             .add("CRM_TYPE", "Ferramenta: Nome aba sheets", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credenciais GCS", required=True)
