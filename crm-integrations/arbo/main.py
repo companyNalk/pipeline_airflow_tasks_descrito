@@ -22,7 +22,7 @@ CONFIG = {
         "imoveis": {
             "path": "imoveis",
             "url_key": "API_BASE_URL_IMOVEIS",
-            "token_key": "API_AUTH_TOKEN_IMOVEIS"  # continua usando a env certa
+            "token_key": "API_AUTH_TOKEN_IMOVEIS"
         },
     }
 }
@@ -41,7 +41,7 @@ def get_arguments():
             .parse())
 
 
-def fetch_all_data(http_client, endpoint, token, endpoint_name):
+def fetch_all_data(http_client, endpoint, token):
     """Busca todos os dados de um endpoint."""
     logger.info(f"📚 Buscando dados para: {endpoint}")
     start_time = time.time()
@@ -49,11 +49,8 @@ def fetch_all_data(http_client, endpoint, token, endpoint_name):
 
     page_num = 1
 
-    # Ajuste: imóveis usa Authorization puro, leads mantém Bearer
-    if endpoint_name == "imoveis":
-        headers = {"Authorization": token}
-    else:
-        headers = {"Authorization": f"Bearer {token}"}
+    # Ambos endpoints usam Authorization puro (sem Bearer)
+    headers = {"Authorization": token}
 
     while True:
         try:
@@ -97,7 +94,7 @@ def process_endpoint(endpoint_name, endpoint_config, args):
 
         # Buscar e processar dados
         start_time = time.time()
-        raw_data = fetch_all_data(http_client, endpoint_config['path'], token, endpoint_name)
+        raw_data = fetch_all_data(http_client, endpoint_config['path'], token)
 
         # Processar dados
         logger.info(f"💾 Processando e salvando {len(raw_data)} registros para {endpoint_name}")
