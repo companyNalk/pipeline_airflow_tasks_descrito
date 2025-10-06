@@ -114,7 +114,8 @@ class AdvancedUtils(Utils):
 
     @staticmethod
     def process_with_relational_extraction(raw_data: List[Dict], endpoint_name: str, parent_id_field: str = "id",
-                                           table_configs: Optional[Dict] = None, auto_detect: bool = True, **kwargs) -> Dict[str, List[Dict]]:
+                                           table_configs: Optional[Dict] = None, auto_detect: bool = True, **kwargs) -> \
+            Dict[str, List[Dict]]:
         """
         EXTRAÇÃO AUTOMÁTICA com TOTAL compatibilidade.
 
@@ -162,3 +163,88 @@ class AdvancedUtils(Utils):
                 results[table_name] = AdvancedUtils.process_and_save_data(table_data, table_name)
 
         return results
+
+    @staticmethod
+    def process_and_save_data(raw_data: List[Dict], endpoint_name: str, use_pascal_case_conversion: bool = False) -> \
+            List[Dict]:
+        """
+        Sobrescreve o método da classe Utils para aplicar conversões específicas.
+        Inclui conversão de valores monetários para a tabela c2s_leads_auto_gold.
+        A conversão é aplicada DEPOIS do flatten para pegar os nomes corretos das colunas.
+        """
+        if not raw_data:
+            logging.warning(f"Nenhum dado recebido para o endpoint {endpoint_name}")
+            return []
+
+        try:
+            # Aplicar conversão de valores monetários para tabelas relacionadas ao C2S
+            is_c2s_table = any(keyword in endpoint_name.lower() for keyword in ['c2s', 'leads', 'gold'])
+
+            if is_c2s_table:
+                logging.info(f"🪙 Processamento especial para tabela C2S: {endpoint_name}")
+
+                # PRIMEIRO: Processar normalmente (normalizar, flatten, etc)
+                # Fazer o processamento igual ao Utils.process_and_save_data mas sem salvar ainda
+                logging.info(f"Processando {len(raw_data)} registros do endpoint {endpoint_name}")
+
+                # Remover quebra de linhas
+                raw_data = Utils._remove_newlines_from_fields(raw_data)
+
+                # Normalizar as chaves dos dados
+                normalized_data = Utils._normalize_keys(raw_data, use_pascal_case_conversion)
+
+                # Achatar a estrutura JSON
+                flattened_data = [Utils._flatten_json(item) for item in normalized_data]
+
+                # Converter para DataFrame
+                import pandas as pd
+                df = pd.DataFrame(flattened_data)
+
+                if df.empty:
+                    logging.warning(f"DataFrame vazio após processamento para {endpoint_name}")
+                    return []
+
+                # SEGUNDO: Aplicar conversão monetária nas colunas do DataFrame
+                logging.info(f"🪙 Aplicando conversão de valores monetários no DataFrame")
+                for col in df.columns:
+                    col_lower = col.lower()
+                    is_monetary_field = any(keyword in col_lower for keyword in [
+                        'valor', 'preco', 'price', 'value', 'amount', 'money', 'currency',
+                        'orcamento', 'budget', 'gold', 'vendas', 'venda', 'receita', 'revenue',
+                        'done_price'
+                    ])
+
+                    if is_monetary_field:
+                        logging.info(f"🔍 Convertendo coluna monetária: {col}")
+                        # Converter cada valor da coluna
+                        df[col] = df[col].apply(lambda x:
+                            None if (pd.isna(x) or (isinstance(x, str) and x.strip() == ''))
+                            else (Utils._convert_brazilian_currency_to_float(x) if isinstance(x, str)
+                                  else (float(x) if x is not None else None))
+                        )
+                        logging.info(f"✅ Coluna {col} convertida para float")
+
+                # TERCEIRO: Continuar com o processamento normal
+                df = Utils._convert_columns_to_nullable_int(df)
+                df = Utils._normalize_column_names(df)
+                df = Utils._remove_empty_columns(df)
+                df = Utils._process_and_convert_id_columns(df)
+
+                # Salvar localmente
+                Utils._save_local_dataframe(df, endpoint_name)
+
+                # Verificar validade do csv
+                Utils._validate_csv(endpoint_name, delimiter=';')
+
+                logging.info(f"Processamento concluído: {len(df)} registros para {endpoint_name}")
+
+                # Retornar os dados processados
+                return df.to_dict(orient='records')
+
+            else:
+                # Para tabelas não-C2S, usar o método original
+                return Utils.process_and_save_data(raw_data, endpoint_name, use_pascal_case_conversion)
+
+        except Exception as e:
+            logging.error(f"Erro no processamento de dados para {endpoint_name}: {str(e)}")
+            raise

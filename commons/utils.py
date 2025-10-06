@@ -228,6 +228,88 @@ class Utils:
             raise
 
     @staticmethod
+    def _convert_brazilian_currency_to_float(value):
+        """
+        Converte valores monetários brasileiros em string para float.
+
+        Trata formatos comuns:
+        - "210000" -> 210000.0
+        - "198.000" -> 198000.0
+        - "198.000,00" -> 198000.0
+        - "2.100.000,00" -> 2100000.0
+        - "198000.00" -> 198000.0
+        - "1500.00" -> 1500.0
+        - "0" -> 0.0
+        - "000" ou "00000000" -> 0.0
+
+        Args:
+            value: Valor a ser convertido (string ou outro tipo)
+
+        Returns:
+            float: Valor convertido para float ou 0.0 se inválido
+        """
+        if pd.isna(value) or value is None:
+            return None
+
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        if not isinstance(value, str):
+            return None
+
+        # Remover espaços em branco
+        value = value.strip()
+
+        # Se valor vazio, retornar None
+        if not value:
+            return None
+
+        # Tratar valores zerados ou inválidos
+        if value == "0" or value.replace("0", "").replace(".", "").replace(",", "") == "":
+            return 0.0
+
+        try:
+            # Remover caracteres não numéricos exceto ponto e vírgula
+            cleaned = re.sub(r'[^\d.,]', '', value)
+
+            if not cleaned:
+                return 0.0
+
+            # Casos específicos de formato brasileiro
+            if ',' in cleaned and '.' in cleaned:
+                # Formato brasileiro: 1.234.567,89 ou 101.000,00
+                # Remover pontos (separadores de milhares) e trocar vírgula por ponto
+                cleaned = cleaned.replace('.', '').replace(',', '.')
+            elif ',' in cleaned and cleaned.count(',') == 1:
+                # Só vírgula como separador decimal: 1234,56 -> 1234.56
+                # Verificar se não é separador de milhares incorreto
+                parts = cleaned.split(',')
+                if len(parts[1]) <= 2:  # Provavelmente decimal
+                    cleaned = cleaned.replace(',', '.')
+                else:  # Provavelmente milhares mal formatados
+                    cleaned = cleaned.replace(',', '')
+            elif '.' in cleaned:
+                # Verificar se é separador de milhares ou decimal
+                parts = cleaned.split('.')
+                if len(parts) == 2 and len(parts[1]) <= 2 and len(parts[0]) <= 3:
+                    # Provavelmente decimal: 123.56
+                    pass  # manter como está
+                elif len(parts) > 2 or (len(parts) == 2 and len(parts[1]) > 2):
+                    # Provavelmente separador de milhares: 1.234.567 ou 123.456
+                    cleaned = cleaned.replace('.', '')
+                elif len(parts) == 2 and len(parts[0]) > 3:
+                    # Provável separador de milhares: 1234.567
+                    cleaned = cleaned.replace('.', '')
+
+            # Converter para float
+            result = float(cleaned)
+            return result
+
+        except (ValueError, TypeError):
+            # Se não conseguir converter, retornar 0.0
+            return 0.0
+
+    @staticmethod
     def _remove_newlines_from_fields(data: List[Dict]) -> List[Dict]:
         """
         Remove quebras de linha (\n, \r ou \r\n) de todos os campos de texto.
