@@ -211,7 +211,7 @@ class AdvancedUtils(Utils):
                     is_monetary_field = any(keyword in col_lower for keyword in [
                         'valor', 'preco', 'price', 'value', 'amount', 'money', 'currency',
                         'orcamento', 'budget', 'gold', 'vendas', 'venda', 'receita', 'revenue',
-                        'done_price'
+                        'done_price', 'attributes_done_details_done_details'
                     ])
 
                     if is_monetary_field:
