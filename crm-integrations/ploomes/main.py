@@ -68,6 +68,10 @@ CONFIG = {
             "path": "Deals@Stages",
             "use_pagination": True
         },
+        "deals_otherproperties": {
+            "path": "Deals?$select=OtherProperties&$expand=OtherProperties",
+            "use_pagination": True
+        },
         "deals_status": {
             "path": "Deals@Status",
             "use_pagination": True
