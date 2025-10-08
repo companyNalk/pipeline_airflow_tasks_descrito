@@ -100,3 +100,7 @@ User-Key: {{secret}}
 ### ========== USERS ==========
 GET {{url_base}}/Users
 User-Key: {{secret}}
+
+### ========== Fields ==========
+GET {{url_base}}/Fields
+User-Key: {{secret}}
