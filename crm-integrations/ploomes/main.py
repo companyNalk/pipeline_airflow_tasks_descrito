@@ -119,6 +119,10 @@ CONFIG = {
         "users": {
             "path": "Users",
             "use_pagination": True
+        },
+        "fields": {
+            "path": "Fields",
+            "use_pagination": True
         }
     }
 }
