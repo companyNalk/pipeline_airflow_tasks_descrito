@@ -1,4 +1,7 @@
-numpy==1.26.4
-pandas==2.2.1
-python-dotenv==1.0.1
+gpandas==2.2.1
 requests==2.31.0
+python-dotenv==1.0.1
+python-dateutil>=2.8.0
+psutil>=5.9.0
+google-cloud-bigquery>=3.11.0
+google-auth>=2.17.0
