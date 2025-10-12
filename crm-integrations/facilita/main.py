@@ -1,6 +1,8 @@
 import time
 
 from commons.app_inicializer import AppInitializer
+from commons.big_query import BigQuery
+from commons.memory_monitor import MemoryMonitor
 from commons.report_generator import ReportGenerator
 from commons.utils import Utils
 from generic.argument_manager import ArgumentManager
@@ -103,6 +105,14 @@ def get_arguments():
             .add("API_BASE_URL", "URL base", required=True, default="https://bi.appfacilita.com")
             .add("FACILITA_TOKEN", "Token de autenticação", required=True)
             .add("FACILITA_INSTANCE", "Instância do AppFacilita", required=True)
+            .add("PLATFORM_API_BASE_URL", "URL base da API Platform", required=False,
+                 default="https://api.facilitaapp.com/platform/v1")
+            .add("PLATFORM_API_INSTANCE", "API Instance para Platform API", required=False)
+            .add("PLATFORM_API_KEY", "API Key para Platform API", required=False)
+            .add("PLATFORM_TOKEN_USER", "Token User para Platform API", required=False)
+            .add("PROJECT_ID", "ID do projeto GCP", required=True)
+            .add("CRM_TYPE", "Tipo do CRM", required=True)
+            .add("GOOGLE_APPLICATION_CREDENTIALS", "Credencial GCS", required=True)
             .parse())
 
 
@@ -148,6 +158,41 @@ def fetch_report_page(report_name, token, instance):
 
     except Exception as e:
         logger.error(f"❌ Erro ao buscar relatório {report_name}: {str(e)}")
+        raise
+
+
+def fetch_funnel_data(api_instance, api_key, token_user, platform_api_base_url):
+    """Busca dados do endpoint /funnel da Platform API."""
+    try:
+        logger.info(f"📊 Buscando dados do funnel da Platform API")
+
+        # Criar um cliente HTTP específico para a Platform API
+        platform_rate_limiter = RateLimiter(requests_per_window=RATE_LIMIT, logger=logger)
+        platform_http_client = HttpClient(base_url=platform_api_base_url, rate_limiter=platform_rate_limiter,
+                                          logger=logger)
+
+        headers = {
+            "api-instance": api_instance,
+            "api-key": api_key,
+            "token-user": token_user
+        }
+
+        data = platform_http_client.get("funnel", headers=headers, debug_info="funnel")
+
+        # Processar a resposta
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict) and 'data' in data:
+            items = data['data'] if isinstance(data['data'], list) else [data['data']]
+        else:
+            items = [data] if data else []
+
+        logger.info(f"✓ Funnel: {len(items)} registros obtidos")
+
+        return items
+
+    except Exception as e:
+        logger.error(f"❌ Erro ao buscar funnel: {str(e)}")
         raise
 
 
@@ -266,7 +311,46 @@ def main():
             logger.info(f"✅ {report_type}: {stats['registros']} registros "
                         f"({stats['paginas']} páginas) em {stats['tempo']:.2f}s")
 
-        # 5. Gerar resumo final
+        # 5. Processar funnel da Platform API (se as credenciais estiverem disponíveis)
+        if args.PLATFORM_API_INSTANCE and args.PLATFORM_API_KEY and args.PLATFORM_TOKEN_USER:
+            try:
+                logger.info(f"\n{'=' * 60}\n🔍 PROCESSANDO FUNNEL - PLATFORM API\n{'=' * 60}")
+                funnel_start = time.time()
+
+                funnel_data = fetch_funnel_data(
+                    args.PLATFORM_API_INSTANCE,
+                    args.PLATFORM_API_KEY,
+                    args.PLATFORM_TOKEN_USER,
+                    args.PLATFORM_API_BASE_URL
+                )
+
+                # Processar e salvar dados
+                logger.info(f"💾 Processando e salvando {len(funnel_data)} registros para funnel")
+                processed_funnel = Utils.process_and_save_data(funnel_data, "funnel")
+
+                funnel_duration = time.time() - funnel_start
+
+                report_stats["funnel"] = {
+                    "registros": len(processed_funnel),
+                    "status": "Sucesso",
+                    "tempo": funnel_duration,
+                    "paginas": 1
+                }
+
+                logger.info(f"✅ funnel: {len(processed_funnel)} registros em {funnel_duration:.2f}s")
+
+            except Exception as e:
+                logger.error(f"❌ Erro ao processar funnel: {str(e)}")
+                report_stats["funnel"] = {
+                    "registros": 0,
+                    "status": f"Falha: {type(e).__name__}: {str(e)}",
+                    "tempo": 0,
+                    "paginas": 0
+                }
+        else:
+            logger.info("ℹ️  Credenciais da Platform API não fornecidas, pulando coleta do funnel")
+
+        # 6. Gerar resumo final
         logger.info(f"\n{'=' * 60}\n📋 RESUMO FINAL DA COLETA\n{'=' * 60}")
 
         total_records = sum(stats['registros'] for stats in report_stats.values())
@@ -275,13 +359,20 @@ def main():
         logger.info(f"📊 Total de registros coletados: {total_records}")
         logger.info(f"📄 Total de páginas processadas: {total_pages}")
 
-        ReportGenerator.final_summary(logger, report_stats, global_start_time)
+        success = ReportGenerator.final_summary(logger, report_stats, global_start_time)
+
+        # 7. BigQuery - processar e enviar dados
+        with MemoryMonitor(logger):
+            BigQuery.process_csv_files()
+
+        tables = Utils.get_existing_folders(logger)
+        for table in tables:
+            BigQuery.start_pipeline(args.PROJECT_ID, args.CRM_TYPE, table_name=table,
+                                    credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS)
 
         # Verificar se houve falhas
-        failed_reports = [name for name, stats in report_stats.items() if 'Falha' in stats['status']]
-        if failed_reports:
-            logger.warning(f"⚠️  Relatórios com falha: {', '.join(failed_reports)}")
-            raise Exception(f"Falhas nos relatórios: {', '.join(failed_reports)}")
+        if not success:
+            raise Exception(f"Falhas nos relatórios: {success}")
 
         logger.info("🎉 COLETA FINALIZADA COM SUCESSO!")
 
