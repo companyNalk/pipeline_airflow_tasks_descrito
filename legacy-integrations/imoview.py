@@ -1124,78 +1124,84 @@ def run_get_activities(customer):
             print(f"Erro ao obter total de atividades: {response.status_code}")
             return 0
 
-    # Coleta das atividades
-    def fetch_imoveis_por_vendedor():
+    # Coleta uma página específica de atividades
+    def fetch_activities_page(page_number):
         headers = {"accept": "application/json", "chave": CHAVE_API}
-        imoveis = []
-        pagina = 1
-
-        while True:
-            params = {"numeroPagina": pagina, "numeroRegistros": 20}
+        params = {"numeroPagina": page_number, "numeroRegistros": 20}
+        
+        try:
             response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params)
-
-            if response.status_code != 200:
-                print(f"Erro na requisição de atividades")
-                break
-
+            response.raise_for_status()  # Lança exceção para códigos de erro HTTP
+            
             result = response.json()
-            lista = result.get("lista", [])
-
-            if not lista:
-                if pagina == 1:
-                    print(f"Sem dados de atividades para coletar.")
-                break
-
-            imoveis.extend(lista)
-            print(f"Coletando atividades, página {pagina}, registros {len(lista)}.")
-
-            if len(lista) < 20:
-                break
-
-            pagina += 1
-
-        return imoveis
+            activities = result.get("lista", [])
+            
+            if activities:
+                print(f"Coletado com sucesso: página {page_number}, registros {len(activities)}.")
+            
+            return activities
+        except requests.exceptions.RequestException as e:
+            print(f"Erro na requisição da página {page_number}: {e}")
+            return None
 
     # Função principal com paralelismo e controle de fila
     def main():
         try:
             start_time = time.time()
             total_atividades = get_total_activities()
-            print(f"Total de contatos encontrados: {get_total_activities}")
+            if total_atividades == 0:
+                print("Nenhuma atividade encontrada para processar.")
+                return
 
-            todas_atividades = []
-            codigos_queue = Queue()
+            print(f"Total de atividades encontradas: {total_atividades}")
 
-            for codigo in range(1, get_total_activities + 1):
-                codigos_queue.put(codigo)
+            all_activities = []
+            page_queue = Queue()
+            
+            # Calcula o número total de páginas
+            page_size = 20
+            total_pages = (total_atividades + page_size - 1) // page_size
+
+            print(f"Coletando dados de {total_pages} páginas...")
+            for page_num in range(1, total_pages + 1):
+                page_queue.put(page_num)
 
             def worker():
-                while not codigos_queue.empty():
-                    codigo_atividades = codigos_queue.get()
-                    atividades = fetch_imoveis_por_vendedor(codigo_atividades)
-                    if atividades:
-                        todas_atividades.extend(atividades)
-                    codigos_queue.task_done()
+                while not page_queue.empty():
+                    page_number = page_queue.get()
+                    activities = fetch_activities_page(page_number)
+                    if activities:
+                        all_activities.extend(activities)
+                    page_queue.task_done()
 
-            with ThreadPoolExecutor(max_workers=20) as executor:
-                futures = [executor.submit(worker) for _ in range(20)]
+            # Usar um número menor de workers para evitar sobrecarregar a API
+            num_workers = 10
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = [executor.submit(worker) for _ in range(num_workers)]
+                
                 for future in as_completed(futures):
-                    future.result()
+                    try:
+                        future.result()
+                    except Exception as e:
+                        print(f"Uma thread gerou uma exceção: {e}")
 
-            if todas_atividades:
-                df = pd.json_normalize(todas_atividades, sep='_')
+            if all_activities:
+                print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
+                df = pd.json_normalize(all_activities, sep='_')
                 df.columns = [normalize_column_name(col) for col in df.columns]
 
                 csv_buffer = io.StringIO()
                 df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
                 upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades.csv")
+            else:
+                print("Nenhuma atividade foi coletada após o processamento.")
 
             end_time = time.time()
             elapsed_time = end_time - start_time
             print(f"Tempo de execução: {elapsed_time:.2f} segundos")
         except Exception as e:
-            print(e)
+            print(f"Ocorreu um erro inesperado: {e}")
             raise
 
     # START
