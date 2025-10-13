@@ -1172,9 +1172,9 @@ def run_get_activities(customer):
             def worker():
                 while not codigos_queue.empty():
                     codigo_atividades = codigos_queue.get()
-                    imoveis = fetch_imoveis_por_vendedor(codigo_atividades)
-                    if imoveis:
-                        todas_atividades.extend(imoveis)
+                    atividades = fetch_imoveis_por_vendedor(codigo_atividades)
+                    if atividades:
+                        todas_atividades.extend(atividades)
                     codigos_queue.task_done()
 
             with ThreadPoolExecutor(max_workers=20) as executor:
@@ -1199,7 +1199,7 @@ def run_get_activities(customer):
             raise
 
     # START
-    main() 
+    main()  
 
 # ------------------------- FINAL - Adição do endpoint de atividades ------------------------- #
 
