@@ -1075,6 +1075,133 @@ def run_real_state_agent(customer):
     # START
     main()
 
+# ------------------------ INICIO - Adição do endpoint de atividades ------------------------- #
+
+def run_get_activities(customer):
+    import io
+    import pandas as pd
+    import re
+    import requests
+    import time
+    import unicodedata
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from google.cloud import storage
+    from queue import Queue
+    import os
+    import pathlib
+
+    # Configurações iniciais
+    API_URL_ACTIVITIES = f"{customer['url_base']}/Agenda/RetornarAtividades"
+    CHAVE_API = customer['api_key']
+    BUCKET_NAME = customer['bucket_name']
+
+    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+
+    # Função para normalizar colunas
+    def normalize_column_name(name):
+        nfkd = unicodedata.normalize('NFKD', name)
+        ascii_name = nfkd.encode('ASCII', 'ignore').decode('ASCII')
+        cleaned = re.sub(r"[^\w\s]", "", ascii_name)
+        return re.sub(r"\s+", "_", cleaned).lower()
+
+    # Função para enviar arquivo ao Google Cloud Storage
+    def upload_to_gcs(data, destination_blob_name):
+        storage_client = storage.Client(project=customer['project_id'])
+        bucket = storage_client.bucket(BUCKET_NAME)
+        blob = bucket.blob(destination_blob_name)
+        blob.upload_from_string(data, content_type='text/csv')
+        print(f"Arquivo enviado para {destination_blob_name}")
+
+    # Coleta total de atividades
+    def get_total_activities():
+        headers = {"accept": "application/json", "chave": CHAVE_API}
+        params = {"numeroPagina": 1, "numeroRegistros": 1}
+        response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params)
+        if response.status_code == 200:
+            return response.json().get("quantidade", 0)
+        else:
+            print(f"Erro ao obter total de atividades: {response.status_code}")
+            return 0
+
+    # Coleta das atividades
+    def fetch_imoveis_por_vendedor():
+        headers = {"accept": "application/json", "chave": CHAVE_API}
+        imoveis = []
+        pagina = 1
+
+        while True:
+            params = {"numeroPagina": pagina, "numeroRegistros": 20}
+            response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params)
+
+            if response.status_code != 200:
+                print(f"Erro na requisição de atividades")
+                break
+
+            result = response.json()
+            lista = result.get("lista", [])
+
+            if not lista:
+                if pagina == 1:
+                    print(f"Sem dados de atividades para coletar.")
+                break
+
+            imoveis.extend(lista)
+            print(f"Coletando atividades, página {pagina}, registros {len(lista)}.")
+
+            if len(lista) < 20:
+                break
+
+            pagina += 1
+
+        return imoveis
+
+    # Função principal com paralelismo e controle de fila
+    def main():
+        try:
+            start_time = time.time()
+            total_atividades = get_total_activities()
+            print(f"Total de contatos encontrados: {get_total_activities}")
+
+            todas_atividades = []
+            codigos_queue = Queue()
+
+            for codigo in range(1, get_total_activities + 1):
+                codigos_queue.put(codigo)
+
+            def worker():
+                while not codigos_queue.empty():
+                    codigo_atividades = codigos_queue.get()
+                    imoveis = fetch_imoveis_por_vendedor(codigo_atividades)
+                    if imoveis:
+                        todas_atividades.extend(imoveis)
+                    codigos_queue.task_done()
+
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                futures = [executor.submit(worker) for _ in range(20)]
+                for future in as_completed(futures):
+                    future.result()
+
+            if todas_atividades:
+                df = pd.json_normalize(todas_atividades, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
+
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+
+                upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades.csv")
+
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(f"Tempo de execução: {elapsed_time:.2f} segundos")
+        except Exception as e:
+            print(e)
+            raise
+
+    # START
+    main() 
+
+# ------------------------- FINAL - Adição do endpoint de atividades ------------------------- #
 
 def get_extraction_tasks():
     """
@@ -1120,4 +1247,8 @@ def get_extraction_tasks():
             'task_id': 'run_real_state_agent',
             'python_callable': run_real_state_agent
         },
+        {
+            'task_id': 'get_activities',
+            'python_callable': run_get_activities
+        }
     ]
