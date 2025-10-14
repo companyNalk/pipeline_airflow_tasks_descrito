@@ -1085,7 +1085,7 @@ def run_get_activities(customer):
     import time
     import unicodedata
     import json
-    import ast # 💡 CORREÇÃO: Importa a biblioteca ast para ser usada pelo script downstream
+    import ast 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from google.cloud import storage
     from queue import Queue
@@ -1145,11 +1145,11 @@ def run_get_activities(customer):
             result = response.json()
             activities = result.get("lista", []) if isinstance(result, dict) else result
             
-            # Ajuste de pré-processamento para limpeza
+            # Ajuste de pré-processamento: AQUI SIMPLESMENTE VAMOS DEIXAR OS DADOS BRUTOS 
+            # DENTRO DE UMA LISTA, sem planificação, para o ast.literal_eval processar.
             cleaned_activities = []
             for activity in activities:
-                # Remove os campos aninhados complexos para evitar o erro de aspas duplas internas 
-                # Esses campos seriam problemáticos para o ast.literal_eval.
+                # Remove os campos aninhados complexos que quebram o ast.literal_eval.
                 activity.pop('notas', None) 
                 activity.pop('convidados', None)
                 cleaned_activities.append(activity)
@@ -1194,7 +1194,7 @@ def run_get_activities(customer):
                     
                     page_queue.task_done()
 
-            # Usar um número menor de workers para evitar sobrecarregar a API
+            # Executa o worker
             num_workers = min(10, page_queue.qsize())
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 futures = [executor.submit(worker) for _ in range(num_workers)]
@@ -1208,25 +1208,48 @@ def run_get_activities(customer):
             if all_activities:
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
                 
-                # Cria um DataFrame com uma coluna contendo a lista completa de dicionários
-                # A data é usada apenas como marcador, mas o script externo precisará
-                # descobrir como associar a data correta a cada atividade.
-                df_final = pd.DataFrame({
-                    'data_extracao': [time.strftime("%Y-%m-%d %H:%M:%S")],
+                # Passo 1: Cria um DataFrame Bruto com a lista JSON completa em uma coluna.
+                # Esta simulação é para replicar a entrada do seu script de processamento.
+                df_bruto = pd.DataFrame({
                     'atividades': [all_activities] 
                 })
+                
+                # --- INÍCIO DA LÓGICA DE PROCESSAMENTO MANUAL SOLICITADA (COM AST) ---
+                
+                df_activities_final = pd.DataFrame()
+                
+                # Itera sobre a coluna de listas JSON. Como df_bruto só tem 1 linha, 
+                # o loop executa uma única vez para a lista de todas as atividades.
+                for activ_list in df_bruto['atividades']:
+                    try:
+                        # 1. Converte a lista de dicionários Python-like para uma lista real.
+                        # O all_activities já é uma lista, mas se fosse lido de um CSV, 
+                        # o ast.literal_eval seria necessário. Usamos str() para simular o CSV.
+                        activ_list_str = str(activ_list)
+                        ativ = ast.literal_eval(activ_list_str)
+                        
+                        # 2. Planificação Final e Concatenação
+                        df_temp = pd.json_normalize(ativ, sep='_')
+                        df_activities_final = pd.concat([df_activities_final, df_temp], ignore_index=True)
+
+                    except Exception as e:
+                        print(f"ERRO ao processar um item JSON/Planificação: {e}")
+                        
+                # --- FIM DA LÓGICA DE PROCESSAMENTO MANUAL SOLICITADA ---
+                
+                # 3. Normaliza os nomes das colunas da tabela final
+                df_activities_final.columns = [normalize_column_name(col) for col in df_activities_final.columns]
 
                 csv_buffer = io.StringIO()
-                # Salva o DataFrame agrupado no GCS. O script externo será responsável por 'achatar' a coluna 'atividades'.
-                # A serialização padra do Pandas usa aspas simples para listas/dicionários, o que é esperado pelo ast.literal_eval
-                df_final.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                # 4. Salva o DataFrame planificado final.
+                df_activities_final.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-                print("\n--- Amostra do DataFrame Agrupado (Para ast.literal_eval) ---")
-                # Exibe o head do DataFrame agrupado
-                print(df_final.head().to_markdown(index=False))
-                print("----------------------------------------------------------\n")
+                print("\n--- Amostra da Tabela FINAL PLANIFICADA (Processamento AST/Manual) ---")
+                print(df_activities_final.head().to_markdown(index=False))
+                print("----------------------------------------------------------------------\n")
                 
-                upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades_agrupadas.csv")
+                # Salva o arquivo final no GCS
+                upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades_planificadas.csv")
             else:
                 print("Nenhuma atividade foi coletada após o processamento.")
 
