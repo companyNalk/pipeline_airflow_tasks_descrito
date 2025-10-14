@@ -1084,7 +1084,8 @@ def run_get_activities(customer):
     import requests
     import time
     import unicodedata
-    import json # 💡 NOVO: Importa json para manipulação de dados
+    import json
+    import ast # 💡 CORREÇÃO: Importa a biblioteca ast para ser usada pelo script downstream
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from google.cloud import storage
     from queue import Queue
@@ -1144,10 +1145,11 @@ def run_get_activities(customer):
             result = response.json()
             activities = result.get("lista", []) if isinstance(result, dict) else result
             
-            # 💡 Ajuste de pré-processamento para limpeza
+            # Ajuste de pré-processamento para limpeza
             cleaned_activities = []
             for activity in activities:
                 # Remove os campos aninhados complexos para evitar o erro de aspas duplas internas 
+                # Esses campos seriam problemáticos para o ast.literal_eval.
                 activity.pop('notas', None) 
                 activity.pop('convidados', None)
                 cleaned_activities.append(activity)
@@ -1155,7 +1157,7 @@ def run_get_activities(customer):
             if cleaned_activities and isinstance(cleaned_activities, list):
                 print(f"Coletado com sucesso: página {page_number}, registros {len(cleaned_activities)}.")
             
-            # 💡 Retornamos a lista de dicionários puros.
+            # Retornamos a lista de dicionários puros.
             return cleaned_activities
         except requests.exceptions.RequestException as e:
             print(f"Erro na requisição da página {page_number}: {e}")
@@ -1206,25 +1208,25 @@ def run_get_activities(customer):
             if all_activities:
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
                 
-                # 💡 PASSO 1 (Simulação): Criar um DataFrame 'bruto'
-                # Simulamos a estrutura de agrupamento que você viu no CSV para demonstrar a extração
-                df_bruto = pd.DataFrame({'act_list': [all_activities]})
-                
-                # 💡 PASSO 2: Criar o novo DataFrame a partir da coluna 'act_list' (a simulação de 'atividades')
-                # df_activities_final é o novo DataFrame planificado.
-                df_activities_final = pd.json_normalize(df_bruto['act_list'].explode(), sep='_')
-                df_activities_final.columns = [normalize_column_name(col) for col in df_activities_final.columns]
+                # Cria um DataFrame com uma coluna contendo a lista completa de dicionários
+                # A data é usada apenas como marcador, mas o script externo precisará
+                # descobrir como associar a data correta a cada atividade.
+                df_final = pd.DataFrame({
+                    'data_extracao': [time.strftime("%Y-%m-%d %H:%M:%S")],
+                    'atividades': [all_activities] 
+                })
 
                 csv_buffer = io.StringIO()
-                # 3. Salva o DataFrame plano final no GCS
-                df_activities_final.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                # Salva o DataFrame agrupado no GCS. O script externo será responsável por 'achatar' a coluna 'atividades'.
+                # A serialização padra do Pandas usa aspas simples para listas/dicionários, o que é esperado pelo ast.literal_eval
+                df_final.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-                print("\n--- Amostra da Tabela (DataFrame) de Atividades ---")
-                # 4. Exibe o head do DataFrame planificado
-                print(df_activities_final.head().to_markdown(index=False))
-                print("--------------------------------------------------\n")
+                print("\n--- Amostra do DataFrame Agrupado (Para ast.literal_eval) ---")
+                # Exibe o head do DataFrame agrupado
+                print(df_final.head().to_markdown(index=False))
+                print("----------------------------------------------------------\n")
                 
-                upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades.csv")
+                upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades_agrupadas.csv")
             else:
                 print("Nenhuma atividade foi coletada após o processamento.")
 
