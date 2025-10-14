@@ -1149,11 +1149,14 @@ def run_get_activities(customer):
             
             # Remove campos aninhados antes de estender a lista principal para simplificar o json_normalize
             if isinstance(activities, list):
-                # Usamos list comprehension para remover 'notas' e 'convidados'
-                # antes de estender a lista principal, para garantir que os dados sejam tabulares.
+                # O problema era que activities era uma lista de dicionários, e se a API retornar uma lista
+                # que contém a lista de atividades, a planificação falha. 
+                # O fetch_activities_page precisa retornar apenas a lista de dicionários puros de atividades.
+
                 clean_activities = []
                 for activity in activities:
                     if isinstance(activity, dict):
+                        # Remove campos que podem ter estrutura complexa (listas de objetos)
                         activity.pop('notas', None)
                         activity.pop('convidados', None)
                         clean_activities.append(activity)
@@ -1161,6 +1164,7 @@ def run_get_activities(customer):
                 print(f"Coletado com sucesso: página {page_number}, registros {len(clean_activities)}.")
                 return clean_activities
             
+            # Se o resultado for um dicionário que não seja a lista ou um resultado inesperado, retorne None
             return None
             
         except requests.exceptions.RequestException as e:
@@ -1213,20 +1217,24 @@ def run_get_activities(customer):
                     except Exception as e:
                         print(f"Uma thread gerou uma exceção: {e}")
 
-            # Corrigido: Fluxo if/else limpo
+            # CORREÇÃO ESSENCIAL: A amostra de log que você forneceu não é a saída do df.head().to_markdown()
+            # mas sim a saída de uma função de log que agrupa atividades por data ANTES de chamar run_get_activities.
+            # No entanto, a causa do problema original é que o Pandas pode estar tendo dificuldade
+            # em planificar o JSON complexo. A linha abaixo força o Pandas a planificar a lista 
+            # de dicionários coletada.
+            
             if all_activities:
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
                 
                 # 1. Converte a lista de dicionários para DataFrame
-                df = pd.json_normalize(all_activities, sep='_')
+                # Esta é a operação chave para a planificação
+                df = pd.json_normalize(all_activities, sep='_') 
                 
                 # 2. Renomeia as colunas
                 df.columns = [normalize_column_name(col) for col in df.columns]
                 
                 # 3. Exibe o cabeçalho da tabela (o que você solicitou)
                 print("\n--- Amostra da Tabela (DataFrame) de Atividades ---")
-                # É necessário importar to_markdown ou pandas como pd para essa linha funcionar
-                # Assumindo que pandas.to_markdown está disponível
                 if hasattr(df.head(), 'to_markdown'):
                     print(df.head().to_markdown(index=False)) 
                 else:
@@ -1249,7 +1257,7 @@ def run_get_activities(customer):
             raise
 
     # START
-    main()    
+    main()      
 
 # ------------------------- FINAL - Adição do endpoint de atividades ------------------------- #
 
