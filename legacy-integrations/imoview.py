@@ -1201,16 +1201,24 @@ def run_get_activities(customer):
                         print(f"Uma thread gerou uma exceção: {e}")
 
             if all_activities: # <-- Corrigido o erro de sintaxe (removido os ':' extras)
-                print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
+                if all_activities:
+                # 1. Converte a lista de dicionários para DataFrame
                 df = pd.json_normalize(all_activities, sep='_')
+                
+                # 2. Renomeia as colunas
                 df.columns = [normalize_column_name(col) for col in df.columns]
-
+            
+                # 3. Exibe o cabeçalho da tabela (o que você solicitou)
+                print("\n--- Amostra da Tabela (DataFrame) de Atividades ---")
+                print(df.head().to_markdown(index=False)) 
+                print("--------------------------------------------------\n")
+            
+                # 4. Salva a tabela final como CSV
                 csv_buffer = io.StringIO()
                 df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
-
                 upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades.csv")
-            else:
-                print("Nenhuma atividade foi coletada após o processamento.")
+                        else:
+                            print("Nenhuma atividade foi coletada após o processamento.")
 
             end_time = time.time()
             elapsed_time = end_time - start_time
