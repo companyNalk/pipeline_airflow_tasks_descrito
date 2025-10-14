@@ -1201,7 +1201,6 @@ def run_get_activities(customer):
                         print(f"Uma thread gerou uma exceção: {e}")
 
             if all_activities: # <-- Corrigido o erro de sintaxe (removido os ':' extras)
-                if all_activities:
                 # 1. Converte a lista de dicionários para DataFrame
                 df = pd.json_normalize(all_activities, sep='_')
                 
