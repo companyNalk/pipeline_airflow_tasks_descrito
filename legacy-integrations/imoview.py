@@ -1147,10 +1147,22 @@ def run_get_activities(customer):
             # Adaptação: Se for Dicionário, os dados estão em 'lista'; caso contrário, é o próprio resultado (lista).
             activities = result.get("lista", []) if isinstance(result, dict) else result
             
-            if activities and isinstance(activities, list):
-                print(f"Coletado com sucesso: página {page_number}, registros {len(activities)}.")
+            # Remove campos aninhados antes de estender a lista principal para simplificar o json_normalize
+            if isinstance(activities, list):
+                # Usamos list comprehension para remover 'notas' e 'convidados'
+                # antes de estender a lista principal, para garantir que os dados sejam tabulares.
+                clean_activities = []
+                for activity in activities:
+                    if isinstance(activity, dict):
+                        activity.pop('notas', None)
+                        activity.pop('convidados', None)
+                        clean_activities.append(activity)
+                
+                print(f"Coletado com sucesso: página {page_number}, registros {len(clean_activities)}.")
+                return clean_activities
             
-            return activities
+            return None
+            
         except requests.exceptions.RequestException as e:
             print(f"Erro na requisição da página {page_number}: {e}")
             return None
@@ -1170,7 +1182,9 @@ def run_get_activities(customer):
                 total_pages = (total_atividades + page_size - 1) // page_size
                 print(f"Total de atividades encontradas: {total_atividades}. Coletando dados de {total_pages} páginas...")
             
-            all_activities = []
+            # all_activities deve ser uma lista simples para threads compartilharem
+            # O escopo da lista será preservado dentro dos workers, mas será acessada por threads.
+            all_activities = [] 
             page_queue = Queue()
             
             for page_num in range(1, total_pages + 1):
@@ -1183,8 +1197,7 @@ def run_get_activities(customer):
                     activities = fetch_activities_page(page_number)
                     
                     if activities is not None and activities: # Garante que não é None e tem dados
-                        # Nota: Em um ThreadPoolExecutor, a parada exata é complexa. 
-                        # Continuamos até a fila esvaziar, ignorando páginas vazias.
+                        # Extende a lista de atividades coletadas
                         all_activities.extend(activities)
                         
                     page_queue.task_done()
@@ -1200,24 +1213,33 @@ def run_get_activities(customer):
                     except Exception as e:
                         print(f"Uma thread gerou uma exceção: {e}")
 
-            if all_activities: # <-- Corrigido o erro de sintaxe (removido os ':' extras)
+            # Corrigido: Fluxo if/else limpo
+            if all_activities:
+                print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
+                
                 # 1. Converte a lista de dicionários para DataFrame
                 df = pd.json_normalize(all_activities, sep='_')
                 
                 # 2. Renomeia as colunas
                 df.columns = [normalize_column_name(col) for col in df.columns]
-            
+                
                 # 3. Exibe o cabeçalho da tabela (o que você solicitou)
                 print("\n--- Amostra da Tabela (DataFrame) de Atividades ---")
-                print(df.head().to_markdown(index=False)) 
+                # É necessário importar to_markdown ou pandas como pd para essa linha funcionar
+                # Assumindo que pandas.to_markdown está disponível
+                if hasattr(df.head(), 'to_markdown'):
+                    print(df.head().to_markdown(index=False)) 
+                else:
+                    print(df.head().to_string(index=False)) # Fallback para ambientes sem to_markdown
                 print("--------------------------------------------------\n")
-            
+                
                 # 4. Salva a tabela final como CSV
                 csv_buffer = io.StringIO()
                 df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+
                 upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades.csv")
-                        else:
-                            print("Nenhuma atividade foi coletada após o processamento.")
+            else:
+                print("Nenhuma atividade foi coletada após o processamento.")
 
             end_time = time.time()
             elapsed_time = end_time - start_time
@@ -1227,7 +1249,7 @@ def run_get_activities(customer):
             raise
 
     # START
-    main()   
+    main()    
 
 # ------------------------- FINAL - Adição do endpoint de atividades ------------------------- #
 
