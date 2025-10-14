@@ -1149,14 +1149,11 @@ def run_get_activities(customer):
             
             # Remove campos aninhados antes de estender a lista principal para simplificar o json_normalize
             if isinstance(activities, list):
-                # O problema era que activities era uma lista de dicionários, e se a API retornar uma lista
-                # que contém a lista de atividades, a planificação falha. 
-                # O fetch_activities_page precisa retornar apenas a lista de dicionários puros de atividades.
-
+                # Usamos List Comprehension para limpar e garantir o formato de dicionário
                 clean_activities = []
                 for activity in activities:
                     if isinstance(activity, dict):
-                        # Remove campos que podem ter estrutura complexa (listas de objetos)
+                        # Remove campos que são listas aninhadas, garantindo que o json_normalize funcione
                         activity.pop('notas', None)
                         activity.pop('convidados', None)
                         clean_activities.append(activity)
@@ -1186,8 +1183,8 @@ def run_get_activities(customer):
                 total_pages = (total_atividades + page_size - 1) // page_size
                 print(f"Total de atividades encontradas: {total_atividades}. Coletando dados de {total_pages} páginas...")
             
-            # all_activities deve ser uma lista simples para threads compartilharem
-            all_activities_nested = [] 
+            # all_activities é a lista mestre que deve ser populada por threads
+            all_activities = [] 
             page_queue = Queue()
             
             for page_num in range(1, total_pages + 1):
@@ -1200,8 +1197,8 @@ def run_get_activities(customer):
                     activities = fetch_activities_page(page_number)
                     
                     if activities is not None and activities: # Garante que não é None e tem dados
-                        # Extende a lista DE LISTAS (neste caso, a lista de resultados por worker)
-                        all_activities_nested.append(activities)
+                        # CORREÇÃO DEFINITIVA: Estender a lista mestre diretamente com a lista de dicionários.
+                        all_activities.extend(activities) 
                         
                     page_queue.task_done()
 
@@ -1215,17 +1212,13 @@ def run_get_activities(customer):
                         future.result()
                     except Exception as e:
                         print(f"Uma thread gerou uma exceção: {e}")
-
-            # CORREÇÃO ESSENCIAL: Achatando a lista aninhada.
-            # O problema é que all_activities_nested é uma lista de listas de dicionários.
-            # Precisamos transformar isso em uma lista 1D de dicionários para o json_normalize funcionar corretamente.
-            all_activities = [item for sublist in all_activities_nested for item in sublist]
+            
+            # Removido o passo de "achatamento" complexo que pode ter sido a causa do erro original.
 
             if all_activities:
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
                 
                 # 1. Converte a lista de dicionários para DataFrame
-                # Agora, json_normalize recebe a lista 1D correta
                 df = pd.json_normalize(all_activities, sep='_') 
                 
                 # 2. Renomeia as colunas
@@ -1256,7 +1249,7 @@ def run_get_activities(customer):
             raise
 
     # START
-    main()    
+    main()  
 
 # ------------------------- FINAL - Adição do endpoint de atividades ------------------------- #
 
