@@ -1117,11 +1117,19 @@ def run_get_activities(customer):
     def get_total_activities():
         headers = {"accept": "application/json", "chave": CHAVE_API}
         params = {"numeroPagina": 1, "numeroRegistros": 1}
-        response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params)
-        if response.status_code == 200:
-            return response.json().get("quantidade", 0)
-        else:
-            print(f"Erro ao obter total de atividades: {response.status_code}")
+        try:
+            response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            result = response.json()
+            
+            # Tenta obter "quantidade" se for um dicionário
+            if isinstance(result, dict) and "quantidade" in result:
+                return result.get("quantidade", 0)
+            # Se for uma lista ou outro formato, imprime aviso e retorna um valor que a paginação irá ignorar
+            print("A API de atividades não retornou 'quantidade'. A paginação será feita iterativamente até esgotar os dados.")
+            return 0 
+        except Exception as e:
+            print(f"Erro ao obter total de atividades: {e}")
             return 0
 
     # Coleta uma página específica de atividades
@@ -1130,15 +1138,19 @@ def run_get_activities(customer):
         params = {"numeroPagina": page_number, "numeroRegistros": 20}
         
         try:
-            response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params)
+            response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params, timeout=30)
             response.raise_for_status()  # Lança exceção para códigos de erro HTTP
             
             result = response.json()
-            activities = result.get("lista", [])
+            
+            # Adaptação para o formato da Imoview
+            # Se a resposta for um Dicionário, os dados estão em 'lista', se for uma Lista, são os dados
+            activities = result.get("lista", []) if isinstance(result, dict) else result
             
             if activities:
                 print(f"Coletado com sucesso: página {page_number}, registros {len(activities)}.")
             
+            # Retorna a lista e o total de registros para controle da paginação
             return activities
         except requests.exceptions.RequestException as e:
             print(f"Erro na requisição da página {page_number}: {e}")
@@ -1149,20 +1161,20 @@ def run_get_activities(customer):
         try:
             start_time = time.time()
             total_atividades = get_total_activities()
+            page_size = 20
+            
             if total_atividades == 0:
-                print("Nenhuma atividade encontrada para processar.")
-                return
-
-            print(f"Total de atividades encontradas: {total_atividades}")
-
+                print("Contagem total falhou ou é zero. Tentando coleta iterativa para todas as páginas.")
+                # Assumimos um número grande de páginas (ex: 5000) para forçar a coleta até o fim
+                # Se a contagem total falhar, tentaremos 1000 páginas
+                total_pages = 1000 
+            else:
+                total_pages = (total_atividades + page_size - 1) // page_size
+                print(f"Total de atividades encontradas: {total_atividades}. Coletando dados de {total_pages} páginas...")
+            
             all_activities = []
             page_queue = Queue()
             
-            # Calcula o número total de páginas
-            page_size = 20
-            total_pages = (total_atividades + page_size - 1) // page_size
-
-            print(f"Coletando dados de {total_pages} páginas...")
             for page_num in range(1, total_pages + 1):
                 page_queue.put(page_num)
 
@@ -1170,12 +1182,19 @@ def run_get_activities(customer):
                 while not page_queue.empty():
                     page_number = page_queue.get()
                     activities = fetch_activities_page(page_number)
-                    if activities:
-                        all_activities.extend(activities)
+                    
+                    if activities is not None:
+                        # Se a lista retornada for menor que o tamanho da página, 
+                        # assumimos que chegamos ao fim.
+                        # NOTA: Com ThreadPool, é difícil parar a fila exatamente, 
+                        # mas continuamos a coletar até a fila se esvaziar.
+                        if activities:
+                            all_activities.extend(activities)
+                        
                     page_queue.task_done()
 
             # Usar um número menor de workers para evitar sobrecarregar a API
-            num_workers = 10
+            num_workers = 10 
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 futures = [executor.submit(worker) for _ in range(num_workers)]
                 
@@ -1185,7 +1204,7 @@ def run_get_activities(customer):
                     except Exception as e:
                         print(f"Uma thread gerou uma exceção: {e}")
 
-            if all_activities:
+            if all_activities::
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
                 df = pd.json_normalize(all_activities, sep='_')
                 df.columns = [normalize_column_name(col) for col in df.columns]
