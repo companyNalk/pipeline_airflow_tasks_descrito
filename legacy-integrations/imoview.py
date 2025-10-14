@@ -1113,7 +1113,7 @@ def run_get_activities(customer):
         blob.upload_from_string(data, content_type='text/csv')
         print(f"Arquivo enviado para {destination_blob_name}")
 
-    # Coleta total de atividades
+    # Coleta total de atividades (ROBUSTO CONTRA RETORNO DE LISTA)
     def get_total_activities():
         headers = {"accept": "application/json", "chave": CHAVE_API}
         params = {"numeroPagina": 1, "numeroRegistros": 1}
@@ -1122,11 +1122,12 @@ def run_get_activities(customer):
             response.raise_for_status()
             result = response.json()
             
-            # Tenta obter "quantidade" se for um dicionário
+            # Tenta obter "quantidade" se for um dicionário (Formato Paginado Esperado)
             if isinstance(result, dict) and "quantidade" in result:
                 return result.get("quantidade", 0)
-            # Se for uma lista ou outro formato, imprime aviso e retorna um valor que a paginação irá ignorar
-            print("A API de atividades não retornou 'quantidade'. A paginação será feita iterativamente até esgotar os dados.")
+            
+            # Se a API retornar uma lista diretamente, não podemos confiar na contagem
+            print("A API de atividades não retornou 'quantidade'. A paginação será feita de forma iterativa.")
             return 0 
         except Exception as e:
             print(f"Erro ao obter total de atividades: {e}")
@@ -1143,14 +1144,12 @@ def run_get_activities(customer):
             
             result = response.json()
             
-            # Adaptação para o formato da Imoview
-            # Se a resposta for um Dicionário, os dados estão em 'lista', se for uma Lista, são os dados
+            # Adaptação: Se for Dicionário, os dados estão em 'lista'; caso contrário, é o próprio resultado (lista).
             activities = result.get("lista", []) if isinstance(result, dict) else result
             
-            if activities:
+            if activities and isinstance(activities, list):
                 print(f"Coletado com sucesso: página {page_number}, registros {len(activities)}.")
             
-            # Retorna a lista e o total de registros para controle da paginação
             return activities
         except requests.exceptions.RequestException as e:
             print(f"Erro na requisição da página {page_number}: {e}")
@@ -1164,9 +1163,8 @@ def run_get_activities(customer):
             page_size = 20
             
             if total_atividades == 0:
-                print("Contagem total falhou ou é zero. Tentando coleta iterativa para todas as páginas.")
-                # Assumimos um número grande de páginas (ex: 5000) para forçar a coleta até o fim
-                # Se a contagem total falhar, tentaremos 1000 páginas
+                print("Contagem total falhou ou é zero. Assumindo 1000 páginas para coleta iterativa.")
+                # Assumimos um limite alto de páginas se a contagem falhar
                 total_pages = 1000 
             else:
                 total_pages = (total_atividades + page_size - 1) // page_size
@@ -1181,20 +1179,18 @@ def run_get_activities(customer):
             def worker():
                 while not page_queue.empty():
                     page_number = page_queue.get()
+                    time.sleep(0.01) # Pequeno delay
                     activities = fetch_activities_page(page_number)
                     
-                    if activities is not None:
-                        # Se a lista retornada for menor que o tamanho da página, 
-                        # assumimos que chegamos ao fim.
-                        # NOTA: Com ThreadPool, é difícil parar a fila exatamente, 
-                        # mas continuamos a coletar até a fila se esvaziar.
-                        if activities:
-                            all_activities.extend(activities)
+                    if activities is not None and activities: # Garante que não é None e tem dados
+                        # Nota: Em um ThreadPoolExecutor, a parada exata é complexa. 
+                        # Continuamos até a fila esvaziar, ignorando páginas vazias.
+                        all_activities.extend(activities)
                         
                     page_queue.task_done()
 
             # Usar um número menor de workers para evitar sobrecarregar a API
-            num_workers = 10 
+            num_workers = min(10, page_queue.qsize())
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 futures = [executor.submit(worker) for _ in range(num_workers)]
                 
@@ -1204,7 +1200,7 @@ def run_get_activities(customer):
                     except Exception as e:
                         print(f"Uma thread gerou uma exceção: {e}")
 
-            if all_activities::
+            if all_activities: # <-- Corrigido o erro de sintaxe (removido os ':' extras)
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
                 df = pd.json_normalize(all_activities, sep='_')
                 df.columns = [normalize_column_name(col) for col in df.columns]
@@ -1224,7 +1220,7 @@ def run_get_activities(customer):
             raise
 
     # START
-    main()  
+    main()   
 
 # ------------------------- FINAL - Adição do endpoint de atividades ------------------------- #
 
