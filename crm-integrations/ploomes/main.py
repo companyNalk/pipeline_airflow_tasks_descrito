@@ -123,6 +123,14 @@ CONFIG = {
         "fields": {
             "path": "Fields",
             "use_pagination": True
+        },
+        "products": {
+            "path": "Products",
+            "use_pagination": True
+        },
+        "tags": {
+            "path": "Tags",
+            "use_pagination": True
         }
     }
 }
