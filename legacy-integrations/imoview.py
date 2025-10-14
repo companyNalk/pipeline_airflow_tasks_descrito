@@ -1172,7 +1172,7 @@ def run_get_activities(customer):
             
             if total_atividades == 0:
                 print("Contagem total falhou ou é zero. Assumindo 1000 páginas para coleta iterativa.")
-                total_pages = 1000
+                total_pages = 1500
             else:
                 total_pages = (total_atividades + page_size - 1) // page_size
                 print(f"Total de atividades encontradas: {total_atividades}. Coletando dados de {total_pages} páginas...")
@@ -1210,17 +1210,16 @@ def run_get_activities(customer):
                 
                 # Passo 1: Cria um DataFrame Bruto com a lista JSON completa em uma coluna.
                 # Esta simulação é para replicar a entrada do seu script de processamento.
-                df_bruto = pd.DataFrame({
-                    'atividades': [all_activities] 
-                })
+                df = pd.json_normalize(all_activities, sep='_')
+                df.columns = [normalize_column_name(col) for col in df.columns]
                 
                 # --- INÍCIO DA LÓGICA DE PROCESSAMENTO MANUAL SOLICITADA (COM AST) ---
                 
-                df_activities_final = pd.DataFrame()
+                df_activities = pd.DataFrame()
                 
                 # Itera sobre a coluna de listas JSON. Como df_bruto só tem 1 linha, 
                 # o loop executa uma única vez para a lista de todas as atividades.
-                for activ_list in df_bruto['atividades']:
+                for activ_list in df['atividades']:
                     try:
                         # 1. Converte a lista de dicionários Python-like para uma lista real.
                         # O all_activities já é uma lista, mas se fosse lido de um CSV, 
@@ -1229,8 +1228,8 @@ def run_get_activities(customer):
                         ativ = ast.literal_eval(activ_list_str)
                         
                         # 2. Planificação Final e Concatenação
-                        df_temp = pd.json_normalize(ativ, sep='_')
-                        df_activities_final = pd.concat([df_activities_final, df_temp], ignore_index=True)
+                        df_temp = pd.DataFrame(ativ)
+                        df_activities = pd.concat([df_activities, df_temp], ignore_index=True)
 
                     except Exception as e:
                         print(f"ERRO ao processar um item JSON/Planificação: {e}")
@@ -1238,18 +1237,23 @@ def run_get_activities(customer):
                 # --- FIM DA LÓGICA DE PROCESSAMENTO MANUAL SOLICITADA ---
                 
                 # 3. Normaliza os nomes das colunas da tabela final
-                df_activities_final.columns = [normalize_column_name(col) for col in df_activities_final.columns]
 
-                csv_buffer = io.StringIO()
-                # 4. Salva o DataFrame planificado final.
-                df_activities_final.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                if not df_activities.empty:
+                    # 4. Normaliza os nomes das colunas da tabela final
+                    df_activities.columns = [normalize_column_name(col) for col in df_activities.columns]
 
-                print("\n--- Amostra da Tabela FINAL PLANIFICADA (Processamento AST/Manual) ---")
-                print(df_activities_final.head().to_markdown(index=False))
-                print("----------------------------------------------------------------------\n")
-                
-                # Salva o arquivo final no GCS
-                upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades_planificadas.csv")
+                    csv_buffer = io.StringIO()
+                    # 5. Salva o DataFrame planificado final.
+                    df_activities.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+
+                    print("\n--- Amostra da Tabela FINAL PLANIFICADA (Processamento AST/Manual) - Atualizado ---\n")
+                    print(df_activities_final.head().to_markdown(index=False))
+                    print("----------------------------------------------------------------------\n")
+                    
+                    # Salva o arquivo final no GCS
+                    upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades_planificadas.csv")
+                else:
+                    print("O DataFrame final está vazio ou o processamento falhou.")
             else:
                 print("Nenhuma atividade foi coletada após o processamento.")
 
