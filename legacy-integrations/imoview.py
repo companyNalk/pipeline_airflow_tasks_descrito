@@ -1187,8 +1187,7 @@ def run_get_activities(customer):
                 print(f"Total de atividades encontradas: {total_atividades}. Coletando dados de {total_pages} páginas...")
             
             # all_activities deve ser uma lista simples para threads compartilharem
-            # O escopo da lista será preservado dentro dos workers, mas será acessada por threads.
-            all_activities = [] 
+            all_activities_nested = [] 
             page_queue = Queue()
             
             for page_num in range(1, total_pages + 1):
@@ -1201,8 +1200,8 @@ def run_get_activities(customer):
                     activities = fetch_activities_page(page_number)
                     
                     if activities is not None and activities: # Garante que não é None e tem dados
-                        # Extende a lista de atividades coletadas
-                        all_activities.extend(activities)
+                        # Extende a lista DE LISTAS (neste caso, a lista de resultados por worker)
+                        all_activities_nested.append(activities)
                         
                     page_queue.task_done()
 
@@ -1217,17 +1216,16 @@ def run_get_activities(customer):
                     except Exception as e:
                         print(f"Uma thread gerou uma exceção: {e}")
 
-            # CORREÇÃO ESSENCIAL: A amostra de log que você forneceu não é a saída do df.head().to_markdown()
-            # mas sim a saída de uma função de log que agrupa atividades por data ANTES de chamar run_get_activities.
-            # No entanto, a causa do problema original é que o Pandas pode estar tendo dificuldade
-            # em planificar o JSON complexo. A linha abaixo força o Pandas a planificar a lista 
-            # de dicionários coletada.
-            
+            # CORREÇÃO ESSENCIAL: Achatando a lista aninhada.
+            # O problema é que all_activities_nested é uma lista de listas de dicionários.
+            # Precisamos transformar isso em uma lista 1D de dicionários para o json_normalize funcionar corretamente.
+            all_activities = [item for sublist in all_activities_nested for item in sublist]
+
             if all_activities:
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
                 
                 # 1. Converte a lista de dicionários para DataFrame
-                # Esta é a operação chave para a planificação
+                # Agora, json_normalize recebe a lista 1D correta
                 df = pd.json_normalize(all_activities, sep='_') 
                 
                 # 2. Renomeia as colunas
@@ -1238,7 +1236,8 @@ def run_get_activities(customer):
                 if hasattr(df.head(), 'to_markdown'):
                     print(df.head().to_markdown(index=False)) 
                 else:
-                    print(df.head().to_string(index=False)) # Fallback para ambientes sem to_markdown
+                    # Fallback para ambientes sem to_markdown (imprime strings)
+                    print(df.head().to_string(index=False)) 
                 print("--------------------------------------------------\n")
                 
                 # 4. Salva a tabela final como CSV
@@ -1257,7 +1256,7 @@ def run_get_activities(customer):
             raise
 
     # START
-    main()      
+    main()    
 
 # ------------------------- FINAL - Adição do endpoint de atividades ------------------------- #
 
