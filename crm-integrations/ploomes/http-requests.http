@@ -101,10 +101,6 @@ User-Key: {{secret}}
 GET {{url_base}}/Users
 User-Key: {{secret}}
 
-### ========== Fields ==========
-GET {{url_base}}/Fields
-User-Key: {{secret}}
-
 ### ========== Products ==========
 GET {{url_base}}/Products
 User-Key: {{secret}}
