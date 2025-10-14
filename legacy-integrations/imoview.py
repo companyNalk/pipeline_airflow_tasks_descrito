@@ -1247,7 +1247,7 @@ def run_get_activities(customer):
                     df_activities.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
                     print("\n--- Amostra da Tabela FINAL PLANIFICADA (Processamento AST/Manual) - Atualizado ---\n")
-                    print(df_activities_final.head().to_markdown(index=False))
+                    print(df_activities.head().to_markdown(index=False))
                     print("----------------------------------------------------------------------\n")
                     
                     # Salva o arquivo final no GCS
