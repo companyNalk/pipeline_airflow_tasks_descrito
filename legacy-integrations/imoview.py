@@ -1084,6 +1084,7 @@ def run_get_activities(customer):
     import requests
     import time
     import unicodedata
+    import json # 💡 NOVO: Importa json para manipulação de dados
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from google.cloud import storage
     from queue import Queue
@@ -1122,13 +1123,11 @@ def run_get_activities(customer):
             response.raise_for_status()
             result = response.json()
             
-            # Tenta obter "quantidade" se for um dicionário (Formato Paginado Esperado)
             if isinstance(result, dict) and "quantidade" in result:
                 return result.get("quantidade", 0)
             
-            # Se a API retornar uma lista diretamente, não podemos confiar na contagem
             print("A API de atividades não retornou 'quantidade'. A paginação será feita de forma iterativa.")
-            return 0 
+            return 0
         except Exception as e:
             print(f"Erro ao obter total de atividades: {e}")
             return 0
@@ -1140,30 +1139,24 @@ def run_get_activities(customer):
         
         try:
             response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params, timeout=30)
-            response.raise_for_status()  # Lança exceção para códigos de erro HTTP
+            response.raise_for_status()
             
             result = response.json()
-            
-            # Adaptação: Se for Dicionário, os dados estão em 'lista'; caso contrário, é o próprio resultado (lista).
             activities = result.get("lista", []) if isinstance(result, dict) else result
             
-            # Remove campos aninhados antes de estender a lista principal para simplificar o json_normalize
-            if isinstance(activities, list):
-                # Usamos List Comprehension para limpar e garantir o formato de dicionário
-                clean_activities = []
-                for activity in activities:
-                    if isinstance(activity, dict):
-                        # Remove campos que são listas aninhadas, garantindo que o json_normalize funcione
-                        activity.pop('notas', None)
-                        activity.pop('convidados', None)
-                        clean_activities.append(activity)
-                
-                print(f"Coletado com sucesso: página {page_number}, registros {len(clean_activities)}.")
-                return clean_activities
+            # 💡 Ajuste de pré-processamento para limpeza
+            cleaned_activities = []
+            for activity in activities:
+                # Remove os campos aninhados complexos para evitar o erro de aspas duplas internas (ERRO: last read: '""c')
+                # A planificação agora será LIMPA.
+                activity.pop('notas', None) 
+                activity.pop('convidados', None)
+                cleaned_activities.append(activity)
+
+            if cleaned_activities and isinstance(cleaned_activities, list):
+                print(f"Coletado com sucesso: página {page_number}, registros {len(cleaned_activities)}.")
             
-            # Se o resultado for um dicionário que não seja a lista ou um resultado inesperado, retorne None
-            return None
-            
+            return cleaned_activities
         except requests.exceptions.RequestException as e:
             print(f"Erro na requisição da página {page_number}: {e}")
             return None
@@ -1177,14 +1170,12 @@ def run_get_activities(customer):
             
             if total_atividades == 0:
                 print("Contagem total falhou ou é zero. Assumindo 1000 páginas para coleta iterativa.")
-                # Assumimos um limite alto de páginas se a contagem falhar
-                total_pages = 1000 
+                total_pages = 1000
             else:
                 total_pages = (total_atividades + page_size - 1) // page_size
                 print(f"Total de atividades encontradas: {total_atividades}. Coletando dados de {total_pages} páginas...")
             
-            # all_activities é a lista mestre que deve ser populada por threads
-            all_activities = [] 
+            all_activities = []
             page_queue = Queue()
             
             for page_num in range(1, total_pages + 1):
@@ -1196,10 +1187,9 @@ def run_get_activities(customer):
                     time.sleep(0.01) # Pequeno delay
                     activities = fetch_activities_page(page_number)
                     
-                    if activities is not None and activities: # Garante que não é None e tem dados
-                        # CORREÇÃO DEFINITIVA: Estender a lista mestre diretamente com a lista de dicionários.
-                        all_activities.extend(activities) 
-                        
+                    if activities is not None and activities:
+                        all_activities.extend(activities)
+                    
                     page_queue.task_done()
 
             # Usar um número menor de workers para evitar sobrecarregar a API
@@ -1212,31 +1202,22 @@ def run_get_activities(customer):
                         future.result()
                     except Exception as e:
                         print(f"Uma thread gerou uma exceção: {e}")
-            
-            # Removido o passo de "achatamento" complexo que pode ter sido a causa do erro original.
 
             if all_activities:
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
                 
-                # 1. Converte a lista de dicionários para DataFrame
-                df = pd.json_normalize(all_activities, sep='_') 
-                
-                # 2. Renomeia as colunas
+                # 💡 CHAVE DA CORREÇÃO: Usamos o pd.json_normalize na lista LIMPA
+                df = pd.json_normalize(all_activities, sep='_')
                 df.columns = [normalize_column_name(col) for col in df.columns]
-                
-                # 3. Exibe o cabeçalho da tabela (o que você solicitou)
-                print("\n--- Amostra da Tabela (DataFrame) de Atividades ---")
-                if hasattr(df.head(), 'to_markdown'):
-                    print(df.head().to_markdown(index=False)) 
-                else:
-                    # Fallback para ambientes sem to_markdown (imprime strings)
-                    print(df.head().to_string(index=False)) 
-                print("--------------------------------------------------\n")
-                
-                # 4. Salva a tabela final como CSV
+
                 csv_buffer = io.StringIO()
+                # Salva o DataFrame já planificado, eliminando o problema de JSON quebrado
                 df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
+                print("\n--- Amostra da Tabela (DataFrame) de Atividades - Atualizado \n---")
+                print(df.head().to_markdown(index=False))
+                print("--------------------------------------------------\n")
+                
                 upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades.csv")
             else:
                 print("Nenhuma atividade foi coletada após o processamento.")
@@ -1249,8 +1230,8 @@ def run_get_activities(customer):
             raise
 
     # START
-    main()  
-
+    main()
+    
 # ------------------------- FINAL - Adição do endpoint de atividades ------------------------- #
 
 def get_extraction_tasks():
