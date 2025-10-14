@@ -1147,8 +1147,7 @@ def run_get_activities(customer):
             # 💡 Ajuste de pré-processamento para limpeza
             cleaned_activities = []
             for activity in activities:
-                # Remove os campos aninhados complexos para evitar o erro de aspas duplas internas (ERRO: last read: '""c')
-                # A planificação agora será LIMPA.
+                # Remove os campos aninhados complexos para evitar o erro de aspas duplas internas 
                 activity.pop('notas', None) 
                 activity.pop('convidados', None)
                 cleaned_activities.append(activity)
@@ -1156,6 +1155,7 @@ def run_get_activities(customer):
             if cleaned_activities and isinstance(cleaned_activities, list):
                 print(f"Coletado com sucesso: página {page_number}, registros {len(cleaned_activities)}.")
             
+            # 💡 Retornamos a lista de dicionários puros.
             return cleaned_activities
         except requests.exceptions.RequestException as e:
             print(f"Erro na requisição da página {page_number}: {e}")
@@ -1206,16 +1206,22 @@ def run_get_activities(customer):
             if all_activities:
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
                 
-                # 💡 CHAVE DA CORREÇÃO: Usamos o pd.json_normalize na lista LIMPA
-                df = pd.json_normalize(all_activities, sep='_')
-                df.columns = [normalize_column_name(col) for col in df.columns]
+                # 💡 PASSO 1 (Simulação): Criar um DataFrame 'bruto'
+                # Simulamos a estrutura de agrupamento que você viu no CSV para demonstrar a extração
+                df_bruto = pd.DataFrame({'act_list': [all_activities]})
+                
+                # 💡 PASSO 2: Criar o novo DataFrame a partir da coluna 'act_list' (a simulação de 'atividades')
+                # df_activities_final é o novo DataFrame planificado.
+                df_activities_final = pd.json_normalize(df_bruto['act_list'].explode(), sep='_')
+                df_activities_final.columns = [normalize_column_name(col) for col in df_activities_final.columns]
 
                 csv_buffer = io.StringIO()
-                # Salva o DataFrame já planificado, eliminando o problema de JSON quebrado
-                df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
+                # 3. Salva o DataFrame plano final no GCS
+                df_activities_final.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
 
-                print("\n--- Amostra da Tabela (DataFrame) de Atividades - Atualizado \n---")
-                print(df.head().to_markdown(index=False))
+                print("\n--- Amostra da Tabela (DataFrame) de Atividades ---")
+                # 4. Exibe o head do DataFrame planificado
+                print(df_activities_final.head().to_markdown(index=False))
                 print("--------------------------------------------------\n")
                 
                 upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades.csv")
