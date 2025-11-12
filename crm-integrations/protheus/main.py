@@ -20,41 +20,55 @@ CONFIG = {
     "max_workers": 8,
     "default_tenant_ids": ["01,00", "01,01", "01,09"],
     "endpoints": {
-        "vendedores_vnd": {
-            "path": "WSGETVND",
-            "data_key": "VENDEDORES",
-            "tenant_ids": ["01,00"],
-            "use_relational": False
-        },
-        "produtos": {
-            "path": "WSGETPRD",
-            "data_key": "PRODUTOS",
-            "tenant_ids": ["01,00"],
-            "use_relational": False
-        },
-        "clientes": {
-            "path": "WSGETCLI",
-            "data_key": "CLIENTES",
-            "tenant_ids": ["01,00"],
-            "use_relational": False
-        },
-        "pedidos": {
-            "path": "WSGETPV",
-            "data_key": "PEDIDOS",
-            "tenant_ids": ["01,00", "01,01", "01,09"],
-            "extra_params": {"emissao": "01/07/2024"},
-            "use_relational": True,
-            "parent_id_field": "C5_NUM"
-        },
-        "vendedores_sd2": {
-            "path": "WSGETSD2",
+        # "vendedores_vnd": {
+        #     "path": "WSGETVND",
+        #     "data_key": "VENDEDORES",
+        #     "tenant_ids": ["01,00"],
+        #     "use_relational": False
+        # },
+        # "produtos": {
+        #     "path": "WSGETPRD",
+        #     "data_key": "PRODUTOS",
+        #     "tenant_ids": ["01,00"],
+        #     "use_relational": False
+        # },
+        # "clientes": {
+        #     "path": "WSGETCLI",
+        #     "data_key": "CLIENTES",
+        #     "tenant_ids": ["01,00"],
+        #     "use_relational": False
+        # },
+        # "pedidos": {
+        #     "path": "WSGETPV",
+        #     "data_key": "PEDIDOS",
+        #     "tenant_ids": ["01,00", "01,01", "01,09"],
+        #     "extra_params": {"emissao": "01/07/2024"},
+        #     "use_relational": True,
+        #     "parent_id_field": "C5_NUM"
+        # },
+        # "vendedores_sd2": {
+        #     "path": "WSGETSD2",
+        #     "data_key": "DADOS",
+        #     "tenant_ids": ["01,00", "01,01", "01,09"],
+        #     "extra_params": {"emissao": "20/08/2025"},
+        #     "use_relational": False
+        # },
+        # "itens_nf": {
+        #     "path": "WSGETSFT",
+        #     "data_key": "DADOS",
+        #     "tenant_ids": ["01,00", "01,01", "01,09"],
+        #     "extra_params": {"emissao": "01/07/2024"},
+        #     "use_relational": False
+        # },
+        "itens_nf_entrada": {
+            "path": "WSGETSD1",
             "data_key": "DADOS",
             "tenant_ids": ["01,00", "01,01", "01,09"],
             "extra_params": {"emissao": "01/07/2024"},
             "use_relational": False
         },
-        "itens_nf": {
-            "path": "WSGETSFT",
+        "tipo_entrada_saida": {
+            "path": "WSGETSF4",
             "data_key": "DADOS",
             "tenant_ids": ["01,00", "01,01", "01,09"],
             "extra_params": {"emissao": "01/07/2024"},
