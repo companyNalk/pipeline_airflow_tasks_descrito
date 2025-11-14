@@ -69,7 +69,7 @@ CONFIG = {
         },
         "tipo_entrada_saida": {
             "path": "WSGETSF4",
-            "data_key": "DADOS",
+            "data_key": "TES",
             "tenant_ids": ["01,00", "01,01", "01,09"],
             "extra_params": {"emissao": "01/07/2024"},
             "use_relational": False
