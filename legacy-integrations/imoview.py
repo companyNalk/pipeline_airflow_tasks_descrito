@@ -14,6 +14,7 @@ def run_services(customer):
     import requests
     import time
     import unicodedata
+    import ast
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from google.cloud import storage
     from queue import Queue
@@ -117,6 +118,21 @@ def run_services(customer):
             if todos_atendimentos:
                 df = pd.json_normalize(todos_atendimentos, sep='_')
                 df.columns = [normalize_column_name(col) for col in df.columns]
+
+                # Extrair valor_comissao do campo imoveisnegocio
+                def extrair_valor_comissao(valor):
+                    try:
+                        if pd.isna(valor) or str(valor).strip() in ('', '[]'):
+                            return 0
+                        lista = ast.literal_eval(str(valor))
+                        if isinstance(lista, list) and len(lista) > 0:
+                            return sum(item.get('valorcomissao', 0) or 0 for item in lista)
+                        return 0
+                    except:
+                        return 0
+
+                if 'imoveisnegocio' in df.columns:
+                    df['valor_comissao'] = df['imoveisnegocio'].apply(extrair_valor_comissao)
 
                 csv_buffer = io.StringIO()
                 df.to_csv(csv_buffer, sep=';', index=False, encoding='utf-8-sig')
@@ -1075,6 +1091,7 @@ def run_real_state_agent(customer):
     # START
     main()
 
+
 # ------------------------ INICIO - Adição do endpoint de atividades ------------------------- #
 
 def run_get_activities(customer):
@@ -1084,8 +1101,7 @@ def run_get_activities(customer):
     import requests
     import time
     import unicodedata
-    import json
-    import ast 
+    import ast
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from google.cloud import storage
     from queue import Queue
@@ -1123,10 +1139,10 @@ def run_get_activities(customer):
             response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params, timeout=10)
             response.raise_for_status()
             result = response.json()
-            
+
             if isinstance(result, dict) and "quantidade" in result:
                 return result.get("quantidade", 0)
-            
+
             print("A API de atividades não retornou 'quantidade'. A paginação será feita de forma iterativa.")
             return 0
         except Exception as e:
@@ -1137,26 +1153,26 @@ def run_get_activities(customer):
     def fetch_activities_page(page_number):
         headers = {"accept": "application/json", "chave": CHAVE_API}
         params = {"numeroPagina": page_number, "numeroRegistros": 20}
-        
+
         try:
             response = requests.get(API_URL_ACTIVITIES, headers=headers, params=params, timeout=30)
             response.raise_for_status()
-            
+
             result = response.json()
             activities = result.get("lista", []) if isinstance(result, dict) else result
-            
-            # Ajuste de pré-processamento: AQUI SIMPLESMENTE VAMOS DEIXAR OS DADOS BRUTOS 
+
+            # Ajuste de pré-processamento: AQUI SIMPLESMENTE VAMOS DEIXAR OS DADOS BRUTOS
             # DENTRO DE UMA LISTA, sem planificação, para o ast.literal_eval processar.
             cleaned_activities = []
             for activity in activities:
                 # Remove os campos aninhados complexos que quebram o ast.literal_eval.
-                activity.pop('notas', None) 
+                activity.pop('notas', None)
                 activity.pop('convidados', None)
                 cleaned_activities.append(activity)
 
             if cleaned_activities and isinstance(cleaned_activities, list):
                 print(f"Coletado com sucesso: página {page_number}, registros {len(cleaned_activities)}.")
-            
+
             # Retornamos a lista de dicionários puros.
             return cleaned_activities
         except requests.exceptions.RequestException as e:
@@ -1169,36 +1185,36 @@ def run_get_activities(customer):
             start_time = time.time()
             total_atividades = get_total_activities()
             page_size = 20
-            
+
             if total_atividades == 0:
                 print("Contagem total falhou ou é zero. Assumindo 1000 páginas para coleta iterativa.")
                 total_pages = 1500
             else:
                 total_pages = (total_atividades + page_size - 1) // page_size
                 print(f"Total de atividades encontradas: {total_atividades}. Coletando dados de {total_pages} páginas...")
-            
+
             all_activities = []
             page_queue = Queue()
-            
+
             for page_num in range(1, total_pages + 1):
                 page_queue.put(page_num)
 
             def worker():
                 while not page_queue.empty():
                     page_number = page_queue.get()
-                    time.sleep(0.01) # Pequeno delay
+                    time.sleep(0.01)  # Pequeno delay
                     activities = fetch_activities_page(page_number)
-                    
+
                     if activities is not None and activities:
                         all_activities.extend(activities)
-                    
+
                     page_queue.task_done()
 
             # Executa o worker
             num_workers = min(10, page_queue.qsize())
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
                 futures = [executor.submit(worker) for _ in range(num_workers)]
-                
+
                 for future in as_completed(futures):
                     try:
                         future.result()
@@ -1207,35 +1223,35 @@ def run_get_activities(customer):
 
             if all_activities:
                 print(f"Processamento finalizado. Total de {len(all_activities)} registros coletados.")
-                
+
                 # Passo 1: Cria um DataFrame Bruto com a lista JSON completa em uma coluna.
                 # Esta simulação é para replicar a entrada do seu script de processamento.
                 df = pd.json_normalize(all_activities, sep='_')
                 df.columns = [normalize_column_name(col) for col in df.columns]
-                
+
                 # --- INÍCIO DA LÓGICA DE PROCESSAMENTO MANUAL SOLICITADA (COM AST) ---
-                
+
                 df_activities = pd.DataFrame()
-                
-                # Itera sobre a coluna de listas JSON. Como df_bruto só tem 1 linha, 
+
+                # Itera sobre a coluna de listas JSON. Como df_bruto só tem 1 linha,
                 # o loop executa uma única vez para a lista de todas as atividades.
                 for activ_list in df['atividades']:
                     try:
                         # 1. Converte a lista de dicionários Python-like para uma lista real.
-                        # O all_activities já é uma lista, mas se fosse lido de um CSV, 
+                        # O all_activities já é uma lista, mas se fosse lido de um CSV,
                         # o ast.literal_eval seria necessário. Usamos str() para simular o CSV.
                         activ_list_str = str(activ_list)
                         ativ = ast.literal_eval(activ_list_str)
-                        
+
                         # 2. Planificação Final e Concatenação
                         df_temp = pd.DataFrame(ativ)
                         df_activities = pd.concat([df_activities, df_temp], ignore_index=True)
 
                     except Exception as e:
                         print(f"ERRO ao processar um item JSON/Planificação: {e}")
-                        
+
                 # --- FIM DA LÓGICA DE PROCESSAMENTO MANUAL SOLICITADA ---
-                
+
                 # 3. Normaliza os nomes das colunas da tabela final
 
                 if not df_activities.empty:
@@ -1249,7 +1265,7 @@ def run_get_activities(customer):
                     print("\n--- Amostra da Tabela FINAL PLANIFICADA (Processamento AST/Manual) - Atualizado ---\n")
                     print(df_activities.head().to_markdown(index=False))
                     print("----------------------------------------------------------------------\n")
-                    
+
                     # Salva o arquivo final no GCS
                     upload_to_gcs(csv_buffer.getvalue(), f"atividades/atividades_planificadas.csv")
                 else:
@@ -1266,7 +1282,8 @@ def run_get_activities(customer):
 
     # START
     main()
-    
+
+
 # ------------------------- FINAL - Adição do endpoint de atividades ------------------------- #
 
 def get_extraction_tasks():
