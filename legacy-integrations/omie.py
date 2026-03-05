@@ -680,6 +680,340 @@ def run(customer):
         else:
             logger.warning("Nenhum dado de resumo de vendas encontrado.")
 
+    # === COLETA: CONTAS CORRENTES ===
+    def coletar_contas_correntes():
+        """Coleta contas correntes da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/geral/contacorrente/"
+        ENDPOINT_NAME = "contas_correntes"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de contas correntes...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarContasCorrentes",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 100}]
+            }
+
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
+
+            dados = response.json()
+            contas = dados.get('ListarContasCorrentes', [])
+            if not contas:
+                tentativas_sem_dados += 1
+                logger.warning(f"Nenhuma conta corrente na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
+
+            tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
+            for conta in contas:
+                dados_banco = conta.pop('dadosBanco', {}) or {}
+                for k, v in dados_banco.items():
+                    conta[f"banco_{k}"] = v
+                resultados.append(conta)
+
+            logger.info(f"Página {pagina}: +{len(contas)} contas correntes. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if not resultados:
+            logger.warning("Nenhuma conta corrente coletada.")
+            return
+
+        df = pd.DataFrame(resultados)
+        upload_to_gcs(df, f"{ENDPOINT_NAME}/contas_correntes.csv")
+        logger.info(f"Coleta de contas correntes finalizada em {datetime.now() - inicio}")
+
+    # === COLETA: CONTAS A RECEBER ===
+    def extrair_campos_aninhados_conta_receber(lancamento):
+        """Extrai campos aninhados de conta a receber"""
+        campos = {}
+        for k, v in lancamento.get('cabecalho', {}).items():
+            campos[f"cabecalho_{k}"] = v
+        for k, v in lancamento.get('status_titulo', {}).items():
+            campos[f"status_{k}"] = v
+        for k, v in lancamento.get('informacoes', {}).items():
+            campos[f"info_{k}"] = v
+        departamentos = lancamento.get('departamentos', [])
+        if departamentos and isinstance(departamentos[0], dict):
+            for k, v in departamentos[0].items():
+                campos[f"depto_{k}"] = v
+        categorias = lancamento.get('categorias', [])
+        if categorias and isinstance(categorias[0], dict):
+            for k, v in categorias[0].items():
+                campos[f"categoria_{k}"] = v
+        return campos
+
+    def coletar_contas_receber():
+        """Coleta contas a receber da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/financas/contareceber/"
+        ENDPOINT_NAME = "contas_receber"
+        pagina, resultados = 1, []
+        ids_coletados = set()
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de contas a receber...")
+        with requests.Session() as session:
+            session.headers.update({'Content-type': 'application/json'})
+            while tentativas_sem_dados < 10:
+                payload = {
+                    "call": "ListarContasReceber",
+                    "app_key": API_KEY, "app_secret": API_SECRET,
+                    "param": [{"pagina": pagina, "registros_por_pagina": 200}]
+                }
+
+                response = fazer_requisicao_com_retry(URL, payload, session=session)
+                if not response:
+                    tentativas_sem_dados += 1
+                    logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                    pagina += 1
+                    continue
+
+                dados = response.json()
+                lancamentos = dados.get('conta_receber_cadastro', [])
+                if not lancamentos:
+                    tentativas_sem_dados += 1
+                    logger.warning(f"Nenhuma conta a receber na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                    pagina += 1
+                    continue
+
+                tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
+                novos = 0
+                for lanc in lancamentos:
+                    try:
+                        n_cod = lanc.get('cabecalho', {}).get('nCodTitulo')
+                        if n_cod and n_cod in ids_coletados:
+                            continue
+                        if n_cod:
+                            ids_coletados.add(n_cod)
+                        campos = extrair_campos_aninhados_conta_receber(lanc)
+                        resultados.append(campos)
+                        novos += 1
+                    except Exception as e:
+                        logger.error(f"Erro ao processar conta a receber: {e}")
+
+                logger.info(f"Página {pagina}: +{novos} contas a receber. Total: {len(resultados)}")
+                if pagina >= dados.get('total_de_paginas', 1):
+                    break
+                pagina += 1
+
+        if not resultados:
+            logger.warning("Nenhuma conta a receber coletada.")
+            return
+
+        df = pd.DataFrame(resultados)
+        upload_to_gcs(df, f"{ENDPOINT_NAME}/contas_receber.csv", sep='|')
+        logger.info(f"Coleta de contas a receber finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: CONTAS A PAGAR ===
+    def extrair_campos_aninhados_conta_pagar(lancamento):
+        """Extrai campos aninhados de conta a pagar"""
+        campos = {}
+        for k, v in lancamento.get('cabecalho', {}).items():
+            campos[f"cabecalho_{k}"] = v
+        for k, v in lancamento.get('status_titulo', {}).items():
+            campos[f"status_{k}"] = v
+        for k, v in lancamento.get('informacoes', {}).items():
+            campos[f"info_{k}"] = v
+        departamentos = lancamento.get('departamentos', [])
+        if departamentos and isinstance(departamentos[0], dict):
+            for k, v in departamentos[0].items():
+                campos[f"depto_{k}"] = v
+        categorias = lancamento.get('categorias', [])
+        if categorias and isinstance(categorias[0], dict):
+            for k, v in categorias[0].items():
+                campos[f"categoria_{k}"] = v
+        return campos
+
+    def coletar_contas_pagar():
+        """Coleta contas a pagar da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/financas/contapagar/"
+        ENDPOINT_NAME = "contas_pagar"
+        pagina, resultados = 1, []
+        ids_coletados = set()
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de contas a pagar...")
+        with requests.Session() as session:
+            session.headers.update({'Content-type': 'application/json'})
+            while tentativas_sem_dados < 10:
+                payload = {
+                    "call": "ListarContasPagar",
+                    "app_key": API_KEY, "app_secret": API_SECRET,
+                    "param": [{"pagina": pagina, "registros_por_pagina": 200}]
+                }
+
+                response = fazer_requisicao_com_retry(URL, payload, session=session)
+                if not response:
+                    tentativas_sem_dados += 1
+                    logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                    pagina += 1
+                    continue
+
+                dados = response.json()
+                lancamentos = dados.get('conta_pagar_cadastro', [])
+                if not lancamentos:
+                    tentativas_sem_dados += 1
+                    logger.warning(f"Nenhuma conta a pagar na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                    pagina += 1
+                    continue
+
+                tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
+                novos = 0
+                for lanc in lancamentos:
+                    try:
+                        n_cod = lanc.get('cabecalho', {}).get('nCodTitulo')
+                        if n_cod and n_cod in ids_coletados:
+                            continue
+                        if n_cod:
+                            ids_coletados.add(n_cod)
+                        campos = extrair_campos_aninhados_conta_pagar(lanc)
+                        resultados.append(campos)
+                        novos += 1
+                    except Exception as e:
+                        logger.error(f"Erro ao processar conta a pagar: {e}")
+
+                logger.info(f"Página {pagina}: +{novos} contas a pagar. Total: {len(resultados)}")
+                if pagina >= dados.get('total_de_paginas', 1):
+                    break
+                pagina += 1
+
+        if not resultados:
+            logger.warning("Nenhuma conta a pagar coletada.")
+            return
+
+        df = pd.DataFrame(resultados)
+        upload_to_gcs(df, f"{ENDPOINT_NAME}/contas_pagar.csv", sep='|')
+        logger.info(f"Coleta de contas a pagar finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: LANÇAMENTOS CONTA CORRENTE ===
+    def coletar_lancamentos_conta_corrente():
+        """Coleta lançamentos de conta corrente da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/financas/contacorrentelancamentos/"
+        ENDPOINT_NAME = "lancamentos_conta_corrente"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de lançamentos de conta corrente...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarLancamentos",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 200}]
+            }
+
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
+
+            dados = response.json()
+            lancamentos = dados.get('lancamentos', [])
+            if not lancamentos:
+                tentativas_sem_dados += 1
+                logger.warning(f"Nenhum lançamento na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
+
+            tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
+            for lanc in lancamentos:
+                try:
+                    campos = {}
+                    for k, v in lanc.get('cabecalho', {}).items():
+                        campos[f"cabecalho_{k}"] = v
+                    for k, v in lanc.get('detalhes', {}).items():
+                        campos[f"detalhes_{k}"] = v
+                    resultados.append(campos)
+                except Exception as e:
+                    logger.error(f"Erro ao processar lançamento conta corrente: {e}")
+
+            logger.info(f"Página {pagina}: +{len(lancamentos)} lançamentos. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if not resultados:
+            logger.warning("Nenhum lançamento de conta corrente coletado.")
+            return
+
+        df = pd.DataFrame(resultados)
+        upload_to_gcs(df, f"{ENDPOINT_NAME}/lancamentos_conta_corrente.csv", sep='|')
+        logger.info(f"Coleta de lançamentos de conta corrente finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: MOVIMENTOS FINANCEIROS ===
+    def coletar_movimentos_financeiros():
+        """Coleta movimentos financeiros da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/financas/mf/"
+        ENDPOINT_NAME = "movimentos_financeiros"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de movimentos financeiros...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarMovimentos",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 200}]
+            }
+
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                logger.warning(f"Sem resposta na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
+
+            dados = response.json()
+            movimentos = dados.get('movimentos', [])
+            if not movimentos:
+                tentativas_sem_dados += 1
+                logger.warning(f"Nenhum movimento na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
+                pagina += 1
+                continue
+
+            tentativas_sem_dados = 0  # Reseta contador ao encontrar dados
+            for mov in movimentos:
+                try:
+                    campos = {}
+                    for k, v in mov.get('cabecalho', {}).items():
+                        campos[f"cabecalho_{k}"] = v
+                    for k, v in mov.get('detalhes', {}).items():
+                        campos[f"detalhes_{k}"] = v
+                    for item in mov.get('lancamentos', []):
+                        if isinstance(item, dict):
+                            for k, v in item.items():
+                                campos[f"lancamentos_{k}"] = v
+                    resultados.append(campos)
+                except Exception as e:
+                    logger.error(f"Erro ao processar movimento financeiro: {e}")
+
+            logger.info(f"Página {pagina}: +{len(movimentos)} movimentos. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if not resultados:
+            logger.warning("Nenhum movimento financeiro coletado.")
+            return
+
+        df = pd.DataFrame(resultados)
+        upload_to_gcs(df, f"{ENDPOINT_NAME}/movimentos_financeiros.csv", sep='|')
+        logger.info(f"Coleta de movimentos financeiros finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
     # === FUNÇÃO EXECUTOR E MAIN ===
     def executar_todas_coletas():
         """Executa todas as coletas sequencialmente"""
@@ -696,7 +1030,12 @@ def run(customer):
             {"nome": "Etapas de Pedido", "func": coletar_etapas_pedido},
             {"nome": "Etapas de Faturamento", "func": coletar_etapas_faturamento},
             {"nome": "Pedidos de Venda (etapa 50)", "func": lambda: coletar_pedidos_venda("50")},
-            {"nome": "Resumo de Vendas", "func": coletar_resumo_vendas}
+            {"nome": "Resumo de Vendas",           "func": coletar_resumo_vendas},
+            {"nome": "Contas Correntes",           "func": coletar_contas_correntes},
+            {"nome": "Contas a Receber",           "func": coletar_contas_receber},
+            {"nome": "Contas a Pagar",             "func": coletar_contas_pagar},
+            {"nome": "Lançamentos Conta Corrente", "func": coletar_lancamentos_conta_corrente},
+            {"nome": "Movimentos Financeiros",     "func": coletar_movimentos_financeiros},
         ]
 
         for i, coleta in enumerate(coletas, 1):
