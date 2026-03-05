@@ -70,6 +70,51 @@ OPTIONS (
   allow_quoted_newlines=true,
   uris = ['gs://{bucket_name}/pedidos_vendas/pedidos_vendas.csv']);
 
+# CONTAS_CORRENTES
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.omie.contas_correntes
+OPTIONS (
+  format = 'CSV',
+  field_delimiter=';',
+  skip_leading_rows=1,
+  allow_quoted_newlines=true,
+  uris = ['gs://{bucket_name}/contas_correntes/contas_correntes.csv']);
+
+# CONTAS_RECEBER
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.omie.contas_receber
+OPTIONS (
+  format = 'CSV',
+  field_delimiter='|',
+  skip_leading_rows=1,
+  allow_quoted_newlines=true,
+  uris = ['gs://{bucket_name}/contas_receber/contas_receber.csv']);
+
+# CONTAS_PAGAR
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.omie.contas_pagar
+OPTIONS (
+  format = 'CSV',
+  field_delimiter='|',
+  skip_leading_rows=1,
+  allow_quoted_newlines=true,
+  uris = ['gs://{bucket_name}/contas_pagar/contas_pagar.csv']);
+
+# LANCAMENTOS_CONTA_CORRENTE
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.omie.lancamentos_conta_corrente
+OPTIONS (
+  format = 'CSV',
+  field_delimiter='|',
+  skip_leading_rows=1,
+  allow_quoted_newlines=true,
+  uris = ['gs://{bucket_name}/lancamentos_conta_corrente/lancamentos_conta_corrente.csv']);
+
+# MOVIMENTOS_FINANCEIROS
+CREATE OR REPLACE EXTERNAL TABLE {project_id}.omie.movimentos_financeiros
+OPTIONS (
+  format = 'CSV',
+  field_delimiter='|',
+  skip_leading_rows=1,
+  allow_quoted_newlines=true,
+  uris = ['gs://{bucket_name}/movimentos_financeiros/movimentos_financeiros.csv']);
+
 -- GOLD
 # LISTAR_CATEGORIAS
 CREATE OR REPLACE TABLE `{project_id}.vendas.omie_listar_categorias_gold`
@@ -118,3 +163,33 @@ CREATE OR REPLACE TABLE `{project_id}.vendas.omie_pedidos_vendas_gold`
 AS
 SELECT *
 FROM `{project_id}.omie.pedidos_vendas`;
+
+# CONTAS_CORRENTES
+CREATE OR REPLACE TABLE `{project_id}.vendas.omie_contas_correntes_gold`
+AS
+SELECT *
+FROM `{project_id}.omie.contas_correntes`;
+
+# CONTAS_RECEBER
+CREATE OR REPLACE TABLE `{project_id}.vendas.omie_contas_receber_gold`
+AS
+SELECT *
+FROM `{project_id}.omie.contas_receber`;
+
+# CONTAS_PAGAR
+CREATE OR REPLACE TABLE `{project_id}.vendas.omie_contas_pagar_gold`
+AS
+SELECT *
+FROM `{project_id}.omie.contas_pagar`;
+
+# LANCAMENTOS_CONTA_CORRENTE
+CREATE OR REPLACE TABLE `{project_id}.vendas.omie_lancamentos_conta_corrente_gold`
+AS
+SELECT *
+FROM `{project_id}.omie.lancamentos_conta_corrente`;
+
+# MOVIMENTOS_FINANCEIROS
+CREATE OR REPLACE TABLE `{project_id}.vendas.omie_movimentos_financeiros_gold`
+AS
+SELECT *
+FROM `{project_id}.omie.movimentos_financeiros`;
