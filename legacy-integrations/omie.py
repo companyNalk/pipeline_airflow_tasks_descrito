@@ -736,18 +736,19 @@ def run(customer):
     def extrair_campos_aninhados_conta_receber(lancamento):
         """Extrai campos aninhados de conta a receber"""
         campos = {}
-        for k, v in lancamento.get('cabecalho', {}).items():
-            campos[f"cabecalho_{k}"] = v
-        for k, v in lancamento.get('status_titulo', {}).items():
-            campos[f"status_{k}"] = v
-        for k, v in lancamento.get('informacoes', {}).items():
-            campos[f"info_{k}"] = v
-        departamentos = lancamento.get('departamentos', [])
-        if departamentos and isinstance(departamentos[0], dict):
+        for chave, prefixo in [('cabecalho', 'cabecalho_'), ('status_titulo', 'status_'), ('informacoes', 'info_')]:
+            valor = lancamento.get(chave)
+            if isinstance(valor, dict):
+                for k, v in valor.items():
+                    campos[f"{prefixo}{k}"] = v
+                    
+        departamentos = lancamento.get('departamentos')
+        if isinstance(departamentos, list) and departamentos and isinstance(departamentos[0], dict):
             for k, v in departamentos[0].items():
                 campos[f"depto_{k}"] = v
-        categorias = lancamento.get('categorias', [])
-        if categorias and isinstance(categorias[0], dict):
+                
+        categorias = lancamento.get('categorias')
+        if isinstance(categorias, list) and categorias and isinstance(categorias[0], dict):
             for k, v in categorias[0].items():
                 campos[f"categoria_{k}"] = v
         return campos
@@ -790,7 +791,8 @@ def run(customer):
                 novos = 0
                 for lanc in lancamentos:
                     try:
-                        n_cod = lanc.get('cabecalho', {}).get('nCodTitulo')
+                        cabecalho = lanc.get('cabecalho')
+                        n_cod = cabecalho.get('nCodTitulo') if isinstance(cabecalho, dict) else None
                         if n_cod and n_cod in ids_coletados:
                             continue
                         if n_cod:
@@ -818,18 +820,19 @@ def run(customer):
     def extrair_campos_aninhados_conta_pagar(lancamento):
         """Extrai campos aninhados de conta a pagar"""
         campos = {}
-        for k, v in lancamento.get('cabecalho', {}).items():
-            campos[f"cabecalho_{k}"] = v
-        for k, v in lancamento.get('status_titulo', {}).items():
-            campos[f"status_{k}"] = v
-        for k, v in lancamento.get('informacoes', {}).items():
-            campos[f"info_{k}"] = v
-        departamentos = lancamento.get('departamentos', [])
-        if departamentos and isinstance(departamentos[0], dict):
+        for chave, prefixo in [('cabecalho', 'cabecalho_'), ('status_titulo', 'status_'), ('informacoes', 'info_')]:
+            valor = lancamento.get(chave)
+            if isinstance(valor, dict):
+                for k, v in valor.items():
+                    campos[f"{prefixo}{k}"] = v
+                    
+        departamentos = lancamento.get('departamentos')
+        if isinstance(departamentos, list) and departamentos and isinstance(departamentos[0], dict):
             for k, v in departamentos[0].items():
                 campos[f"depto_{k}"] = v
-        categorias = lancamento.get('categorias', [])
-        if categorias and isinstance(categorias[0], dict):
+                
+        categorias = lancamento.get('categorias')
+        if isinstance(categorias, list) and categorias and isinstance(categorias[0], dict):
             for k, v in categorias[0].items():
                 campos[f"categoria_{k}"] = v
         return campos
@@ -872,7 +875,8 @@ def run(customer):
                 novos = 0
                 for lanc in lancamentos:
                     try:
-                        n_cod = lanc.get('cabecalho', {}).get('nCodTitulo')
+                        cabecalho = lanc.get('cabecalho')
+                        n_cod = cabecalho.get('nCodTitulo') if isinstance(cabecalho, dict) else None
                         if n_cod and n_cod in ids_coletados:
                             continue
                         if n_cod:
@@ -932,10 +936,11 @@ def run(customer):
             for lanc in lancamentos:
                 try:
                     campos = {}
-                    for k, v in lanc.get('cabecalho', {}).items():
-                        campos[f"cabecalho_{k}"] = v
-                    for k, v in lanc.get('detalhes', {}).items():
-                        campos[f"detalhes_{k}"] = v
+                    for chave, prefixo in [('cabecalho', 'cabecalho_'), ('detalhes', 'detalhes_')]:
+                        valor = lanc.get(chave)
+                        if isinstance(valor, dict):
+                            for k, v in valor.items():
+                                campos[f"{prefixo}{k}"] = v
                     resultados.append(campos)
                 except Exception as e:
                     logger.error(f"Erro ao processar lançamento conta corrente: {e}")
@@ -989,14 +994,18 @@ def run(customer):
             for mov in movimentos:
                 try:
                     campos = {}
-                    for k, v in mov.get('cabecalho', {}).items():
-                        campos[f"cabecalho_{k}"] = v
-                    for k, v in mov.get('detalhes', {}).items():
-                        campos[f"detalhes_{k}"] = v
-                    for item in mov.get('lancamentos', []):
-                        if isinstance(item, dict):
-                            for k, v in item.items():
-                                campos[f"lancamentos_{k}"] = v
+                    for chave, prefixo in [('cabecalho', 'cabecalho_'), ('detalhes', 'detalhes_')]:
+                        valor = mov.get(chave)
+                        if isinstance(valor, dict):
+                            for k, v in valor.items():
+                                campos[f"{prefixo}{k}"] = v
+                                
+                    lancamentos_mov = mov.get('lancamentos')
+                    if isinstance(lancamentos_mov, list):
+                        for item in lancamentos_mov:
+                            if isinstance(item, dict):
+                                for k, v in item.items():
+                                    campos[f"lancamentos_{k}"] = v
                     resultados.append(campos)
                 except Exception as e:
                     logger.error(f"Erro ao processar movimento financeiro: {e}")
