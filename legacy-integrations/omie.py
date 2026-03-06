@@ -912,9 +912,9 @@ def run(customer):
         logger.info("Iniciando coleta de lançamentos de conta corrente...")
         while tentativas_sem_dados < 10:
             payload = {
-                "call": "ListarLancamentos",
+                "call": "ListarLancCC",
                 "app_key": API_KEY, "app_secret": API_SECRET,
-                "param": [{"pagina": pagina, "registros_por_pagina": 200}]
+                "param": [{"nPagina": pagina, "nRegPorPagina": 200}]
             }
 
             response = fazer_requisicao_com_retry(URL, payload)
@@ -925,7 +925,7 @@ def run(customer):
                 continue
 
             dados = response.json()
-            lancamentos = dados.get('lancamentos', [])
+            lancamentos = dados.get('listaLancamentos', [])
             if not lancamentos:
                 tentativas_sem_dados += 1
                 logger.warning(f"Nenhum lançamento na página {pagina}. Tentativa sem dados {tentativas_sem_dados}/10")
@@ -946,7 +946,7 @@ def run(customer):
                     logger.error(f"Erro ao processar lançamento conta corrente: {e}")
 
             logger.info(f"Página {pagina}: +{len(lancamentos)} lançamentos. Total: {len(resultados)}")
-            if pagina >= dados.get('total_de_paginas', 1):
+            if pagina >= dados.get('nTotPaginas', 1):
                 break
             pagina += 1
 
@@ -972,7 +972,7 @@ def run(customer):
             payload = {
                 "call": "ListarMovimentos",
                 "app_key": API_KEY, "app_secret": API_SECRET,
-                "param": [{"pagina": pagina, "registros_por_pagina": 200}]
+                "param": [{"nPagina": pagina, "nRegPorPagina": 200}]
             }
 
             response = fazer_requisicao_com_retry(URL, payload)
@@ -994,24 +994,17 @@ def run(customer):
             for mov in movimentos:
                 try:
                     campos = {}
-                    for chave, prefixo in [('cabecalho', 'cabecalho_'), ('detalhes', 'detalhes_')]:
+                    for chave, prefixo in [('detalhes', 'detalhes_'), ('resumo', 'resumo_')]:
                         valor = mov.get(chave)
                         if isinstance(valor, dict):
                             for k, v in valor.items():
                                 campos[f"{prefixo}{k}"] = v
-                                
-                    lancamentos_mov = mov.get('lancamentos')
-                    if isinstance(lancamentos_mov, list):
-                        for item in lancamentos_mov:
-                            if isinstance(item, dict):
-                                for k, v in item.items():
-                                    campos[f"lancamentos_{k}"] = v
                     resultados.append(campos)
                 except Exception as e:
                     logger.error(f"Erro ao processar movimento financeiro: {e}")
 
             logger.info(f"Página {pagina}: +{len(movimentos)} movimentos. Total: {len(resultados)}")
-            if pagina >= dados.get('total_de_paginas', 1):
+            if pagina >= dados.get('nTotPaginas', 1):
                 break
             pagina += 1
 
