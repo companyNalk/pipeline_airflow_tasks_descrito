@@ -5,6 +5,7 @@ OPTIONS (
   field_delimiter=';',
   skip_leading_rows=1,
   allow_quoted_newlines=true,
+  autodetect=true,
   uris = ['gs://{bucket_name}/clientes/clientes.csv']);
 
 -- GOLD
