@@ -122,7 +122,7 @@ def run_get_deals(customer):
             print(f"  -> Buscando a partir de {start}...")
             res = make_request('crm.deal.list', {
                 'filter': {">DATE_CREATE": data_iso},
-                'order': {'ID': 'ASC'},
+                'order': {'ID': 'DESC'},  # DESC para extrair os mais recentes primeiro
                 'start': start,
                 'select': select_fields
             })
@@ -305,7 +305,7 @@ def run_get_leads(customer):
             # LÓGICA 3: Alterado de crm.deal.list para crm.lead.list
             res = make_request('crm.lead.list', {
                 'filter': {">DATE_CREATE": data_iso},
-                'order': {'ID': 'ASC'},
+                'order': {'ID': 'DESC'},  # DESC para extrair os mais recentes primeiro
                 'start': start,
                 'select': select_fields
             })
