@@ -45,6 +45,8 @@ def clean_csv_content(csv_content):
 def run(customer):
     API_BEARER_TOKEN = customer['api_bearer_token']
     BUCKET_NAME = customer['bucket_name']
+    WORKSPACE_ID = customer.get('workspace_id', '9011119715')
+    VIEW_ID = customer.get('view_id', '8chnhk3-81151')
     SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
 
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
@@ -57,7 +59,7 @@ def run(customer):
         "Authorization": f"Bearer {API_BEARER_TOKEN}",
         "Content-Type": "application/json",
         "x-csrf": "1",
-        "x-workspace-id": "9011119715"
+        "x-workspace-id": WORKSPACE_ID
     }
 
     params = {
@@ -69,8 +71,8 @@ def run(customer):
         "time_in_status_total": "False"
     }
 
-    API_PAYLOAD = {"id": "8chnhk3-81151", "members": [], "group_members": [], "name": "Integração: ClickUp > Nalk",
-                   "parent": {"id": "9011119715", "type": 7}, "type": 23, "creator": 75379731, "pinned": False,
+    API_PAYLOAD = {"id": VIEW_ID, "members": [], "group_members": [], "name": "Integração: ClickUp > Nalk",
+                   "parent": {"id": WORKSPACE_ID, "type": 7}, "type": 23, "creator": 75379731, "pinned": False,
                    "me_view": False, "locked": False, "visibility": 1,
                    "settings": {"show_task_locations": False, "show_subtasks": 1, "show_subtask_parent_names": False,
                                 "show_closed_subtasks": False, "show_assignees": True, "show_images": True,
@@ -379,7 +381,7 @@ def run(customer):
                    "public_share_expires_on": None, "share_tasks": None,
                    "share_task_fields": ["assignees", "priority", "due_date", "content", "comments", "attachments",
                                          "customFields", "subtasks", "tags", "checklists", "coverimage"],
-                   "board_settings": {}, "team_id": "9011119715", "sidebar_view": False, "sidebar_orderindex": None,
+                   "board_settings": {}, "team_id": WORKSPACE_ID, "sidebar_view": False, "sidebar_orderindex": None,
                    "sidebar_num_subcats_between": 0, "doc_type": 1}
 
     def upload_csv_to_gcs(csv_content, destination_path):
