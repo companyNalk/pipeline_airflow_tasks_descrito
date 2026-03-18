@@ -18,12 +18,23 @@ RATE_LIMIT = 100
 MAX_WORKERS = min(10, os.cpu_count() or 5)
 
 ENDPOINTS = {
-    "payments": "v3/payments",
     "customers": "v3/customers",
+    "payments": "v3/payments",
     "subscriptions": "v3/subscriptions",
+    "installments": "v3/installments",
+    "paymentLinks": "v3/paymentLinks",
+    "transfers": "v3/transfers",
+    "finance_balance": "v3/finance/balance",
+    "financialTransactions": "v3/financialTransactions",
 }
 
 DEPENDENT_ENDPOINTS = {
+    "payment_detail": {
+        "endpoint": "v3/payments/{id}",
+        "parent": "payments",
+        "id_field": "id",
+        "no_pagination": True
+    },
     "subscription_payments": {
         "endpoint": "v3/subscriptions/{id}/payments",
         "parent": "subscriptions",
