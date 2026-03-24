@@ -56,7 +56,7 @@ def run_webhook_register(customer):
     """
     Registra os webhooks de conversão e marcação de oportunidade para um cliente.
     """
-    BASE_URL = 'https://webhook-rd.nalk.com.br'
+    BASE_URL = 'http://167.172.233.125:8010'
     headers = {'X-API-KEY': customer['x_api_key'], 'accept': 'application/json', 'Content-Type': 'application/json'}
 
     def check_company_exists(alias):
@@ -106,7 +106,7 @@ def run_webhook_leads(customer):
     """
     Extrai todos os leads recebidos via webhook e salva em um arquivo CSV no GCS.
     """
-    BASE_URL = 'https://webhook-rd.nalk.com.br'
+    BASE_URL = 'http://167.172.233.125:8010'
     headers = {'X-API-KEY': customer['x_api_key'], 'accept': 'application/json'}
     ALIAS = customer['alias']
     BUCKET_NAME = customer['bucket_name']
