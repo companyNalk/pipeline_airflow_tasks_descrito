@@ -65,7 +65,7 @@ def run_webhook_register(customer):
             return requests.get(url, headers={'X-API-KEY': customer['x_api_key'], 'accept': 'application/json'})
         try:
             response = make_request_with_retry(make_check_request)
-            return response.json()[0].get('alias') if response.status_code == 200 and response.json() else None
+            return response.json()[0].get('id') if response.status_code == 200 and response.json() else None
         except Exception as e:
             print(f"Erro ao verificar empresa: {e}"); return None
 
@@ -76,11 +76,11 @@ def run_webhook_register(customer):
                     'google_project_id': customer['project_id'], 'google_bucket_name': customer['bucket_name']}
             return requests.post(url, headers=headers, json=data)
         response = make_request_with_retry(make_create_request)
-        return response.json().get('alias')
+        return response.json().get('id')
 
-    def register_webhook(company_alias, event_type):
+    def register_webhook(company_id, event_type):
         def make_webhook_request():
-            url = f"{BASE_URL}/api/v1/rd-station/register-webhook/{company_alias}"
+            url = f"{BASE_URL}/api/v1/rd-station/register-webhook/{company_id}"
             webhook_headers = {'X-API-KEY': customer['x_api_key'], 'accept': 'application/json', 'rd-client-id': customer['client_id'],
                                'rd-client-secret': customer['client_secret'], 'rd-refresh-token': customer['refresh_token'], 'Content-Type': 'application/json'}
             data = {'event_type': event_type, 'entity_type': 'CONTACT', 'http_method': 'POST', 'use_queue': True}
@@ -88,17 +88,17 @@ def run_webhook_register(customer):
         try:
             response = make_request_with_retry(make_webhook_request)
             if response.status_code == 200: print(f"Webhook {event_type} registrado com sucesso!")
-            elif response.status_code == 409: print(f"Webhook {event_type} já existe para {company_alias}. Continuando...")
+            elif response.status_code == 409: print(f"Webhook {event_type} já existe para {company_id}. Continuando...")
             else: print(f"Erro ao registrar webhook {event_type}: Status {response.status_code}")
         except Exception as e: print(f"Erro ao registrar webhook {event_type}: {e}"); raise
 
     print(f"Verificando empresa: {customer['alias']}")
-    company_alias = check_company_exists(customer['alias'])
-    if not company_alias:
-        print("Empresa não encontrada. Criando nova..."); company_alias = create_company(); print(f"Empresa criada com alias: {company_alias}")
-    else: print(f"Empresa encontrada com alias: {company_alias}")
+    company_id = check_company_exists(customer['alias'])
+    if not company_id:
+        print("Empresa não encontrada. Criando nova..."); company_id = create_company(); print(f"Empresa criada com id: {company_id}")
+    else: print(f"Empresa encontrada com id: {company_id}")
     for event_type in ['WEBHOOK.CONVERTED', 'WEBHOOK.MARKED_OPPORTUNITY']:
-        print(f"Registrando webhook para {event_type}"); register_webhook(company_alias, event_type)
+        print(f"Registrando webhook para {event_type}"); register_webhook(company_id, event_type)
     return 'Webhook registration completed'
 
 
