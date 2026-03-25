@@ -20,7 +20,7 @@ def make_request_with_retry(func, max_retries=10, base_delay=1, max_delay=300):
     for attempt in range(max_retries + 1):
         try:
             response = func()
-            if response.status_code in [200, 409]:
+            if response.status_code in [200, 404, 409, 422]:
                 return response
             elif response.status_code == 429:
                 if attempt < max_retries:
