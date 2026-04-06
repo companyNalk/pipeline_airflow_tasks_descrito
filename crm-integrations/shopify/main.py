@@ -56,7 +56,7 @@ def fetch_all_pages(http_client, endpoint, headers, resource_key, params=None):
     url = endpoint
 
     while url:
-        response = http_client.request("GET", url, headers=headers, params=request_params)
+        response = http_client.request("GET", url, headers=headers, params=request_params, raw=True)
 
         data = response.json()
         items = data.get(resource_key, [])
@@ -143,6 +143,85 @@ def map_customers(raw_customers):
     return customers
 
 
+def map_products(raw_products):
+    """Mapeia campos dos products para o formato de saída."""
+    products = []
+    for p in raw_products:
+        products.append({
+            "id": str(p.get("id", "")),
+            "title": p.get("title"),
+            "vendor": p.get("vendor"),
+            "product_type": p.get("product_type"),
+            "status": p.get("status"),
+            "tags": p.get("tags"),
+            "created_at": p.get("created_at"),
+            "updated_at": p.get("updated_at"),
+            "published_at": p.get("published_at"),
+        })
+    return products
+
+
+def extract_product_variants(raw_products):
+    """Extrai variants de dentro de cada product."""
+    logger.info(f"Extraindo variants de {len(raw_products)} products")
+    variants = []
+    for p in raw_products:
+        product_id = str(p.get("id", ""))
+        for v in p.get("variants", []):
+            variants.append({
+                "id": str(v.get("id", "")),
+                "product_id": product_id,
+                "title": v.get("title"),
+                "sku": v.get("sku"),
+                "price": v.get("price"),
+                "compare_at_price": v.get("compare_at_price"),
+                "inventory_quantity": v.get("inventory_quantity"),
+                "inventory_item_id": str(v.get("inventory_item_id", "")),
+                "created_at": v.get("created_at"),
+                "updated_at": v.get("updated_at"),
+            })
+    logger.info(f"product_variants: {len(variants)} itens extraidos")
+    return variants
+
+
+def map_draft_orders(raw_draft_orders):
+    """Mapeia campos dos draft orders para o formato de saída."""
+    draft_orders = []
+    for d in raw_draft_orders:
+        customer = d.get("customer") or {}
+        draft_orders.append({
+            "id": str(d.get("id", "")),
+            "status": d.get("status"),
+            "email": d.get("email"),
+            "total_price": d.get("total_price", 0),
+            "subtotal_price": d.get("subtotal_price", 0),
+            "total_tax": d.get("total_tax", 0),
+            "currency": d.get("currency"),
+            "customer_id": str(customer.get("id", "")) if customer.get("id") else None,
+            "created_at": d.get("created_at"),
+            "updated_at": d.get("updated_at"),
+            "completed_at": d.get("completed_at"),
+        })
+    return draft_orders
+
+
+def map_locations(raw_locations):
+    """Mapeia campos dos locations para o formato de saída."""
+    locations = []
+    for l in raw_locations:
+        locations.append({
+            "id": str(l.get("id", "")),
+            "name": l.get("name"),
+            "active": l.get("active"),
+            "address1": l.get("address1"),
+            "city": l.get("city"),
+            "province": l.get("province"),
+            "country": l.get("country"),
+            "zip": l.get("zip"),
+        })
+    return locations
+
+
 def process_endpoint(name, data, endpoint_stats):
     """Processa e salva dados de um endpoint, retornando estatísticas."""
     try:
@@ -213,7 +292,31 @@ def main():
         customers = map_customers(raw_customers)
         process_endpoint("customers", customers, endpoint_stats)
 
-        # 7. Resumo
+        # 7. Products + variants
+        raw_products = fetch_all_pages(
+            http_client, "products.json", auth_headers, "products",
+        )
+        products = map_products(raw_products)
+        process_endpoint("products", products, endpoint_stats)
+
+        product_variants = extract_product_variants(raw_products)
+        process_endpoint("product_variants", product_variants, endpoint_stats)
+
+        # 8. Draft orders
+        raw_draft_orders = fetch_all_pages(
+            http_client, "draft_orders.json", auth_headers, "draft_orders",
+        )
+        draft_orders = map_draft_orders(raw_draft_orders)
+        process_endpoint("draft_orders", draft_orders, endpoint_stats)
+
+        # 9. Locations
+        raw_locations = fetch_all_pages(
+            http_client, "locations.json", auth_headers, "locations",
+        )
+        locations = map_locations(raw_locations)
+        process_endpoint("locations", locations, endpoint_stats)
+
+        # 10. Resumo
         success = ReportGenerator.final_summary(logger, endpoint_stats, global_start_time)
 
         # 8. BigQuery

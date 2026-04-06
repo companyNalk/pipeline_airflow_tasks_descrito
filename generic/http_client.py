@@ -79,7 +79,8 @@ class HttpClient:
     @airflow_error_handler
     def request(self, method: str, url: str, headers: Dict[str, str] = None, data: Any = None,
                 params: Dict[str, Any] = None, json_data: Dict[str, Any] = None, timeout: int = None,
-                retry_on_status: List[int] = None, max_retries: int = None, debug_info: str = None) -> Any:
+                retry_on_status: List[int] = None, max_retries: int = None, debug_info: str = None,
+                raw: bool = False) -> Any:
         """
         Realiza uma requisição HTTP com suporte a rate limit, retry e logging.
         """
@@ -124,6 +125,8 @@ class HttpClient:
                 # Verificar se é 404 (tratamento especial)
                 if response.status_code == 404:
                     self.logger.debug(f"ℹ️ Endpoint não encontrado: {full_url}")
+                    if raw:
+                        return response
                     return {"data": [], "meta": {"totalPages": 0}}
 
                 # Verificar se é um código de erro
@@ -155,6 +158,8 @@ class HttpClient:
                     raise Exception(error_msg)
 
                 # Processar resposta bem-sucedida
+                if raw:
+                    return response
                 try:
                     return response.json()
                 except json.JSONDecodeError:
