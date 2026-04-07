@@ -217,7 +217,7 @@ def run(customer):
                     "app_key": API_KEY, "app_secret": API_SECRET,
                     "param": [{
                         "pagina": pagina,
-                        "registros_por_pagina": 200,
+                        "registros_por_pagina": 50,
                         "apenas_importado_api": "N"
                     }]
                 }
@@ -279,7 +279,7 @@ def run(customer):
                         break
 
                     # Se retornou menos registros que o solicitado, provavelmente é a última página
-                    if len(pedidos) < 200:
+                    if len(pedidos) < 50:
                         logger.info(f"Última página detectada (registros: {len(pedidos)})")
                         break
 
