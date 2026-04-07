@@ -1016,6 +1016,650 @@ def run(customer):
         upload_to_gcs(df, f"{ENDPOINT_NAME}/movimentos_financeiros.csv", sep='|')
         logger.info(f"Coleta de movimentos financeiros finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
 
+    # === HELPER: ACHATAR CAMPOS ANINHADOS (GENÉRICO) ===
+    def _flatten(reg):
+        """Achata um dict com 1 nível de aninhamento para uso tabular"""
+        campos = {}
+        for k, v in reg.items():
+            if isinstance(v, dict):
+                for sub_k, sub_v in v.items():
+                    campos[f"{k}_{sub_k}"] = sub_v
+            elif isinstance(v, list):
+                campos[k] = str(v)
+            else:
+                campos[k] = v
+        return campos
+
+    # === COLETA: CLIENTES ===
+    def coletar_clientes():
+        """Coleta clientes/fornecedores/transportadoras da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/geral/clientes/"
+        ENDPOINT_NAME = "clientes"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de clientes...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarClientes",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 50}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            clientes = dados.get('clientes_cadastro', [])
+            if not clientes:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for cliente in clientes:
+                resultados.append(_flatten(cliente))
+            logger.info(f"Página {pagina}: +{len(clientes)} clientes. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/clientes.csv")
+            logger.info(f"Coleta de clientes finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: PROJETOS ===
+    def coletar_projetos():
+        """Coleta projetos da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/geral/projetos/"
+        ENDPOINT_NAME = "projetos"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de projetos...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarProjetos",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            projetos = dados.get('cadastro', [])
+            if not projetos:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            resultados.extend(projetos)
+            logger.info(f"Página {pagina}: +{len(projetos)} projetos. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/projetos.csv")
+            logger.info(f"Coleta de projetos finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: CRM CONTAS ===
+    def coletar_crm_contas():
+        """Coleta contas do CRM Omie"""
+        URL = "https://app.omie.com.br/api/v1/crm/contas/"
+        ENDPOINT_NAME = "crm_contas"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de CRM Contas...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarContas",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('cadastros', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} contas CRM. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/crm_contas.csv")
+            logger.info(f"Coleta de CRM Contas finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: CRM CONTATOS ===
+    def coletar_crm_contatos():
+        """Coleta contatos do CRM Omie"""
+        URL = "https://app.omie.com.br/api/v1/crm/contatos/"
+        ENDPOINT_NAME = "crm_contatos"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de CRM Contatos...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarContatos",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('cadastros', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} contatos CRM. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/crm_contatos.csv")
+            logger.info(f"Coleta de CRM Contatos finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: CRM OPORTUNIDADES ===
+    def coletar_crm_oportunidades():
+        """Coleta oportunidades do CRM Omie"""
+        URL = "https://app.omie.com.br/api/v1/crm/oportunidades/"
+        ENDPOINT_NAME = "crm_oportunidades"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de CRM Oportunidades...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarOportunidades",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('cadastros', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} oportunidades. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/crm_oportunidades.csv")
+            logger.info(f"Coleta de CRM Oportunidades finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: CRM TAREFAS ===
+    def coletar_crm_tarefas():
+        """Coleta tarefas do CRM Omie"""
+        URL = "https://app.omie.com.br/api/v1/crm/tarefas/"
+        ENDPOINT_NAME = "crm_tarefas"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de CRM Tarefas...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarTarefas",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('cadastros', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} tarefas CRM. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/crm_tarefas.csv")
+            logger.info(f"Coleta de CRM Tarefas finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: SERVIÇOS (CADASTRO) ===
+    def coletar_servicos():
+        """Coleta cadastro de serviços da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/servicos/servico/"
+        ENDPOINT_NAME = "servicos"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de serviços...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarCadastroServico",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"nPagina": pagina, "nRegPorPagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('cadastros', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            resultados.extend(registros)
+            logger.info(f"Página {pagina}: +{len(registros)} serviços. Total: {len(resultados)}")
+            if pagina >= dados.get('nTotPaginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/servicos.csv")
+            logger.info(f"Coleta de serviços finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: ORDENS DE SERVIÇO ===
+    def coletar_ordens_servico():
+        """Coleta ordens de serviço da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/servicos/os/"
+        ENDPOINT_NAME = "ordens_servico"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de ordens de serviço...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarOS",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('osCadastro', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} OS. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/ordens_servico.csv")
+            logger.info(f"Coleta de OS finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: CONTRATOS ===
+    def coletar_contratos():
+        """Coleta contratos de serviço da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/servicos/contrato/"
+        ENDPOINT_NAME = "contratos"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de contratos...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarContratos",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('contratoCadastro', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} contratos. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/contratos.csv")
+            logger.info(f"Coleta de contratos finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: NFS-e ===
+    def coletar_nfse():
+        """Coleta notas fiscais de serviço (NFS-e) da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/servicos/nfse/"
+        ENDPOINT_NAME = "nfse"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de NFS-e...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarNFSEs",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"nPagina": pagina, "nRegPorPagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('nfseEncontradas', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} NFS-e. Total: {len(resultados)}")
+            if pagina >= dados.get('nTotPaginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/nfse.csv", sep='|')
+            logger.info(f"Coleta de NFS-e finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: PEDIDOS DE COMPRA ===
+    def coletar_pedidos_compra():
+        """Coleta pedidos de compra da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/produtos/pedidocompra/"
+        ENDPOINT_NAME = "pedidos_compra"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de pedidos de compra...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "PesquisarPedCompra",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"nPagina": pagina, "nRegsPorPagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('pedidos_pesquisa', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            resultados.extend(registros)
+            logger.info(f"Página {pagina}: +{len(registros)} pedidos de compra. Total: {len(resultados)}")
+            if pagina >= dados.get('nTotalPaginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/pedidos_compra.csv")
+            logger.info(f"Coleta de pedidos de compra finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: NOTAS DE ENTRADA ===
+    def coletar_notas_entrada():
+        """Coleta notas fiscais de entrada da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/produtos/notaentrada/"
+        ENDPOINT_NAME = "notas_entrada"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de notas de entrada...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarNotaEnt",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"nPagina": pagina, "nRegistrosPorPagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('notas', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} notas de entrada. Total: {len(resultados)}")
+            if pagina >= dados.get('nTotalPaginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/notas_entrada.csv")
+            logger.info(f"Coleta de notas de entrada finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: NF-e ===
+    def coletar_nfe():
+        """Coleta notas fiscais eletrônicas (NF-e) da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/produtos/nfconsultar/"
+        ENDPOINT_NAME = "nfe"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de NF-e...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarNF",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('nfCadastro', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} NF-e. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/nfe.csv", sep='|')
+            logger.info(f"Coleta de NF-e finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: CT-e ===
+    def coletar_cte():
+        """Coleta conhecimentos de transporte eletrônico (CT-e) da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/produtos/cte/"
+        ENDPOINT_NAME = "cte"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de CT-e...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarNFeTransp",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"nPagina": pagina, "nRegPorPagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('nfeEncontradas', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            for reg in registros:
+                resultados.append(_flatten(reg))
+            logger.info(f"Página {pagina}: +{len(registros)} CT-e. Total: {len(resultados)}")
+            if pagina >= dados.get('nTotPaginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/cte.csv")
+            logger.info(f"Coleta de CT-e finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: EXTRATO CONTA CORRENTE ===
+    def coletar_extrato(data_inicio=None, data_fim=None):
+        """Coleta extrato de conta corrente da API Omie (baseado em período)"""
+        URL = "https://app.omie.com.br/api/v1/financas/extrato/"
+        ENDPOINT_NAME = "extrato"
+        inicio = datetime.now()
+
+        if not data_inicio:
+            data_inicio = customer.get('data_inicio_extrato', '01/01/2020')
+        if not data_fim:
+            data_fim = datetime.now().strftime('%d/%m/%Y')
+
+        logger.info(f"Iniciando coleta de extrato ({data_inicio} a {data_fim})...")
+        payload = {
+            "call": "ListarExtrato",
+            "app_key": API_KEY, "app_secret": API_SECRET,
+            "param": [{"dPeriodoInicial": data_inicio, "dPeriodoFinal": data_fim}]
+        }
+        response = fazer_requisicao_com_retry(URL, payload, timeout=60)
+        if not response:
+            logger.error("Falha ao obter extrato.")
+            return
+
+        dados = response.json()
+        movimentos = dados.get('listaMovimentos', [])
+        if not movimentos:
+            logger.warning("Nenhum movimento no extrato.")
+            return
+
+        resultados = [_flatten(mov) for mov in movimentos]
+        df = pd.DataFrame(resultados)
+        upload_to_gcs(df, f"{ENDPOINT_NAME}/extrato.csv", sep='|')
+        logger.info(f"Coleta de extrato finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
+    # === COLETA: MOVIMENTOS DE ESTOQUE ===
+    def coletar_movimentos_estoque():
+        """Coleta movimentos de estoque da API Omie"""
+        URL = "https://app.omie.com.br/api/v1/estoque/movestoque/"
+        ENDPOINT_NAME = "movimentos_estoque"
+        pagina, resultados = 1, []
+        tentativas_sem_dados = 0
+        inicio = datetime.now()
+
+        logger.info("Iniciando coleta de movimentos de estoque...")
+        while tentativas_sem_dados < 10:
+            payload = {
+                "call": "ListarMovimentos",
+                "app_key": API_KEY, "app_secret": API_SECRET,
+                "param": [{"pagina": pagina, "registros_por_pagina": 500}]
+            }
+            response = fazer_requisicao_com_retry(URL, payload)
+            if not response:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            dados = response.json()
+            registros = dados.get('cadastros', [])
+            if not registros:
+                tentativas_sem_dados += 1
+                pagina += 1
+                continue
+            tentativas_sem_dados = 0
+            resultados.extend(registros)
+            logger.info(f"Página {pagina}: +{len(registros)} movimentos estoque. Total: {len(resultados)}")
+            if pagina >= dados.get('total_de_paginas', 1):
+                break
+            pagina += 1
+
+        if resultados:
+            df = pd.DataFrame(resultados)
+            upload_to_gcs(df, f"{ENDPOINT_NAME}/movimentos_estoque.csv")
+            logger.info(f"Coleta de movimentos de estoque finalizada em {datetime.now() - inicio}. Total: {len(resultados)}")
+
     # === FUNÇÃO EXECUTOR E MAIN ===
     def executar_todas_coletas():
         """Executa todas as coletas sequencialmente"""
@@ -1024,20 +1668,42 @@ def run(customer):
         print("\n===== INICIANDO COLETAS OMIE =====")
 
         coletas = [
-            {"nome": "Categorias", "func": coletar_categorias},
-            {"nome": "Pedidos (tipo N)", "func": coletar_pedidos},
-            {"nome": "Vendedores", "func": coletar_vendedores},
-            {"nome": "Produtos", "func": coletar_produtos},
-            {"nome": "Motivos de Devolução", "func": coletar_motivos_devolucao},
-            {"nome": "Etapas de Pedido", "func": coletar_etapas_pedido},
-            {"nome": "Etapas de Faturamento", "func": coletar_etapas_faturamento},
-            {"nome": "Pedidos de Venda (etapa 50)", "func": lambda: coletar_pedidos_venda("50")},
-            {"nome": "Resumo de Vendas",           "func": coletar_resumo_vendas},
+            # === GERAL ===
+            {"nome": "Categorias",               "func": coletar_categorias},
+            {"nome": "Vendedores",               "func": coletar_vendedores},
+            {"nome": "Produtos",                 "func": coletar_produtos},
+            {"nome": "Clientes",                 "func": coletar_clientes},
+            {"nome": "Projetos",                 "func": coletar_projetos},
+            {"nome": "Motivos de Devolução",     "func": coletar_motivos_devolucao},
+            # === VENDAS ===
+            {"nome": "Pedidos (tipo N)",              "func": coletar_pedidos},
+            {"nome": "Etapas de Pedido",             "func": coletar_etapas_pedido},
+            {"nome": "Etapas de Faturamento",        "func": coletar_etapas_faturamento},
+            {"nome": "Pedidos de Venda (etapa 50)",  "func": lambda: coletar_pedidos_venda("50")},
+            {"nome": "Resumo de Vendas",             "func": coletar_resumo_vendas},
+            {"nome": "NF-e",                         "func": coletar_nfe},
+            {"nome": "CT-e",                         "func": coletar_cte},
+            # === COMPRAS / ESTOQUE ===
+            {"nome": "Pedidos de Compra",        "func": coletar_pedidos_compra},
+            {"nome": "Notas de Entrada",         "func": coletar_notas_entrada},
+            {"nome": "Movimentos de Estoque",    "func": coletar_movimentos_estoque},
+            # === SERVIÇOS ===
+            {"nome": "Serviços (cadastro)",      "func": coletar_servicos},
+            {"nome": "Ordens de Serviço",        "func": coletar_ordens_servico},
+            {"nome": "Contratos",                "func": coletar_contratos},
+            {"nome": "NFS-e",                    "func": coletar_nfse},
+            # === CRM ===
+            {"nome": "CRM Contas",               "func": coletar_crm_contas},
+            {"nome": "CRM Contatos",             "func": coletar_crm_contatos},
+            {"nome": "CRM Oportunidades",        "func": coletar_crm_oportunidades},
+            {"nome": "CRM Tarefas",              "func": coletar_crm_tarefas},
+            # === FINANCEIRO ===
             {"nome": "Contas Correntes",           "func": coletar_contas_correntes},
             {"nome": "Contas a Receber",           "func": coletar_contas_receber},
             {"nome": "Contas a Pagar",             "func": coletar_contas_pagar},
             {"nome": "Lançamentos Conta Corrente", "func": coletar_lancamentos_conta_corrente},
             {"nome": "Movimentos Financeiros",     "func": coletar_movimentos_financeiros},
+            {"nome": "Extrato Conta Corrente",     "func": coletar_extrato},
         ]
 
         for i, coleta in enumerate(coletas, 1):
