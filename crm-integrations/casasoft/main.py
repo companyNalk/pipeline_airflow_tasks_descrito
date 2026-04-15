@@ -1,5 +1,7 @@
 import time
 
+import requests
+
 from commons.app_inicializer import AppInitializer
 from commons.big_query import BigQuery
 from commons.memory_monitor import MemoryMonitor
@@ -10,6 +12,8 @@ from generic.http_client import HttpClient
 from generic.rate_limiter import RateLimiter
 
 logger = AppInitializer.initialize()
+
+AUTH_BASE_URL = "https://auth.api.cloudslim.com.br"
 
 # Limite conservador — ajustar conforme T&C da CasaSoft/CloudSLIM
 RATE_LIMIT = 60
@@ -36,7 +40,9 @@ def get_arguments():
     """Configura e retorna os argumentos da linha de comando."""
     return (
         ArgumentManager("Script para coletar e processar dados da API CasaSoft (CloudSLIM)")
-        .add("API_TOKEN", "Bearer token de autenticação da API CasaSoft", required=True)
+        .add("API_USERNAME", "Usuário de autenticação da API CasaSoft", required=True)
+        .add("API_PASSWORD", "Senha de autenticação da API CasaSoft", required=True)
+        .add("API_EMPRESA", "Empresa de autenticação da API CasaSoft", required=True)
         .add("API_BASE_URL", "URL base da API (ex: https://api.cloudslim.com.br/api/v1)", required=True)
         .add("PROJECT_ID", "ID do projeto no Google Cloud", required=True)
         .add("CRM_TYPE", "Tipo de CRM para namespacing no BigQuery (ex: casasoft)", required=True)
@@ -45,6 +51,20 @@ def get_arguments():
         .add("DATA_FINAL", "Data final para carga incremental (YYYY-MM-DD)", required=False, default=None)
         .parse()
     )
+
+
+def login(username, password, empresa):
+    """Autentica na API CloudSLIM e retorna o access token."""
+    url = f"{AUTH_BASE_URL}/login"
+    payload = {"username": username, "password": password, "empresa": empresa}
+    logger.info(f"Autenticando na API CloudSLIM (empresa: {empresa})")
+    response = requests.post(url, json=payload, timeout=30)
+    response.raise_for_status()
+    token = response.json().get("access")
+    if not token:
+        raise ValueError("Resposta de login não contém campo 'access'")
+    logger.info("Autenticação CloudSLIM bem-sucedida")
+    return token
 
 
 def fetch_page(endpoint, token, pagina=1, extra_params=None):
@@ -161,6 +181,8 @@ def main():
     rate_limiter = RateLimiter(requests_per_window=RATE_LIMIT, window_seconds=60, logger=logger)
     http_client = HttpClient(base_url=args.API_BASE_URL, rate_limiter=rate_limiter, logger=logger)
 
+    token = login(args.API_USERNAME, args.API_PASSWORD, args.API_EMPRESA)
+
     global_start_time = ReportGenerator.init_report(logger, report_name="COLETA DE DADOS API CASASOFT")
     endpoint_stats = {}
 
@@ -169,7 +191,7 @@ def main():
             endpoint_stats[endpoint_name] = process_endpoint(
                 endpoint_name,
                 endpoint_path,
-                args.API_TOKEN,
+                token,
                 data_inicial=args.DATA_INICIAL,
                 data_final=args.DATA_FINAL,
             )
@@ -188,7 +210,7 @@ def main():
                 credentials_path=args.GOOGLE_APPLICATION_CREDENTIALS,
             )
 
-        if not success:
+        if success is not True:
             raise Exception(f"Falhas detectadas nos endpoints: {success}")
 
     except Exception as e:
