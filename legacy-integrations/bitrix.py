@@ -121,7 +121,7 @@ def run_get_deals(customer):
         while True:
             print(f"  -> Buscando a partir de {start}...")
             res = make_request('crm.deal.list', {
-                'filter': {">DATE_CREATE": data_iso},
+                'filter': {">DATE_MODIFY": data_iso},
                 'order': {'ID': 'DESC'},
                 'start': start,
                 'select': select_fields
