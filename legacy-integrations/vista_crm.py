@@ -1966,7 +1966,11 @@ def extract_real_state(customer):
                         self.total_failed += 1
                         return {"error": f"Falha após {MAX_RETRIES} tentativas", "url": url}
                 else:
-                    logger.error(f"Erro na requisição. Status: {response.status_code}")
+                    body_snippet = (response.text or '')[:500]
+                    logger.error(
+                        f"Erro na requisição. Status: {response.status_code} | "
+                        f"URL: {url[:300]} | Body: {body_snippet}"
+                    )
                     if response.status_code == 401:
                         print('ERRO NA AUTENTICACAO/MONTAGEM DA URL DINAMICA')
                         raise
@@ -1974,7 +1978,7 @@ def extract_real_state(customer):
                         time.sleep((2 ** retries) + random.uniform(0, 1))
                         return self.make_request(url, retries + 1)
                     self.total_failed += 1
-                    return {"error": f"Erro {response.status_code}", "url": url}
+                    return {"error": f"Erro {response.status_code}", "url": url, "body": body_snippet}
             except Exception as e:
                 logger.error(f"Exceção ao fazer requisição: {str(e)}")
                 if retries < MAX_RETRIES:
