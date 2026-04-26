@@ -43,12 +43,12 @@ def get_arguments():
         .add("API_USERNAME", "Usuário de autenticação da API CasaSoft", required=True)
         .add("API_PASSWORD", "Senha de autenticação da API CasaSoft", required=True)
         .add("API_EMPRESA", "Empresa de autenticação da API CasaSoft", required=True)
-        .add("API_BASE_URL", "URL base da API (ex: https://api.cloudslim.com.br/api/v1)", required=True)
+        .add("API_BASE_URL", "URL base da API (ex: https://integracao.api.cloudslim.com.br)", required=True)
         .add("PROJECT_ID", "ID do projeto no Google Cloud", required=True)
         .add("CRM_TYPE", "Tipo de CRM para namespacing no BigQuery (ex: casasoft)", required=True)
         .add("GOOGLE_APPLICATION_CREDENTIALS", "Caminho para credenciais do Google Cloud", required=True)
-        .add("DATA_INICIAL", "Data inicial para carga incremental (YYYY-MM-DD)", required=False, default=None)
-        .add("DATA_FINAL", "Data final para carga incremental (YYYY-MM-DD)", required=False, default=None)
+        .add("DATA_INICIAL", "Data inicial para carga incremental (YYYY-MM-DD ou dd/mm/yyyy)", required=False, default=None)
+        .add("DATA_FINAL", "Data final para carga incremental (YYYY-MM-DD ou dd/mm/yyyy)", required=False, default=None)
         .parse()
     )
 
@@ -59,10 +59,16 @@ def login(username, password, empresa):
     payload = {"username": username, "password": password, "empresa": empresa}
     logger.info(f"Autenticando na API CloudSLIM (empresa: {empresa})")
     response = requests.post(url, json=payload, timeout=30)
-    response.raise_for_status()
+    if response.status_code != 200:
+        body_snippet = (response.text or '')[:500]
+        logger.error(
+            f"Falha no login CloudSLIM. Status: {response.status_code} | "
+            f"URL: {url} | empresa={empresa} | username={username} | Body: {body_snippet}"
+        )
+        response.raise_for_status()
     token = response.json().get("access")
     if not token:
-        raise ValueError("Resposta de login não contém campo 'access'")
+        raise ValueError(f"Resposta de login não contém campo 'access'. Body: {response.text[:300]}")
     logger.info("Autenticação CloudSLIM bem-sucedida")
     return token
 
@@ -123,13 +129,27 @@ def fetch_all_pages(endpoint, token, extra_params=None):
     return all_items
 
 
+def _normalize_date(d):
+    """Aceita data em YYYY-MM-DD ou dd/mm/yyyy e devolve no formato dd/mm/yyyy
+    (formato exigido pela API CasaSoft conforme Swagger)."""
+    if not d:
+        return d
+    d = str(d).strip()
+    # YYYY-MM-DD -> dd/mm/yyyy
+    if len(d) == 10 and d[4] == '-' and d[7] == '-':
+        y, m, day = d.split('-')
+        return f"{day}/{m}/{y}"
+    return d
+
+
 def build_date_params(data_inicial, data_final):
-    """Monta parâmetros de filtro de data quando informados (carga incremental)."""
+    """Monta parâmetros de filtro de data quando informados (carga incremental).
+    A API CasaSoft espera dd/mm/yyyy; convertemos a partir de YYYY-MM-DD se necessário."""
     params = {}
     if data_inicial:
-        params["dataInicial"] = data_inicial
+        params["dataInicial"] = _normalize_date(data_inicial)
     if data_final:
-        params["dataFinal"] = data_final
+        params["dataFinal"] = _normalize_date(data_final)
     return params if params else None
 
 
