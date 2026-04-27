@@ -15,7 +15,7 @@ import pathlib
 import re
 import time
 import unicodedata
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import requests
@@ -224,6 +224,289 @@ def _upload_to_gcs(df, customer, gcs_path, sep=';'):
 def _gcs_path(name, mode):
     suffix = '_full' if mode == 'full' else ''
     return f"{name}{suffix}.csv"
+
+
+# =====================================================================
+# CHECKPOINT + CHUNKED UPLOAD (para full backfill)
+# =====================================================================
+
+def _checkpoint_path(base_name):
+    return f"_checkpoints/{base_name}_cursor.json"
+
+
+def _load_checkpoint(customer, base_name):
+    """Le cursor JSON do GCS. Retorna dict ou None se nao existir."""
+    storage_client = storage.Client(project=customer['project_id'])
+    bucket = storage_client.bucket(customer['bucket_name'])
+    blob = bucket.blob(_checkpoint_path(base_name))
+    if not blob.exists():
+        return None
+    try:
+        return json.loads(blob.download_as_text())
+    except Exception as e:
+        print(f"  [checkpoint] erro lendo {base_name}: {e}; tratando como inexistente")
+        return None
+
+
+def _save_checkpoint(customer, base_name, data):
+    """Sobrescreve cursor JSON no GCS."""
+    storage_client = storage.Client(project=customer['project_id'])
+    bucket = storage_client.bucket(customer['bucket_name'])
+    blob = bucket.blob(_checkpoint_path(base_name))
+    blob.upload_from_string(json.dumps(data, indent=2), content_type='application/json')
+
+
+def _delete_checkpoint(customer, base_name):
+    """Remove cursor (apos backfill completo)."""
+    storage_client = storage.Client(project=customer['project_id'])
+    bucket = storage_client.bucket(customer['bucket_name'])
+    blob = bucket.blob(_checkpoint_path(base_name))
+    if blob.exists():
+        blob.delete()
+
+
+def _upload_chunk_csv(df, customer, base_name, chunk_idx):
+    """Salva CSV chunk numerado: <base_name>_chunk_NNNN.csv"""
+    path = f"{base_name}_chunk_{chunk_idx:04d}.csv"
+    _upload_to_gcs(df, customer, path)
+    return path
+
+
+def _process_items_to_df(items, fields_map=None, enumeration_map=None,
+                         users_map=None, user_translate_fields=None,
+                         post_translate=None, url_base=None):
+    """Pipeline de transformacao items -> df normalizado.
+    Extraido de _extract_crm_list para reuso no chunked."""
+    df = pd.DataFrame(items)
+    if fields_map:
+        df.rename(columns=fields_map, inplace=True)
+    if enumeration_map:
+        df = _translate_enums(df, enumeration_map)
+    if users_map:
+        user_fields = user_translate_fields or [
+            'Pessoa responsável', 'Criado por', 'Modificado por',
+            'Pessoa responsavel', 'Modified by', 'Created by',
+        ]
+        df = _translate_users(df, users_map, user_fields)
+    if post_translate and url_base:
+        df = post_translate(df, url_base)
+    df = _normalize_and_dedup(df)
+    return df
+
+
+def _extract_crm_list_full(customer, method, fields_method, output_name,
+                           post_translate=None, user_translate_fields=None,
+                           chunk_pages=100):
+    """Pipeline FULL com checkpoint + chunked saves.
+
+    Salva CSVs como <output_name>_full_chunk_NNNN.csv para que a external
+    table aponte para glob (gs://.../<output_name>_full_chunk_*.csv).
+
+    Cursor em _checkpoints/<output_name>_full_cursor.json permite RETOMAR
+    de onde parou se a task for interrompida (timeout Docker, OOM, rate
+    limit esgotado). Cada chunk = chunk_pages requests = ~5000 linhas
+    (50/pagina default do Bitrix).
+
+    Comportamento:
+      - Sem checkpoint: comeca do zero (start=0, chunk_idx=0).
+      - Com checkpoint nao-completo: retoma de start salvo.
+      - Com checkpoint completed=True: apaga e recomeca (proxima rodada
+        de backfill substitui completamente o conjunto anterior).
+    """
+    _setup_credentials()
+    url_base = customer['url_base']
+    base_name = f"{output_name}_full"
+
+    print(f"[{base_name}] PASSO 1 - campos personalizados ({fields_method})")
+    fields_map, enumeration_map = _build_field_maps(url_base, fields_method)
+    print(f"  -> {len(fields_map)} campos, {len(enumeration_map)} enums")
+
+    print(f"[{base_name}] PASSO 2 - usuarios")
+    users_map = _build_users_map(url_base)
+    print(f"  -> {len(users_map)} usuarios")
+
+    # Checkpoint
+    ckpt = _load_checkpoint(customer, base_name)
+    if ckpt and ckpt.get('completed'):
+        print(f"[{base_name}] checkpoint anterior marcado como completed em "
+              f"{ckpt.get('last_update_utc', '?')}. Apagando e recomecando do zero.")
+        _delete_checkpoint(customer, base_name)
+        ckpt = None
+
+    start = ckpt.get('start', 0) if ckpt else 0
+    chunk_idx = ckpt.get('next_chunk_idx', 0) if ckpt else 0
+    pages_done = ckpt.get('pages_done', 0) if ckpt else 0
+    total_uploaded = ckpt.get('total_uploaded', 0) if ckpt else 0
+
+    if ckpt:
+        print(f"[{base_name}] RETOMANDO: start={start}, chunk_idx={chunk_idx}, "
+              f"pages_done={pages_done}, ja_uploaded={total_uploaded}")
+    else:
+        print(f"[{base_name}] inicio limpo (sem checkpoint)")
+
+    print(f"[{base_name}] PASSO 3 - paginar {method} (mode=full, chunk_pages={chunk_pages})")
+
+    buffer_items = []
+    pages_in_chunk = 0
+    total_reported = ckpt.get('total_reported') if ckpt else None
+
+    while True:
+        params = {'select': ['*', 'UF_*'], 'order': {'ID': 'ASC'}, 'start': start}
+        # fatal_on_fail=True garante raise em vez de retornar None silenciosamente
+        res = _make_request(url_base, method, params, fatal_on_fail=True)
+        if 'result' not in res:
+            raise BitrixPaginationError(
+                f"[{method}] resposta sem 'result' na pagina {pages_done+1}: {str(res)[:300]}"
+            )
+        chunk = res['result']
+        if not chunk:
+            # Sem mais dados (esgotou). Flush do buffer abaixo.
+            end_of_data = True
+        else:
+            end_of_data = False
+            if total_reported is None:
+                total_reported = res.get('total')
+                print(f"  [{method}] total reportado: {total_reported}")
+
+            buffer_items.extend(chunk)
+            pages_in_chunk += 1
+            pages_done += 1
+
+        nxt = res.get('next') if not end_of_data else None
+        if nxt is None:
+            end_of_data = True
+
+        # Flush condicional: chunk completo OU fim dos dados
+        should_flush = (pages_in_chunk >= chunk_pages or end_of_data) and buffer_items
+        if should_flush:
+            df = _process_items_to_df(
+                buffer_items, fields_map, enumeration_map, users_map,
+                user_translate_fields, post_translate, url_base
+            )
+            _upload_chunk_csv(df, customer, base_name, chunk_idx)
+            total_uploaded += len(df)
+            print(f"  [{base_name}] chunk {chunk_idx:04d} salvo "
+                  f"({len(df)} linhas; acumulado total: {total_uploaded}/{total_reported})")
+            chunk_idx += 1
+            buffer_items = []
+            pages_in_chunk = 0
+
+            # Salva cursor APOS upload bem sucedido
+            _save_checkpoint(customer, base_name, {
+                'start': nxt,  # None se end_of_data, senao proximo cursor
+                'next_chunk_idx': chunk_idx,
+                'pages_done': pages_done,
+                'total_uploaded': total_uploaded,
+                'total_reported': total_reported,
+                'completed': end_of_data,
+                'last_update_utc': datetime.now(timezone.utc).isoformat(),
+            })
+
+        if end_of_data:
+            break
+        start = nxt
+        time.sleep(PAGE_SLEEP)
+
+    print(f"[{base_name}] OK: {pages_done} paginas, {total_uploaded} linhas em {chunk_idx} chunks")
+    return {
+        'rows': total_uploaded,
+        'pages': pages_done,
+        'chunks': chunk_idx,
+        'total_reported': total_reported,
+        'gcs_pattern': f"{base_name}_chunk_*.csv",
+    }
+
+
+def _extract_activities_full(customer, chunk_pages=100):
+    """Versao full chunked para crm.activity.list (sem .fields, com user translate)."""
+    _setup_credentials()
+    url_base = customer['url_base']
+    base_name = 'bitrix_crm_activities_full'
+    method = 'crm.activity.list'
+
+    users_map = _build_users_map(url_base)
+
+    ckpt = _load_checkpoint(customer, base_name)
+    if ckpt and ckpt.get('completed'):
+        print(f"[{base_name}] checkpoint completed. Apagando e recomecando.")
+        _delete_checkpoint(customer, base_name)
+        ckpt = None
+
+    start = ckpt.get('start', 0) if ckpt else 0
+    chunk_idx = ckpt.get('next_chunk_idx', 0) if ckpt else 0
+    pages_done = ckpt.get('pages_done', 0) if ckpt else 0
+    total_uploaded = ckpt.get('total_uploaded', 0) if ckpt else 0
+
+    if ckpt:
+        print(f"[{base_name}] RETOMANDO: start={start}, chunk_idx={chunk_idx}, "
+              f"pages_done={pages_done}, ja_uploaded={total_uploaded}")
+    else:
+        print(f"[{base_name}] inicio limpo")
+
+    print(f"[{base_name}] paginar {method} (mode=full, chunk_pages={chunk_pages})")
+
+    buffer_items = []
+    pages_in_chunk = 0
+    total_reported = ckpt.get('total_reported') if ckpt else None
+
+    while True:
+        params = {'select': ['*', 'UF_*'], 'order': {'ID': 'ASC'}, 'start': start}
+        res = _make_request(url_base, method, params, fatal_on_fail=True)
+        if 'result' not in res:
+            raise BitrixPaginationError(
+                f"[{method}] resposta sem 'result' na pagina {pages_done+1}: {str(res)[:300]}"
+            )
+        chunk = res['result']
+        end_of_data = not chunk
+        if not end_of_data:
+            if total_reported is None:
+                total_reported = res.get('total')
+                print(f"  [{method}] total reportado: {total_reported}")
+            buffer_items.extend(chunk)
+            pages_in_chunk += 1
+            pages_done += 1
+
+        nxt = res.get('next') if not end_of_data else None
+        if nxt is None:
+            end_of_data = True
+
+        should_flush = (pages_in_chunk >= chunk_pages or end_of_data) and buffer_items
+        if should_flush:
+            df = pd.DataFrame(buffer_items)
+            df = _translate_users(df, users_map,
+                                  ['RESPONSIBLE_ID', 'AUTHOR_ID', 'EDITOR_ID'])
+            df = _normalize_and_dedup(df)
+            _upload_chunk_csv(df, customer, base_name, chunk_idx)
+            total_uploaded += len(df)
+            print(f"  [{base_name}] chunk {chunk_idx:04d} salvo "
+                  f"({len(df)} linhas; acumulado: {total_uploaded}/{total_reported})")
+            chunk_idx += 1
+            buffer_items = []
+            pages_in_chunk = 0
+
+            _save_checkpoint(customer, base_name, {
+                'start': nxt,
+                'next_chunk_idx': chunk_idx,
+                'pages_done': pages_done,
+                'total_uploaded': total_uploaded,
+                'total_reported': total_reported,
+                'completed': end_of_data,
+                'last_update_utc': datetime.now(timezone.utc).isoformat(),
+            })
+
+        if end_of_data:
+            break
+        start = nxt
+        time.sleep(PAGE_SLEEP)
+
+    print(f"[{base_name}] OK: {pages_done} paginas, {total_uploaded} linhas em {chunk_idx} chunks")
+    return {
+        'rows': total_uploaded,
+        'pages': pages_done,
+        'chunks': chunk_idx,
+        'total_reported': total_reported,
+        'gcs_pattern': f"{base_name}_chunk_*.csv",
+    }
 
 
 # =====================================================================
@@ -461,27 +744,40 @@ def run_get_custom_fields(customer, **_):
 
 
 # =====================================================================
-# FULL BACKFILL WRAPPERS (TEMPORARIO - rodar 1x e remover)
+# FULL BACKFILL WRAPPERS (TEMPORARIO - rodar ate completed e remover)
 # =====================================================================
+# Usam checkpoint+chunked: cada execucao retoma do cursor salvo no GCS,
+# salva CSVs em <output>_full_chunk_NNNN.csv, e marca completed quando
+# esgotar a paginacao. Ao re-rodar uma task ja completed, recomeca do zero.
 
 def run_get_leads_full(customer, **_):
-    return run_get_leads(customer, mode='full')
+    return _extract_crm_list_full(
+        customer, 'crm.lead.list', 'crm.lead.fields', 'bitrix_crm_leads',
+        post_translate=_translate_lead_status,
+    )
 
 
 def run_get_deals_full(customer, **_):
-    return run_get_deals(customer, mode='full')
+    return _extract_crm_list_full(
+        customer, 'crm.deal.list', 'crm.deal.fields', 'bitrix_crm_deals',
+        post_translate=_translate_deal_stage,
+    )
 
 
 def run_get_contacts_full(customer, **_):
-    return run_get_contacts(customer, mode='full')
+    return _extract_crm_list_full(
+        customer, 'crm.contact.list', 'crm.contact.fields', 'bitrix_crm_contacts',
+    )
 
 
 def run_get_company_full(customer, **_):
-    return run_get_company(customer, mode='full')
+    return _extract_crm_list_full(
+        customer, 'crm.company.list', 'crm.company.fields', 'bitrix_crm_company',
+    )
 
 
 def run_get_activities_full(customer, **_):
-    return run_get_activities(customer, mode='full')
+    return _extract_activities_full(customer)
 
 
 # =====================================================================
