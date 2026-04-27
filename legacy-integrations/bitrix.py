@@ -232,9 +232,10 @@ def _extract_crm_list(customer, method, fields_method, output_name,
     df = _normalize_and_dedup(df)
 
     print(f"[{output_name}] PASSO 5 - upload GCS")
-    _upload_to_gcs(df, customer, _gcs_path(output_name, mode))
+    gcs_path = _gcs_path(output_name, mode)
+    _upload_to_gcs(df, customer, gcs_path)
     print(f"[{output_name}] OK: {len(df)} linhas, {len(df.columns)} cols")
-    return df
+    return {'rows': len(df), 'cols': len(df.columns), 'gcs_path': gcs_path}
 
 
 def _translate_deal_stage(df, url_base):
@@ -308,9 +309,10 @@ def run_get_activities(customer, mode='incremental', days=7):
     users_map = _build_users_map(url_base)
     df = _translate_users(df, users_map, ['RESPONSIBLE_ID', 'AUTHOR_ID', 'EDITOR_ID'])
     df = _normalize_and_dedup(df)
-    _upload_to_gcs(df, customer, _gcs_path('bitrix_crm_activities', mode))
+    gcs_path = _gcs_path('bitrix_crm_activities', mode)
+    _upload_to_gcs(df, customer, gcs_path)
     print(f"[bitrix_crm_activities] OK: {len(df)} linhas")
-    return df
+    return {'rows': len(df), 'cols': len(df.columns), 'gcs_path': gcs_path}
 
 
 # =====================================================================
@@ -327,7 +329,7 @@ def run_get_users(customer, **_):
     df = _normalize_and_dedup(df)
     _upload_to_gcs(df, customer, 'bitrix_crm_users.csv')
     print(f"[bitrix_crm_users] OK: {len(df)} linhas")
-    return df
+    return {'rows': len(df), 'cols': len(df.columns), 'gcs_path': 'bitrix_crm_users.csv'}
 
 
 def run_get_funnels(customer, **_):
@@ -340,7 +342,7 @@ def run_get_funnels(customer, **_):
     df = _normalize_and_dedup(df)
     _upload_to_gcs(df, customer, 'bitrix_crm_funnels.csv')
     print(f"[bitrix_crm_funnels] OK: {len(df)} linhas")
-    return df
+    return {'rows': len(df), 'cols': len(df.columns), 'gcs_path': 'bitrix_crm_funnels.csv'}
 
 
 def run_get_stages(customer, **_):
@@ -367,7 +369,7 @@ def run_get_stages(customer, **_):
     df = pd.DataFrame(rows)
     _upload_to_gcs(df, customer, 'bitrix_crm_stages.csv')
     print(f"[bitrix_crm_stages] OK: {len(df)} linhas")
-    return df
+    return {'rows': len(df), 'cols': len(df.columns), 'gcs_path': 'bitrix_crm_stages.csv'}
 
 
 def run_get_statuses(customer, **_):
@@ -391,7 +393,7 @@ def run_get_statuses(customer, **_):
     df = _normalize_and_dedup(df)
     _upload_to_gcs(df, customer, 'bitrix_crm_statuses.csv')
     print(f"[bitrix_crm_statuses] OK: {len(df)} linhas")
-    return df
+    return {'rows': len(df), 'cols': len(df.columns), 'gcs_path': 'bitrix_crm_statuses.csv'}
 
 
 def run_get_custom_fields(customer, **_):
@@ -421,7 +423,7 @@ def run_get_custom_fields(customer, **_):
     df = pd.DataFrame(rows)
     _upload_to_gcs(df, customer, 'bitrix_crm_custom_fields.csv')
     print(f"[bitrix_crm_custom_fields] OK: {len(df)} linhas")
-    return df
+    return {'rows': len(df), 'cols': len(df.columns), 'gcs_path': 'bitrix_crm_custom_fields.csv'}
 
 
 # =====================================================================
