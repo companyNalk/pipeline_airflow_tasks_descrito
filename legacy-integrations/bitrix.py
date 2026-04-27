@@ -427,21 +427,52 @@ def run_get_custom_fields(customer, **_):
 
 
 # =====================================================================
+# FULL BACKFILL WRAPPERS (TEMPORARIO - rodar 1x e remover)
+# =====================================================================
+
+def run_get_leads_full(customer, **_):
+    return run_get_leads(customer, mode='full')
+
+
+def run_get_deals_full(customer, **_):
+    return run_get_deals(customer, mode='full')
+
+
+def run_get_contacts_full(customer, **_):
+    return run_get_contacts(customer, mode='full')
+
+
+def run_get_company_full(customer, **_):
+    return run_get_company(customer, mode='full')
+
+
+def run_get_activities_full(customer, **_):
+    return run_get_activities(customer, mode='full')
+
+
+# =====================================================================
 # TASK REGISTRY (Airflow)
 # =====================================================================
 
 def get_extraction_tasks():
     """Tarefas para a DAG. Cada uma idempotente.
-    Catalogos primeiro (rapidos), depois entidades transacionais."""
+    Catalogos primeiro (rapidos), depois entidades transacionais incrementais.
+    Tasks _full sao TEMPORARIAS para o backfill inicial."""
     return [
-        {'task_id': 'run_get_users',          'python_callable': run_get_users},
-        {'task_id': 'run_get_funnels',        'python_callable': run_get_funnels},
-        {'task_id': 'run_get_stages',         'python_callable': run_get_stages},
-        {'task_id': 'run_get_statuses',       'python_callable': run_get_statuses},
-        {'task_id': 'run_get_custom_fields',  'python_callable': run_get_custom_fields},
-        {'task_id': 'run_get_leads',          'python_callable': run_get_leads},
-        {'task_id': 'run_get_deals',          'python_callable': run_get_deals},
-        {'task_id': 'run_get_contacts',       'python_callable': run_get_contacts},
-        {'task_id': 'run_get_company',        'python_callable': run_get_company},
-        {'task_id': 'run_get_activities',     'python_callable': run_get_activities},
+        {'task_id': 'run_get_users',           'python_callable': run_get_users},
+        {'task_id': 'run_get_funnels',         'python_callable': run_get_funnels},
+        {'task_id': 'run_get_stages',          'python_callable': run_get_stages},
+        {'task_id': 'run_get_statuses',        'python_callable': run_get_statuses},
+        {'task_id': 'run_get_custom_fields',   'python_callable': run_get_custom_fields},
+        {'task_id': 'run_get_leads',           'python_callable': run_get_leads},
+        {'task_id': 'run_get_deals',           'python_callable': run_get_deals},
+        {'task_id': 'run_get_contacts',        'python_callable': run_get_contacts},
+        {'task_id': 'run_get_company',         'python_callable': run_get_company},
+        {'task_id': 'run_get_activities',      'python_callable': run_get_activities},
+        # backfill 1x — remover apos rodar
+        {'task_id': 'run_get_leads_full',      'python_callable': run_get_leads_full},
+        {'task_id': 'run_get_deals_full',      'python_callable': run_get_deals_full},
+        {'task_id': 'run_get_contacts_full',   'python_callable': run_get_contacts_full},
+        {'task_id': 'run_get_company_full',    'python_callable': run_get_company_full},
+        {'task_id': 'run_get_activities_full', 'python_callable': run_get_activities_full},
     ]
