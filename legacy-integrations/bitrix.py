@@ -43,8 +43,20 @@ def _setup_credentials():
     os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = path
 
 
-def _make_request(url_base, method, params=None, retries=3):
-    """POST com retry exponencial."""
+class BitrixPaginationError(Exception):
+    """Raised quando a paginacao nao consegue concluir (rate limit persistente, rede, etc).
+    Marca a task como FAILED no Airflow para evitar upload silencioso de dados parciais."""
+    pass
+
+
+def _make_request(url_base, method, params=None, retries=8, fatal_on_fail=False):
+    """POST com retry exponencial e tratamento dedicado para 429.
+
+    - 429: respeita Retry-After header se vier; senao backoff 60/120/240/... segundos
+    - Outros erros: backoff 5/10/20/40/80 segundos
+    - retries default 8 (era 3) para tolerar bursts de rate limit
+    - fatal_on_fail=True: levanta excecao em vez de retornar None (usado em paginacao)
+    """
     last_err = None
     for attempt in range(retries):
         try:
@@ -54,13 +66,29 @@ def _make_request(url_base, method, params=None, retries=3):
                 data=json.dumps(params or {}),
                 timeout=190,
             )
+            if r.status_code == 429:
+                # Rate limit. Respeita Retry-After, senao backoff longo (60s, 120s, 240s, ...)
+                retry_after = r.headers.get('Retry-After')
+                if retry_after and retry_after.isdigit():
+                    wait = max(int(retry_after), 30)
+                else:
+                    wait = min(60 * (2 ** attempt), 600)  # cap em 10 min
+                print(f"  [{method}] 429 rate limit (attempt {attempt+1}/{retries}). Aguardando {wait}s...")
+                time.sleep(wait)
+                last_err = '429 rate limit'
+                continue
             r.raise_for_status()
             return r.json()
         except Exception as e:
             last_err = e
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)
-    print(f"[ERRO] {method} apos {retries} tentativas: {last_err}")
+                wait = min(5 * (2 ** attempt), 300)  # 5,10,20,40,80,160,300...
+                print(f"  [{method}] erro (attempt {attempt+1}/{retries}): {str(e)[:100]} - aguardando {wait}s")
+                time.sleep(wait)
+    msg = f"[ERRO] {method} apos {retries} tentativas: {last_err}"
+    print(msg)
+    if fatal_on_fail:
+        raise BitrixPaginationError(msg)
     return None
 
 
@@ -70,6 +98,10 @@ def _paginate_list(url_base, method, mode='incremental', days=7,
 
     mode='full'        -> sem filtro de data
     mode='incremental' -> filter >DATE_MODIFY (ou >LAST_UPDATED em activities)
+
+    LEVANTA BitrixPaginationError se nao conseguir concluir a paginacao.
+    Isso e proposital: melhor falhar a task no Airflow do que sobrescrever
+    o CSV no GCS com dados parciais (que apareceriam como sucesso).
     """
     filter_ = dict(extra_filter or {})
     if mode == 'incremental':
@@ -86,10 +118,12 @@ def _paginate_list(url_base, method, mode='incremental', days=7,
         params = {'select': select_, 'order': {'ID': 'ASC'}, 'start': start}
         if filter_:
             params['filter'] = filter_
-        res = _make_request(url_base, method, params)
-        if not res or 'result' not in res:
-            print(f"  [{method}] erro/fim na pagina {pages+1}: {str(res)[:200]}")
-            break
+        # fatal_on_fail=True: se esgotar retries, levanta excecao em vez de "fim silencioso"
+        res = _make_request(url_base, method, params, fatal_on_fail=True)
+        if 'result' not in res:
+            raise BitrixPaginationError(
+                f"[{method}] resposta sem 'result' na pagina {pages+1}: {str(res)[:300]}"
+            )
         chunk = res['result']
         if not chunk:
             break
