@@ -1,389 +1,445 @@
 """
 Bitrix module for data extraction functions.
-This module contains functions specific to the Bitrix integration.
+
+Extracao das entidades CRM via REST -> CSV no GCS.
+Tabelas externas em BQ e tabelas gold sao geridas fora deste modulo
+(via scheduled queries no BigQuery).
+
+Cada extrator tem dois modos:
+  - mode='full'        -> sem filtro, paginacao ASC ate esgotar (uso 1x para backfill)
+  - mode='incremental' -> >DATE_MODIFY ultimos N dias (default 7)
 """
+import json
+import os
+import pathlib
+import re
+import time
+import unicodedata
+from datetime import date, timedelta
 
-from core import gcs
+import pandas as pd
+import requests
+from google.cloud import storage
 
 
-def run_get_deals(customer):
-    import requests
-    import json
-    import time
-    import pandas as pd
-    from datetime import date
-    from dateutil.relativedelta import relativedelta
-    import pathlib
-    import os
-    from google.cloud import storage
+# =====================================================================
+# CONFIG
+# =====================================================================
+HEADER = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+}
 
-    # =======================================================================
-    # CONFIGURAÇÃO
-    # =======================================================================
-    URL_BASE = customer['url_base']
-    BUCKET_NAME = customer['bucket_name']
-    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+PAGE_SLEEP = 0.2  # ~5 req/s, dentro do limite do Bitrix
+BITRIX_TZ_OFFSET = '-03:00'
 
-    HEADER = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    }
 
-    def make_request(method, params=None):
-        """Faz requisição à API do Bitrix."""
+# =====================================================================
+# HELPERS
+# =====================================================================
+
+def _setup_credentials():
+    path = pathlib.Path('config', 'gcp.json').as_posix()
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = path
+
+
+def _make_request(url_base, method, params=None, retries=3):
+    """POST com retry exponencial."""
+    last_err = None
+    for attempt in range(retries):
         try:
-            response = requests.post(
-                f"{URL_BASE}/{method}.json",
+            r = requests.post(
+                f"{url_base}/{method}.json",
                 headers=HEADER,
                 data=json.dumps(params or {}),
-                timeout=190
+                timeout=190,
             )
-            response.raise_for_status()
-            return response.json()
+            r.raise_for_status()
+            return r.json()
         except Exception as e:
-            print(f"[ERRO] {method}: {e}")
-            return None
-
-    # =======================================================================
-    # UPLOAD
-    # =======================================================================
-    def upload_to_gcs(df, gcs_path, sep=';'):
-        """Upload de DataFrame para o Google Cloud Storage"""
-        if df.empty:
-            print("DataFrame vazio, upload cancelado.")
-            return False
-        try:
-            csv_data = df.to_csv(sep=sep, index=False, quoting=1)
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
-
-            # Upload do arquivo principal
-            blob = bucket.blob(gcs_path)
-            blob.upload_from_string(csv_data, content_type='text/csv')
-            print(f"Arquivo enviado: gs://{BUCKET_NAME}/{gcs_path}")
-
-            return True
-        except Exception as e:
-            print(f"Erro ao fazer upload: {e}")
-            raise
-
-    # =======================================================================
-    # EXECUÇÃO
-    # =======================================================================
-    try:
-        print("[PASSO 1] Buscando campos personalizados do negócio...")
-        fields_map, enumeration_map = {}, {}
-        res_fields = make_request('crm.deal.fields')
-
-        if res_fields and 'result' in res_fields:
-            for code, meta in res_fields['result'].items():
-                name = meta.get('formLabel') or meta.get('listLabel') or meta.get('title')
-                fields_map[code] = name
-                if meta.get('type') == 'enumeration' and 'items' in meta:
-                    enumeration_map[name] = {str(i['ID']): i['VALUE'] for i in meta['items']}
-            print(" -> Campos obtidos com sucesso.")
-        else:
-            raise Exception("Falha ao buscar campos de negócio.")
-
-        print("[PASSO 2] Buscando usuários...")
-        res_users = make_request('user.get', {'FILTER': {'ACTIVE': 'true'}})
-        users_map = {str(u['ID']): f"{u.get('NAME', '')} {u.get('LAST_NAME', '')}".strip()
-                     for u in res_users['result']} if res_users and 'result' in res_users else {}
-        print(" -> Usuários mapeados com sucesso.")
-
-        # PASSO 2.5: Mapear todas as Fases de Negócio (Stages) 🗺️
-        # -----------------------------------------------------------------------
-        print("[PASSO 2.5] Mapeando fases dos negócios (funis)...")
-        stages_map = {}
-        res_categories = make_request('crm.dealcategory.list', {'order': {'SORT': 'ASC'}})
-        if res_categories and 'result' in res_categories:
-            for category in res_categories['result']:
-                category_id = category['ID']
-                res_stages = make_request('crm.dealcategory.stage.list', {'id': category_id})
-                if res_stages and 'result' in res_stages:
-                    for stage in res_stages['result']:
-                        stages_map[stage['STATUS_ID']] = stage['NAME']
-            print(f" -> {len(stages_map)} fases mapeadas com sucesso.")
-        else:
-            print(" -> AVISO: Não foi possível buscar as categorias de negócio. As fases não serão traduzidas.")
-
-        print("[PASSO 3] Buscando negócios (método paginado)...")
-        all_deals = []
-        start = 0
-        periods = 6
-        data_filtro = date.today() - relativedelta(months=periods)
-        data_iso = data_filtro.strftime('%Y-%m-%dT00:00:00-03:00')
-
-        # Usando '*' é mais simples e garante que todos os campos, inclusive STAGE_ID, sejam trazidos.
-        select_fields = ["*", "UF_*"]
-
-        while True:
-            print(f"  -> Buscando a partir de {start}...")
-            res = make_request('crm.deal.list', {
-                'filter': {">DATE_MODIFY": data_iso},
-                'order': {'ID': 'DESC'},
-                'start': start,
-                'select': select_fields
-            })
-
-            if not res or 'result' not in res:
-                print(" -> Erro na resposta ou fim dos dados.")
-                break
-
-            chunk = res['result']
-            if not chunk:
-                break
-
-            all_deals.extend(chunk)
-            # O 'next' indica o início da próxima página
-            start = res.get('next')
-            if not start:
-                break
-
-            time.sleep(0.4)  # respeita limite da API
-
-        print(f" -> Total de negócios obtidos: {len(all_deals)}")
-
-        if not all_deals:
-            raise Exception("Nenhum negócio retornado.")
-
-        print("[PASSO 4] Processando dados...")
-        df = pd.DataFrame(all_deals)
-        df.rename(columns=fields_map, inplace=True)
-
-        # Traduz campos de lista
-        for col, enum in enumeration_map.items():
-            if col in df.columns:
-                df[col] = df[col].astype(str).replace(enum)
-
-        # Traduz campos de usuário
-        for user_field in ['Pessoa responsável', 'Criado por', 'Modificado por']:
-            if user_field in df.columns:
-                df[user_field] = df[user_field].astype(str).replace(users_map)
-
-        # Traduz a fase do negócio (STAGE_ID) usando o novo mapa
-        df['Fase do negócio'] = df['Fase do negócio'].astype(str).replace(stages_map)
-
-        print(" -> Dados processados com sucesso.")
-
-        print("\n[RESULTADO] Amostra de negócios:")
-        col_exibir = ['ID', 'Título do negócio', 'Fase do negócio', 'Pessoa responsável']
-        col_existentes = [c for c in col_exibir if c in df.columns]
-
-        print(df[col_existentes].head() if col_existentes else df.head())
-
-        df.to_csv('bitrix_crm_deals.csv')
-
-        # Upload para GCS
-        print("[PASSO 5] Enviando dados para Google Cloud Storage...")
-        gcs_path = f"bitrix_crm_deals.csv"
-        upload_to_gcs(df, gcs_path, sep=';')
-        print(" -> Upload concluído com sucesso!")
-    except Exception as e:
-        print(f"\n!!!!!! ERRO CRÍTICO QUE INTERROMPEU O SCRIPT !!!!!!")
-        print(f"O erro foi: {e}")
-        raise
+            last_err = e
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+    print(f"[ERRO] {method} apos {retries} tentativas: {last_err}")
+    return None
 
 
-def run_get_leads(customer):
-    import requests
-    import json
-    import time
-    import pandas as pd
-    from datetime import date
-    from dateutil.relativedelta import relativedelta
-    import pathlib
-    import os
-    from google.cloud import storage
+def _paginate_list(url_base, method, mode='incremental', days=7,
+                   extra_filter=None, select=None, sleep=PAGE_SLEEP):
+    """Pagina crm.{entity}.list ate esgotar.
 
-    # ==============================================================================
-    # CONFIGURAÇÃO
-    # ==============================================================================
-    URL_BASE = customer['url_base']
-    BUCKET_NAME = customer['bucket_name']
-    SERVICE_ACCOUNT_PATH = pathlib.Path('config', 'gcp.json').as_posix()
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = SERVICE_ACCOUNT_PATH
+    mode='full'        -> sem filtro de data
+    mode='incremental' -> filter >DATE_MODIFY (ou >LAST_UPDATED em activities)
+    """
+    filter_ = dict(extra_filter or {})
+    if mode == 'incremental':
+        since = (date.today() - timedelta(days=days)).strftime(f'%Y-%m-%dT00:00:00{BITRIX_TZ_OFFSET}')
+        date_field = 'LAST_UPDATED' if method == 'crm.activity.list' else 'DATE_MODIFY'
+        filter_[f'>{date_field}'] = since
+    select_ = select or ['*', 'UF_*']
 
-    HEADER = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+    all_items = []
+    start = 0
+    pages = 0
+    total = None
+    while True:
+        params = {'select': select_, 'order': {'ID': 'ASC'}, 'start': start}
+        if filter_:
+            params['filter'] = filter_
+        res = _make_request(url_base, method, params)
+        if not res or 'result' not in res:
+            print(f"  [{method}] erro/fim na pagina {pages+1}: {str(res)[:200]}")
+            break
+        chunk = res['result']
+        if not chunk:
+            break
+        if total is None:
+            total = res.get('total')
+            print(f"  [{method}] total reportado: {total} (mode={mode})")
+        all_items.extend(chunk)
+        pages += 1
+        if pages % 20 == 0:
+            print(f"  [{method}] pagina {pages}, acumulado {len(all_items)}/{total}")
+        nxt = res.get('next')
+        if nxt is None:
+            break
+        start = nxt
+        time.sleep(sleep)
+    print(f"  [{method}] fim: {pages} paginas, {len(all_items)} registros")
+    return all_items
+
+
+def _build_field_maps(url_base, fields_method):
+    """code -> label + mapa de enumerations por label."""
+    res = _make_request(url_base, fields_method)
+    fields_map, enumeration_map = {}, {}
+    if not res or 'result' not in res:
+        print(f"  [{fields_method}] falha ao obter campos")
+        return fields_map, enumeration_map
+    for code, meta in res['result'].items():
+        name = meta.get('formLabel') or meta.get('listLabel') or meta.get('title') or code
+        fields_map[code] = name
+        if meta.get('type') == 'enumeration' and 'items' in meta:
+            enumeration_map[name] = {str(i['ID']): i['VALUE'] for i in meta['items']}
+    return fields_map, enumeration_map
+
+
+def _build_users_map(url_base):
+    """ID (str) -> 'Nome Sobrenome' apenas para usuarios ativos."""
+    res = _make_request(url_base, 'user.get', {'FILTER': {'ACTIVE': 'true'}})
+    if not res or 'result' not in res:
+        return {}
+    return {
+        str(u['ID']): f"{u.get('NAME', '')} {u.get('LAST_NAME', '')}".strip()
+        for u in res['result']
     }
 
-    def make_request(method, params=None):
-        """Faz requisição à API do Bitrix."""
-        try:
-            response = requests.post(
-                f"{URL_BASE}/{method}.json",
-                headers=HEADER,
-                data=json.dumps(params or {}),
-                timeout=190
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            print(f"[ERRO] {method}: {e}")
-            return None
 
-    # =======================================================================
-    # UPLOAD
-    # =======================================================================
-    def upload_to_gcs(df, gcs_path, sep=';'):
-        """Upload de DataFrame para o Google Cloud Storage"""
-        if df.empty:
-            print("DataFrame vazio, upload cancelado.")
-            return False
-        try:
-            csv_data = df.to_csv(sep=sep, index=False, quoting=1)
-            storage_client = storage.Client(project=customer['project_id'])
-            bucket = storage_client.bucket(BUCKET_NAME)
+def _normalize_column_name(col):
+    """Remove acentos, troca nao-alfanum por _, colapsa underscores. Estabiliza schema."""
+    n = unicodedata.normalize('NFKD', str(col)).encode('ASCII', 'ignore').decode('ASCII')
+    n = re.sub(r'[^a-zA-Z0-9_]', '_', n)
+    n = re.sub(r'_+', '_', n).strip('_')
+    return n or 'col'
 
-            # Upload do arquivo principal
-            blob = bucket.blob(gcs_path)
-            blob.upload_from_string(csv_data, content_type='text/csv')
-            print(f"Arquivo enviado: gs://{BUCKET_NAME}/{gcs_path}")
 
-            return True
-        except Exception as e:
-            print(f"Erro ao fazer upload: {e}")
-            raise
-
-    # =======================================================================
-    # EXECUÇÃO (Lógica adaptada para Leads)
-    # =======================================================================
-    try:
-        print("[PASSO 1] Buscando campos personalizados do Lead...")
-        fields_map, enumeration_map = {}, {}
-        # LÓGICA 1: Alterado de crm.deal.fields para crm.lead.fields
-        res_fields = make_request('crm.lead.fields')
-
-        if res_fields and 'result' in res_fields:
-            for code, meta in res_fields['result'].items():
-                name = meta.get('formLabel') or meta.get('listLabel') or meta.get('title')
-                fields_map[code] = name
-                if meta.get('type') == 'enumeration' and 'items' in meta:
-                    enumeration_map[name] = {str(i['ID']): i['VALUE'] for i in meta['items']}
-            print(" -> Campos de Lead obtidos com sucesso.")
+def _normalize_and_dedup(df):
+    """Normaliza nomes e dedupla com sufixo _N em colisoes (intencionais ou de acento)."""
+    seen = {}
+    new_cols = []
+    for col in df.columns:
+        n = _normalize_column_name(col)
+        if n in seen:
+            seen[n] += 1
+            new_cols.append(f"{n}_{seen[n]}")
         else:
-            raise Exception("Falha ao buscar campos de Lead.")
+            seen[n] = 0
+            new_cols.append(n)
+    df.columns = new_cols
+    return df
 
-        print("[PASSO 2] Buscando usuários...")
-        # LÓGICA 2: Mapeamento de usuários é idêntico e reutilizável
-        res_users = make_request('user.get', {'FILTER': {'ACTIVE': 'true'}})
-        users_map = {str(u['ID']): f"{u.get('NAME', '')} {u.get('LAST_NAME', '')}".strip()
-                     for u in res_users['result']} if res_users and 'result' in res_users else {}
-        print(" -> Usuários mapeados com sucesso.")
 
-        # LÓGICA 2.5: Mapear todos os Status de Lead 🗺️
-        # -----------------------------------------------------------------------
-        # Em vez de funis e fases, Leads têm uma lista única de status.
-        print("[PASSO 2.5] Mapeando status dos Leads...")
-        status_map = {}
-        # A chamada crm.status.list com o filtro correto busca os status dos leads.
-        res_statuses = make_request('crm.status.list', {
-            'order': {"SORT": "ASC"},
-            'filter': {"ENTITY_ID": "STATUS"}  # STATUS é o ID da entidade para status de lead
+def _translate_enums(df, enumeration_map):
+    """Substitui IDs por VALUE em campos enum. Aplicado ANTES da normalizacao de colunas."""
+    for col, enum in enumeration_map.items():
+        if col in df.columns:
+            df[col] = df[col].astype(str).replace(enum)
+    return df
+
+
+def _translate_users(df, users_map, fields):
+    for f in fields:
+        if f in df.columns:
+            df[f] = df[f].astype(str).replace(users_map)
+    return df
+
+
+def _upload_to_gcs(df, customer, gcs_path, sep=';'):
+    if df is None or df.empty:
+        print(f"  [upload] DataFrame vazio: {gcs_path} (skip)")
+        return False
+    csv_data = df.to_csv(sep=sep, index=False, quoting=1)
+    storage_client = storage.Client(project=customer['project_id'])
+    bucket = storage_client.bucket(customer['bucket_name'])
+    blob = bucket.blob(gcs_path)
+    blob.upload_from_string(csv_data, content_type='text/csv')
+    print(f"  [upload] gs://{customer['bucket_name']}/{gcs_path}  ({len(df)} linhas, {len(df.columns)} cols)")
+    return True
+
+
+def _gcs_path(name, mode):
+    suffix = '_full' if mode == 'full' else ''
+    return f"{name}{suffix}.csv"
+
+
+# =====================================================================
+# CRM ENTITIES (deal/lead/contact/company seguem mesmo padrao)
+# =====================================================================
+
+def _extract_crm_list(customer, method, fields_method, output_name,
+                     mode='incremental', days=7,
+                     post_translate=None, user_translate_fields=None):
+    """Pipeline padrao para entidades crm.*.list com fields/enums/usuarios."""
+    _setup_credentials()
+    url_base = customer['url_base']
+
+    print(f"[{output_name}] PASSO 1 - campos personalizados")
+    fields_map, enumeration_map = _build_field_maps(url_base, fields_method)
+    print(f"  -> {len(fields_map)} campos, {len(enumeration_map)} enums")
+
+    print(f"[{output_name}] PASSO 2 - usuarios")
+    users_map = _build_users_map(url_base)
+    print(f"  -> {len(users_map)} usuarios")
+
+    print(f"[{output_name}] PASSO 3 - paginar {method} (mode={mode})")
+    items = _paginate_list(url_base, method, mode=mode, days=days)
+    if not items:
+        print(f"  [{output_name}] sem registros, abort")
+        return None
+
+    print(f"[{output_name}] PASSO 4 - processar")
+    df = pd.DataFrame(items)
+    # rename codigos -> labels (formLabel) ANTES das traducoes (enums e users sao por label)
+    df.rename(columns=fields_map, inplace=True)
+    df = _translate_enums(df, enumeration_map)
+    user_fields = user_translate_fields or [
+        'Pessoa responsável', 'Criado por', 'Modificado por',
+        'Pessoa responsavel', 'Modified by', 'Created by',
+    ]
+    df = _translate_users(df, users_map, user_fields)
+    if post_translate:
+        df = post_translate(df, url_base)
+    df = _normalize_and_dedup(df)
+
+    print(f"[{output_name}] PASSO 5 - upload GCS")
+    _upload_to_gcs(df, customer, _gcs_path(output_name, mode))
+    print(f"[{output_name}] OK: {len(df)} linhas, {len(df.columns)} cols")
+    return df
+
+
+def _translate_deal_stage(df, url_base):
+    """Traduz STATUS_ID da fase para nome legivel (multi-funil)."""
+    stages_map = {}
+    res = _make_request(url_base, 'crm.dealcategory.list', {'order': {'SORT': 'ASC'}})
+    if res and 'result' in res:
+        for cat in res['result']:
+            rs = _make_request(url_base, 'crm.dealcategory.stage.list', {'id': cat['ID']})
+            if rs and 'result' in rs:
+                for s in rs['result']:
+                    stages_map[s['STATUS_ID']] = s['NAME']
+    for col in ['Fase do negócio', 'Fase do negocio']:
+        if col in df.columns and stages_map:
+            df[col] = df[col].astype(str).replace(stages_map)
+    return df
+
+
+def _translate_lead_status(df, url_base):
+    """Traduz STATUS_ID do lead para nome legivel."""
+    status_map = {}
+    res = _make_request(url_base, 'crm.status.list', {
+        'order': {'SORT': 'ASC'}, 'filter': {'ENTITY_ID': 'STATUS'},
+    })
+    if res and 'result' in res:
+        for s in res['result']:
+            status_map[s['STATUS_ID']] = s['NAME']
+    for col in ['Etapa', 'Status']:
+        if col in df.columns and status_map:
+            df[col] = df[col].astype(str).replace(status_map)
+    return df
+
+
+def run_get_leads(customer, mode='incremental', days=7):
+    return _extract_crm_list(
+        customer, 'crm.lead.list', 'crm.lead.fields', 'bitrix_crm_leads',
+        mode=mode, days=days, post_translate=_translate_lead_status,
+    )
+
+
+def run_get_deals(customer, mode='incremental', days=7):
+    return _extract_crm_list(
+        customer, 'crm.deal.list', 'crm.deal.fields', 'bitrix_crm_deals',
+        mode=mode, days=days, post_translate=_translate_deal_stage,
+    )
+
+
+def run_get_contacts(customer, mode='incremental', days=7):
+    return _extract_crm_list(
+        customer, 'crm.contact.list', 'crm.contact.fields', 'bitrix_crm_contacts',
+        mode=mode, days=days,
+    )
+
+
+def run_get_company(customer, mode='incremental', days=7):
+    return _extract_crm_list(
+        customer, 'crm.company.list', 'crm.company.fields', 'bitrix_crm_company',
+        mode=mode, days=days,
+    )
+
+
+def run_get_activities(customer, mode='incremental', days=7):
+    """crm.activity.list nao tem .fields; campos sao standard."""
+    _setup_credentials()
+    url_base = customer['url_base']
+    print(f"[bitrix_crm_activities] paginando crm.activity.list (mode={mode})")
+    items = _paginate_list(url_base, 'crm.activity.list', mode=mode, days=days)
+    if not items:
+        return None
+    df = pd.DataFrame(items)
+    users_map = _build_users_map(url_base)
+    df = _translate_users(df, users_map, ['RESPONSIBLE_ID', 'AUTHOR_ID', 'EDITOR_ID'])
+    df = _normalize_and_dedup(df)
+    _upload_to_gcs(df, customer, _gcs_path('bitrix_crm_activities', mode))
+    print(f"[bitrix_crm_activities] OK: {len(df)} linhas")
+    return df
+
+
+# =====================================================================
+# CATALOGOS (sempre full snapshot)
+# =====================================================================
+
+def run_get_users(customer, **_):
+    _setup_credentials()
+    url_base = customer['url_base']
+    res = _make_request(url_base, 'user.get', {'FILTER': {}})  # sem ACTIVE filter para pegar todos
+    if not res or 'result' not in res:
+        return None
+    df = pd.DataFrame(res['result'])
+    df = _normalize_and_dedup(df)
+    _upload_to_gcs(df, customer, 'bitrix_crm_users.csv')
+    print(f"[bitrix_crm_users] OK: {len(df)} linhas")
+    return df
+
+
+def run_get_funnels(customer, **_):
+    _setup_credentials()
+    url_base = customer['url_base']
+    res = _make_request(url_base, 'crm.dealcategory.list', {'order': {'SORT': 'ASC'}})
+    if not res or 'result' not in res:
+        return None
+    df = pd.DataFrame(res['result'])
+    df = _normalize_and_dedup(df)
+    _upload_to_gcs(df, customer, 'bitrix_crm_funnels.csv')
+    print(f"[bitrix_crm_funnels] OK: {len(df)} linhas")
+    return df
+
+
+def run_get_stages(customer, **_):
+    """Tabela longa: uma linha por (categoria, stage)."""
+    _setup_credentials()
+    url_base = customer['url_base']
+    cats = _make_request(url_base, 'crm.dealcategory.list', {'order': {'SORT': 'ASC'}})
+    if not cats or 'result' not in cats:
+        return None
+    rows = []
+    for cat in cats['result']:
+        rs = _make_request(url_base, 'crm.dealcategory.stage.list', {'id': cat['ID']})
+        if rs and 'result' in rs:
+            for s in rs['result']:
+                rows.append({
+                    'category_id': cat['ID'],
+                    'category_name': cat.get('NAME', ''),
+                    'status_id': s.get('STATUS_ID'),
+                    'name': s.get('NAME'),
+                    'sort': s.get('SORT'),
+                    'color': s.get('COLOR'),
+                    'semantics': s.get('SEMANTICS'),
+                })
+    df = pd.DataFrame(rows)
+    _upload_to_gcs(df, customer, 'bitrix_crm_stages.csv')
+    print(f"[bitrix_crm_stages] OK: {len(df)} linhas")
+    return df
+
+
+def run_get_statuses(customer, **_):
+    """Catalogo de status (STATUS = leads, DEAL_STAGE, SOURCE, etc)."""
+    _setup_credentials()
+    url_base = customer['url_base']
+    rows = []
+    for entity_id in ['STATUS', 'SOURCE', 'DEAL_TYPE', 'CONTACT_TYPE',
+                      'COMPANY_TYPE', 'CONTACT_STATUS']:
+        res = _make_request(url_base, 'crm.status.list', {
+            'order': {'SORT': 'ASC'}, 'filter': {'ENTITY_ID': entity_id},
         })
-        if res_statuses and 'result' in res_statuses:
-            for status in res_statuses['result']:
-                status_map[status['STATUS_ID']] = status['NAME']
-            print(f" -> {len(status_map)} status mapeados com sucesso.")
-        else:
-            print(" -> AVISO: Não foi possível buscar os status. Os status não serão traduzidos.")
+        if res and 'result' in res:
+            for s in res['result']:
+                s2 = dict(s)
+                s2['entity_id'] = entity_id
+                rows.append(s2)
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    df = _normalize_and_dedup(df)
+    _upload_to_gcs(df, customer, 'bitrix_crm_statuses.csv')
+    print(f"[bitrix_crm_statuses] OK: {len(df)} linhas")
+    return df
 
-        print("[PASSO 3] Buscando Leads (método paginado)...")
-        all_leads = []
-        start = 0
-        periods = 6
-        data_filtro = date.today() - relativedelta(months=periods)
-        data_iso = data_filtro.strftime('%Y-%m-%dT00:00:00-03:00')
 
-        select_fields = ["*", "UF_*"]
-
-        while True:
-            print(f"   -> Buscando a partir de {start}...")
-            # LÓGICA 3: Alterado de crm.deal.list para crm.lead.list
-            res = make_request('crm.lead.list', {
-                'filter': {">DATE_CREATE": data_iso},
-                'order': {'ID': 'DESC'},
-                'start': start,
-                'select': select_fields
+def run_get_custom_fields(customer, **_):
+    """Snapshot do schema crm.{entity}.fields para cada entidade."""
+    _setup_credentials()
+    url_base = customer['url_base']
+    rows = []
+    for entity, method in [
+        ('lead', 'crm.lead.fields'),
+        ('deal', 'crm.deal.fields'),
+        ('contact', 'crm.contact.fields'),
+        ('company', 'crm.company.fields'),
+    ]:
+        res = _make_request(url_base, method)
+        if not res or 'result' not in res:
+            continue
+        for code, meta in res['result'].items():
+            label = meta.get('formLabel') or meta.get('listLabel') or meta.get('title') or ''
+            rows.append({
+                'entity': entity,
+                'code': code,
+                'type': meta.get('type'),
+                'is_required': meta.get('isRequired'),
+                'is_multiple': meta.get('isMultiple'),
+                'label': label,
             })
+    df = pd.DataFrame(rows)
+    _upload_to_gcs(df, customer, 'bitrix_crm_custom_fields.csv')
+    print(f"[bitrix_crm_custom_fields] OK: {len(df)} linhas")
+    return df
 
-            if not res or 'result' not in res:
-                print(" -> Erro na resposta ou fim dos dados.")
-                break
 
-            chunk = res['result']
-            if not chunk:
-                break
-
-            all_leads.extend(chunk)
-            start = res.get('next')
-            if not start:
-                break
-
-            time.sleep(0.4)
-
-        print(f" -> Total de Leads obtidos: {len(all_leads)}")
-
-        if not all_leads:
-            raise Exception("Nenhum Lead retornado.")
-
-        print("[PASSO 4] Processando dados...")
-        # LÓGICA 4: A lógica de processamento é a mesma, apenas aplicada aos dados dos leads
-        df = pd.DataFrame(all_leads)
-        df.rename(columns=fields_map, inplace=True)
-
-        # Traduz campos de lista
-        for col, enum in enumeration_map.items():
-            if col in df.columns:
-                df[col] = df[col].astype(str).replace(enum)
-
-        # Traduz campos de usuário
-        for user_field in ['Pessoa responsável', 'Criado por', 'Modificado por']:
-            if user_field in df.columns:
-                df[user_field] = df[user_field].astype(str).replace(users_map)
-
-        # Traduz o status do lead (o campo original é STATUS_ID)
-        # O fields_map geralmente renomeia STATUS_ID para "Status"
-        df['Etapa'] = df['Etapa'].astype(str).replace(status_map)
-
-        print(" -> Dados processados com sucesso.")
-
-        print("\n[RESULTADO] Amostra de Leads:")
-        col_exibir = ['ID', 'Título', 'Status', 'Pessoa responsável']  # Colunas relevantes para Leads
-        col_existentes = [c for c in col_exibir if c in df.columns]
-
-        print(df[col_existentes].head() if col_existentes else df.head())
-        df.to_csv('bitrix_crm_leads.csv')
-
-        # Upload para GCS
-        print("[PASSO 5] Enviando dados para Google Cloud Storage...")
-        gcs_path = f"bitrix_crm_leads.csv"
-        upload_to_gcs(df, gcs_path, sep=';')
-        print(" -> Upload concluído com sucesso!")
-
-    except Exception as e:
-        print(f"\n!!!!!! ERRO CRÍTICO QUE INTERROMPEU O SCRIPT !!!!!!")
-        print(f"O erro foi: {e}")
-        raise
-
+# =====================================================================
+# TASK REGISTRY (Airflow)
+# =====================================================================
 
 def get_extraction_tasks():
-    """
-    Get the list of data extraction tasks for Bitrix.
-
-    Returns:
-        list: List of task configurations
-    """
+    """Tarefas para a DAG. Cada uma idempotente.
+    Catalogos primeiro (rapidos), depois entidades transacionais."""
     return [
-        {
-            'task_id': 'run_get_deals',
-            'python_callable': run_get_deals
-        },
-        {
-            'task_id': 'run_get_leads',
-            'python_callable': run_get_leads
-        }
+        {'task_id': 'run_get_users',          'python_callable': run_get_users},
+        {'task_id': 'run_get_funnels',        'python_callable': run_get_funnels},
+        {'task_id': 'run_get_stages',         'python_callable': run_get_stages},
+        {'task_id': 'run_get_statuses',       'python_callable': run_get_statuses},
+        {'task_id': 'run_get_custom_fields',  'python_callable': run_get_custom_fields},
+        {'task_id': 'run_get_leads',          'python_callable': run_get_leads},
+        {'task_id': 'run_get_deals',          'python_callable': run_get_deals},
+        {'task_id': 'run_get_contacts',       'python_callable': run_get_contacts},
+        {'task_id': 'run_get_company',        'python_callable': run_get_company},
+        {'task_id': 'run_get_activities',     'python_callable': run_get_activities},
     ]
