@@ -1,6 +1,8 @@
 import re
 import time
 
+import requests
+
 from commons.app_inicializer import AppInitializer
 from commons.big_query import BigQuery
 from commons.memory_monitor import MemoryMonitor
@@ -21,12 +23,29 @@ def get_arguments():
     """Configura e retorna os argumentos da linha de comando."""
     return (ArgumentManager("Script para coletar e processar dados da API Shopify")
             .add("SHOP_NAME", "Nome da loja Shopify (ex: minha-loja)", required=True)
-            .add("API_ACCESS_TOKEN", "Token de acesso Shopify", required=True)
+            .add("CLIENT_ID", "Client ID do app Shopify (Dev Dashboard)", required=True)
+            .add("CLIENT_SECRET", "Client Secret do app Shopify (Dev Dashboard)", required=True)
             .add("PROJECT_ID", "ID do projeto Google Cloud", required=True)
             .add("CRM_TYPE", "Nome da ferramenta", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credencial GCS", required=True)
             .add("API_VERSION", "Versao da API Shopify", required=False)
             .parse())
+
+
+def fetch_access_token(shop_name, client_id, client_secret):
+    """Troca client_id+client_secret por um access_token via OAuth Client Credentials Grant.
+
+    Token retornado expira em 24h, suficiente para uma execução completa.
+    """
+    logger.info("Solicitando access_token via OAuth Client Credentials")
+    url = f"https://{shop_name}.myshopify.com/admin/oauth/access_token"
+    response = requests.post(url, data={
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "client_credentials",
+    }, timeout=30)
+    response.raise_for_status()
+    return response.json()["access_token"]
 
 
 def get_auth_headers(access_token):
@@ -258,17 +277,19 @@ def main():
         args = get_arguments()
 
         shop_name = args.SHOP_NAME
-        access_token = args.API_ACCESS_TOKEN
         api_version = getattr(args, "API_VERSION", None) or "2024-01"
 
         base_url = f"https://{shop_name}.myshopify.com/admin/api/{api_version}"
         logger.info(f"Base URL: {base_url}")
 
-        # 2. HTTP client com rate limiter
+        # 2. Access token via OAuth Client Credentials (24h)
+        access_token = fetch_access_token(shop_name, args.CLIENT_ID, args.CLIENT_SECRET)
+
+        # 3. HTTP client com rate limiter
         rate_limiter = RateLimiter(requests_per_window=RATE_LIMIT, window_seconds=1, logger=logger)
         http_client = HttpClient(base_url=base_url, rate_limiter=rate_limiter, logger=logger)
 
-        # 3. Headers
+        # 4. Headers
         auth_headers = get_auth_headers(access_token)
 
         endpoint_stats = {}
