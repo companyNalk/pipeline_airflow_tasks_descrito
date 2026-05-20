@@ -89,6 +89,17 @@ def _digits_only(s):
     return re.sub(r'\D', '', s or '')
 
 
+def _format_document(digits):
+    """Formata documento com pontuacao (preserva leading zeros e forca STRING no BQ autodetect)."""
+    if not digits:
+        return None
+    if len(digits) == 11:
+        return f'{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}'
+    if len(digits) == 14:
+        return f'{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}'
+    return None
+
+
 def _extract_doc_from_text(*texts):
     for t in texts:
         if not t:
@@ -98,12 +109,12 @@ def _extract_doc_from_text(*texts):
         if m:
             d = _digits_only(m.group(0))
             if len(d) == 14:
-                return d
+                return _format_document(d)
         m = CPF_RE.search(s)
         if m:
             d = _digits_only(m.group(0))
             if len(d) == 11:
-                return d
+                return _format_document(d)
     return None
 
 
@@ -116,7 +127,7 @@ def _extract_doc_from_note_attributes(note_attrs):
         if any(k in name for k in ('cpf', 'cnpj', 'doc')):
             d = _digits_only(str(value))
             if len(d) in (11, 14):
-                return d
+                return _format_document(d)
     for attr in note_attrs:
         doc = _extract_doc_from_text(attr.get('value'))
         if doc:
