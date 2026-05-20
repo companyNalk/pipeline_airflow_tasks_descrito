@@ -13,6 +13,7 @@ API version: 2024-01
 
 import io
 import csv
+import json
 import logging
 import re
 import time
@@ -78,11 +79,111 @@ def _fetch_all_pages(base_url, endpoint, headers, resource_key, params=None):
     return all_items
 
 
+# CPF/CNPJ extraction: BR checkouts costumam guardar documento em
+# note_attributes, customer.note, billing/shipping addresses.
+CPF_RE = re.compile(r'\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b')
+CNPJ_RE = re.compile(r'\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b')
+
+
+def _digits_only(s):
+    return re.sub(r'\D', '', s or '')
+
+
+def _extract_doc_from_text(*texts):
+    for t in texts:
+        if not t:
+            continue
+        s = t if isinstance(t, str) else str(t)
+        m = CNPJ_RE.search(s)
+        if m:
+            d = _digits_only(m.group(0))
+            if len(d) == 14:
+                return d
+        m = CPF_RE.search(s)
+        if m:
+            d = _digits_only(m.group(0))
+            if len(d) == 11:
+                return d
+    return None
+
+
+def _extract_doc_from_note_attributes(note_attrs):
+    if not note_attrs:
+        return None
+    for attr in note_attrs:
+        name = (attr.get('name') or '').lower()
+        value = attr.get('value') or ''
+        if any(k in name for k in ('cpf', 'cnpj', 'doc')):
+            d = _digits_only(str(value))
+            if len(d) in (11, 14):
+                return d
+    for attr in note_attrs:
+        doc = _extract_doc_from_text(attr.get('value'))
+        if doc:
+            return doc
+    return None
+
+
+def _extract_doc_from_address(addr):
+    if not addr:
+        return None
+    return _extract_doc_from_text(
+        addr.get('company'),
+        addr.get('name'),
+        addr.get('first_name'),
+        addr.get('last_name'),
+        addr.get('address1'),
+        addr.get('address2'),
+    )
+
+
+def _extract_order_document(o):
+    """Tenta extrair CPF/CNPJ do pedido em ordem de prioridade."""
+    doc = _extract_doc_from_note_attributes(o.get('note_attributes'))
+    if doc:
+        return doc
+    doc = _extract_doc_from_address(o.get('billing_address'))
+    if doc:
+        return doc
+    doc = _extract_doc_from_address(o.get('shipping_address'))
+    if doc:
+        return doc
+    doc = _extract_doc_from_text(o.get('note'))
+    if doc:
+        return doc
+    customer = o.get('customer') or {}
+    doc = _extract_doc_from_text(customer.get('note'))
+    if doc:
+        return doc
+    return None
+
+
+def _extract_customer_document(c):
+    """Tenta extrair CPF/CNPJ do customer em ordem de prioridade."""
+    doc = _extract_doc_from_text(c.get('note'))
+    if doc:
+        return doc
+    doc = _extract_doc_from_address(c.get('default_address'))
+    if doc:
+        return doc
+    for addr in (c.get('addresses') or []):
+        doc = _extract_doc_from_address(addr)
+        if doc:
+            return doc
+    doc = _extract_doc_from_text(c.get('tags'))
+    if doc:
+        return doc
+    return None
+
+
 def _map_orders(raw_orders):
     """Mapeia campos dos orders para formato flat."""
     orders = []
     for o in raw_orders:
         customer = o.get("customer") or {}
+        billing = o.get("billing_address") or {}
+        shipping = o.get("shipping_address") or {}
+        note_attrs = o.get("note_attributes") or []
         orders.append({
             "id": str(o.get("id", "")),
             "order_number": o.get("order_number"),
@@ -96,7 +197,20 @@ def _map_orders(raw_orders):
             "fulfillment_status": o.get("fulfillment_status"),
             "created_at": o.get("created_at"),
             "updated_at": o.get("updated_at"),
+            "processed_at": o.get("processed_at"),
+            "cancelled_at": o.get("cancelled_at"),
+            "cancel_reason": o.get("cancel_reason"),
             "customer_id": str(customer.get("id", "")) if customer.get("id") else None,
+            "source_name": o.get("source_name"),
+            "tags": o.get("tags"),
+            "note": o.get("note"),
+            "billing_name": billing.get("name"),
+            "billing_company": billing.get("company"),
+            "billing_phone": billing.get("phone"),
+            "shipping_name": shipping.get("name"),
+            "shipping_phone": shipping.get("phone"),
+            "note_attributes_json": json.dumps(note_attrs, ensure_ascii=False) if note_attrs else None,
+            "extracted_document": _extract_order_document(o),
         })
     return orders
 
@@ -124,13 +238,24 @@ def _map_customers(raw_customers):
     """Mapeia campos dos customers para formato flat."""
     customers = []
     for c in raw_customers:
+        default_addr = c.get("default_address") or {}
         customers.append({
             "id": str(c.get("id", "")),
             "email": c.get("email"),
             "first_name": c.get("first_name"),
             "last_name": c.get("last_name"),
+            "phone": c.get("phone"),
             "orders_count": c.get("orders_count", 0),
             "total_spent": c.get("total_spent", 0),
+            "state": c.get("state"),
+            "verified_email": c.get("verified_email"),
+            "tags": c.get("tags"),
+            "note": c.get("note"),
+            "default_address_company": default_addr.get("company"),
+            "default_address_city": default_addr.get("city"),
+            "default_address_province": default_addr.get("province"),
+            "default_address_country": default_addr.get("country"),
+            "extracted_document": _extract_customer_document(c),
             "created_at": c.get("created_at"),
             "updated_at": c.get("updated_at"),
         })
