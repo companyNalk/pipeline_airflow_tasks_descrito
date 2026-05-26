@@ -97,3 +97,8 @@ settings.yaml
 
 # Scripts para teste local
 local/
+
+# Node (não deveriam estar aqui — repo é 100% Python)
+node_modules/
+package.json
+package-lock.json
