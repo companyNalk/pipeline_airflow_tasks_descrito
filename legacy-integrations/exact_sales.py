@@ -69,7 +69,7 @@ def run(customer):
         try:
             df = normalize_dataframe(df)
 
-            storage_client = storage.Client()
+            storage_client = storage.Client(project=customer['project_id'])
             bucket = storage_client.bucket(BUCKET_NAME)
             blob_path = f"{folder}/{filename}"
             blob = bucket.blob(blob_path)
@@ -83,6 +83,7 @@ def run(customer):
             print(f"Colunas normalizadas: {', '.join(df.columns.tolist())}")
         except Exception as e:
             print(f"Erro ao enviar o arquivo para o GCS: {e}")
+            raise
 
     def coletar_dados_com_paginacao(url, headers, page_size=500, max_retries=5, backoff_time=5):
         todos_os_dados = []
@@ -96,16 +97,28 @@ def run(customer):
 
             for attempt in range(max_retries):
                 try:
-                    # Requisição para a API
                     response = requests.get(url, headers=headers, params=params)
 
-                    if response.status_code == 500:
-                        print(f"Erro 500 na requisição. Tentativa {attempt + 1}/{max_retries}")
-                        time.sleep(backoff_time * (2 ** attempt))  # Backoff exponencial
+                    if response.status_code == 401:
+                        raise RuntimeError(
+                            f"401 Unauthorized em {url} — token Exact Spotter inválido ou expirado. "
+                            f"Resposta: {response.text}"
+                        )
+
+                    if response.status_code == 429 or response.status_code >= 500:
+                        retry_after = response.headers.get('Retry-After')
+                        wait = float(retry_after) if retry_after else backoff_time * (2 ** attempt)
+                        print(
+                            f"Status {response.status_code} em {url} "
+                            f"(tentativa {attempt + 1}/{max_retries}). Aguardando {wait:.1f}s."
+                        )
+                        time.sleep(wait)
                         continue
-                    elif response.status_code != 200:
-                        print(f"Erro na requisição: {response.status_code}, Mensagem: {response.text}")
-                        return todos_os_dados
+
+                    if response.status_code != 200:
+                        raise RuntimeError(
+                            f"Erro {response.status_code} em {url}: {response.text}"
+                        )
 
                     dados = response.json().get("value", [])
                     if not dados:
@@ -117,11 +130,13 @@ def run(customer):
                     break
 
                 except requests.exceptions.RequestException as e:
-                    print(f"Exceção durante a requisição: {e}")
+                    print(f"Exceção durante a requisição (tentativa {attempt + 1}/{max_retries}): {e}")
                     time.sleep(backoff_time * (2 ** attempt))
             else:
-                print("Número máximo de re-tentativas alcançado, interrompendo a coleta.")
-                break
+                raise RuntimeError(
+                    f"Número máximo de re-tentativas ({max_retries}) alcançado em {url} — "
+                    f"abortando coleta com {len(todos_os_dados)} registros parciais descartados."
+                )
 
         return todos_os_dados
 
