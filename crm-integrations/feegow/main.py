@@ -6,18 +6,24 @@ Segue o padrão do workspace (commons/ + generic/), igual ao asaas.
 
 Domínios extraídos:
   - Cadastros de apoio (sem filtro): profissionais, procedimentos,
-    especialidades, convênios, unidades, contas e fornecedores financeiros.
-  - Por janela de data (paginados): agendamentos, faturas financeiras, pacientes.
+    especialidades, convênios, unidades.
+  - Agendamentos: appoints/search fatiado por janela (≤90d/chamada; ver abaixo).
+  - Pacientes: derivados dos agendamentos (patient/search exige paciente_id/cpf).
+  - Financeiro (OPCIONAL): contas, fornecedores, faturas — só populam se o módulo
+    financeiro estiver habilitado na licença (senão a API responde 422; não falha).
 
 Janela de data: calculada a cada run a partir de LOOKBACK_DAYS, no formato
 DD-MM-YYYY exigido pela Feegow.
 
+⚠️ appoints/search rejeita janelas grandes com HTTP 409 (validado: 90d OK,
+180d 409). Fatiamos em pedaços de APPOINTS_WINDOW_DAYS. 409 num pedaço =
+"sem agendamentos no período" (tratado como vazio, não como erro).
+
 ⚠️ Estratégia de pacientes (PATIENT_STRATEGY):
-  - "date" (default): busca /patient/search por data_start/data_end.
-    A doc lista data como OPCIONAL e exige "pelo menos 1 filtro" — se a API
-    rejeitar busca só por data, troque para "appointments".
-  - "appointments": deriva os paciente_id dos agendamentos extraídos e busca
-    paciente a paciente (endpoint dependente). Cobre quem tem agenda.
+  - "appointments" (default): deriva os paciente_id dos agendamentos e busca
+    paciente a paciente. patient/search EXIGE paciente_id ou paciente_cpf.
+  - "date": NÃO funciona — patient/search rejeita busca só por data (HTTP 422).
+    Mantido apenas por compatibilidade; não usar.
 """
 
 import concurrent.futures
@@ -42,6 +48,10 @@ PAGE_SIZE = 50  # 'offset' default da Feegow = tamanho da página
 MAX_WORKERS = min(8, os.cpu_count() or 5)
 MAX_PAGES_GUARD = 5000  # trava de segurança contra paginação infinita
 
+# appoints/search rejeita janelas grandes com HTTP 409 (validado: 90d OK, 180d 409).
+# Fatiamos a janela em pedaços com folga sob o limite real (entre 90 e 180 dias).
+APPOINTS_WINDOW_DAYS = 60
+
 DEFAULT_BASE_URL = "https://api.feegow.com/v1/api"
 
 # Cadastros e listagens sem filtro obrigatório (1 chamada, sem paginação por data).
@@ -51,14 +61,16 @@ SIMPLE_ENDPOINTS = {
     "especialidades": "specialties/list",
     "convenios": "insurance/list",
     "unidades": "company/list-unity",
-    "financeiro_contas": "financial/accounts",
-    "financeiro_fornecedores": "financial/suppliers",
 }
 
-# Endpoints que exigem janela de data (data_start/data_end) e são paginados.
-DATE_ENDPOINTS = {
-    "agendamentos": "appoints/search",
-    "financeiro_faturas": "financial/invoice",
+# Endpoints do módulo financeiro. OPCIONAIS: na licença testada (36514) retornam
+# HTTP 422 com mensagem vazia em qualquer variação de parâmetro/caminho — assinatura
+# de módulo financeiro não habilitado. Não derrubam o run (process_optional_endpoint).
+# Se a clínica contratar o módulo financeiro e o token tiver escopo, voltam a popular.
+FINANCIAL_ENDPOINTS = {
+    "financeiro_contas": ("financial/accounts", False),       # (path, exige_data)
+    "financeiro_fornecedores": ("financial/suppliers", False),
+    "financeiro_faturas": ("financial/invoice", True),
 }
 
 # Chaves onde a Feegow costuma entregar a lista de itens.
@@ -73,7 +85,7 @@ def get_arguments():
             .add("LOOKBACK_DAYS", "Janela de dias para dados por data", required=False,
                  default=365, arg_type=int)
             .add("PATIENT_STRATEGY", "Estratégia de pacientes: date | appointments",
-                 required=False, default="date")
+                 required=False, default="appointments")
             .add("PROJECT_ID", "ID do projeto Google Cloud", required=True)
             .add("CRM_TYPE", "Nome da ferramenta (dataset destino)", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credencial GCS", required=True)
@@ -97,6 +109,21 @@ def get_date_window(lookback_days):
     data_start, data_end = start.strftime(fmt), end.strftime(fmt)
     logger.info(f"📅 Janela de data: {data_start} a {data_end} ({lookback_days} dias)")
     return data_start, data_end
+
+
+def get_date_chunks(lookback_days, window_days=APPOINTS_WINDOW_DAYS):
+    """Fatia a janela em pedaços de até `window_days` dias (DD-MM-YYYY, inclusivos)."""
+    end = datetime.now()
+    start = end - timedelta(days=lookback_days)
+    fmt = "%d-%m-%Y"
+    chunks = []
+    cur = start
+    while cur <= end:
+        chunk_end = min(cur + timedelta(days=window_days - 1), end)
+        chunks.append((cur.strftime(fmt), chunk_end.strftime(fmt)))
+        cur = chunk_end + timedelta(days=1)
+    logger.info(f"📅 Janela de {lookback_days} dias fatiada em {len(chunks)} pedaços de ≤{window_days}d")
+    return chunks
 
 
 def _extract_items(payload):
@@ -182,6 +209,29 @@ def fetch_single(http_client, endpoint, headers, params=None):
     return _extract_items(payload)
 
 
+def fetch_appointments(http_client, headers, lookback_days):
+    """
+    appoints/search fatiado por janela. Concatena todos os pedaços.
+
+    A Feegow retorna HTTP 409 ("Agendamento não existe") quando um período não
+    tem agendamentos — tratamos como pedaço vazio, não como erro.
+    """
+    all_items = []
+    chunks = get_date_chunks(lookback_days)
+    for data_start, data_end in chunks:
+        try:
+            items = fetch_all_pages(http_client, "appoints/search", headers,
+                                    {"data_start": data_start, "data_end": data_end})
+            all_items.extend(items)
+        except Exception as e:
+            if "409" in str(e):
+                logger.info(f"📭 appoints {data_start}–{data_end}: sem agendamentos (409)")
+                continue
+            raise
+    logger.info(f"✅ agendamentos: {len(all_items)} itens em {len(chunks)} janelas")
+    return all_items
+
+
 def process_endpoint(name, fetch_fn):
     """Executa a coleta de um endpoint e devolve (dados, stats)."""
     try:
@@ -201,6 +251,22 @@ def process_endpoint(name, fetch_fn):
     except Exception as e:
         logger.exception(f"❌ Falha no endpoint {name}")
         return [], {"registros": 0, "status": f"Falha: {type(e).__name__}: {str(e)}", "tempo": 0}
+
+
+def process_optional_endpoint(name, fetch_fn):
+    """
+    Como process_endpoint, mas NÃO derruba o run em falha esperada.
+
+    Usado nos endpoints do módulo financeiro: quando o módulo não está habilitado
+    na licença, a Feegow responde HTTP 422 com mensagem vazia. Nesse caso logamos
+    um aviso e marcamos status sem a palavra "Falha" (não conta como erro no resumo).
+    """
+    data, stats = process_endpoint(name, fetch_fn)
+    if "Falha" in stats["status"]:
+        logger.warning(f"⚠️ {name}: módulo financeiro indisponível/sem dados — pulando (opcional). "
+                       f"Detalhe original: {stats['status']}")
+        stats["status"] = "Opcional: financeiro indisponível (HTTP 422)"
+    return data, stats
 
 
 def fetch_patients_by_date(http_client, headers, data_start, data_end):
@@ -257,18 +323,23 @@ def main():
             _, stats = process_endpoint(name, lambda p=path: fetch_single(http_client, p, headers))
             endpoint_stats[name] = stats
 
-        # 4. Endpoints por janela de data (paginados)
-        appointments = []
-        for name, path in DATE_ENDPOINTS.items():
-            data, stats = process_endpoint(
-                name, lambda p=path: fetch_all_pages(http_client, p, headers, date_params)
+        # 4. Agendamentos (janela fatiada; 409 = período vazio)
+        appointments, endpoint_stats["agendamentos"] = process_endpoint(
+            "agendamentos", lambda: fetch_appointments(http_client, headers, args.LOOKBACK_DAYS)
+        )
+
+        # 4b. Módulo financeiro (OPCIONAL — não derruba o run se indisponível)
+        for name, (path, needs_date) in FINANCIAL_ENDPOINTS.items():
+            params = date_params if needs_date else None
+            _, stats = process_optional_endpoint(
+                name, lambda p=path, pa=params: fetch_all_pages(http_client, p, headers, pa)
+                if pa else fetch_single(http_client, p, headers)
             )
             endpoint_stats[name] = stats
-            if name == "agendamentos":
-                appointments = data
 
-        # 5. Pacientes (estratégia configurável)
-        strategy = (args.PATIENT_STRATEGY or "date").lower()
+        # 5. Pacientes (estratégia configurável; default = appointments, pois
+        #    patient/search exige paciente_id/cpf e NÃO aceita busca por data)
+        strategy = (args.PATIENT_STRATEGY or "appointments").lower()
         if strategy == "appointments":
             _, stats = process_endpoint(
                 "pacientes",

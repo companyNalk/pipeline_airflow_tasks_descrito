@@ -4,13 +4,18 @@ Gestão de clínicas/saúde.
 
 Endpoints:
     - Cadastros (sem filtro): profissionais, procedimentos, especialidades,
-      convenios, unidades, financeiro_contas, financeiro_fornecedores
-    - Por janela de data: agendamentos, financeiro_faturas
-    - pacientes (estratégia 'date' ou 'appointments')
+      convenios, unidades
+    - Agendamentos: appoints/search fatiado por janela (≤90d/chamada; 409 = vazio)
+    - Pacientes: derivados dos agendamentos (patient/search exige paciente_id/cpf)
+    - Financeiro (OPCIONAL): contas, fornecedores, faturas — só se o módulo
+      estiver habilitado na licença (senão 422; não falha a task)
 
 Auth: token estático no header `x-access-token`
-Paginação: start/offset (default 0/50)
 Datas: DD-MM-YYYY (janela calculada a partir de customer['lookback_days'])
+
+⚠️ appoints/search rejeita janelas grandes (HTTP 409 a partir de ~90-180 dias) →
+fatiado em APPOINTS_WINDOW_DAYS. patient/search exige paciente_id/cpf (não aceita
+busca por data). Ver crm-integrations/feegow/ENDPOINTS.md para detalhes validados.
 """
 
 import concurrent.futures
@@ -28,6 +33,8 @@ DEFAULT_LOOKBACK_DAYS = 365
 RATE_LIMIT_SLEEP = 0.5   # não documentado — pausa conservadora entre páginas
 MAX_PAGES_GUARD = 5000
 MAX_WORKERS = 8
+# appoints/search rejeita janelas grandes com 409 (90d OK, 180d 409) → fatiar.
+APPOINTS_WINDOW_DAYS = 60
 
 # Cadastros sem filtro obrigatório (1 chamada)
 SIMPLE_ENDPOINTS = {
@@ -36,14 +43,14 @@ SIMPLE_ENDPOINTS = {
     "especialidades": "specialties/list",
     "convenios": "insurance/list",
     "unidades": "company/list-unity",
-    "financeiro_contas": "financial/accounts",
-    "financeiro_fornecedores": "financial/suppliers",
 }
 
-# Endpoints com janela de data (paginados)
-DATE_ENDPOINTS = {
-    "agendamentos": "appoints/search",
-    "financeiro_faturas": "financial/invoice",
+# Módulo financeiro — OPCIONAL: na licença testada (36514) retornam HTTP 422
+# (módulo não habilitado). Tratados como best-effort, não derrubam a task.
+FINANCIAL_ENDPOINTS = {
+    "financeiro_contas": ("financial/accounts", False),       # (path, exige_data)
+    "financeiro_fornecedores": ("financial/suppliers", False),
+    "financeiro_faturas": ("financial/invoice", True),
 }
 
 _LIST_KEYS = ("content", "data", "itens", "items", "registros")
@@ -62,6 +69,19 @@ def _get_date_window(lookback_days):
     start = end - timedelta(days=lookback_days)
     fmt = "%d-%m-%Y"
     return start.strftime(fmt), end.strftime(fmt)
+
+
+def _get_date_chunks(lookback_days, window_days=APPOINTS_WINDOW_DAYS):
+    """Fatia a janela em pedaços de até `window_days` dias (DD-MM-YYYY, inclusivos)."""
+    end = datetime.now()
+    start = end - timedelta(days=lookback_days)
+    fmt = "%d-%m-%Y"
+    chunks, cur = [], start
+    while cur <= end:
+        chunk_end = min(cur + timedelta(days=window_days - 1), end)
+        chunks.append((cur.strftime(fmt), chunk_end.strftime(fmt)))
+        cur = chunk_end + timedelta(days=1)
+    return chunks
 
 
 def _extract_items(payload):
@@ -186,66 +206,94 @@ def extract_cadastros(customer):
     logging.info(f"[Feegow] Cadastros concluídos em {time.time() - start_time:.2f}s")
 
 
+def _fetch_appointments(base_url, headers, lookback_days):
+    """
+    appoints/search fatiado por janela (≤APPOINTS_WINDOW_DAYS dias).
+    HTTP 409 num pedaço = "sem agendamentos no período" → tratado como vazio.
+    """
+    all_items = []
+    chunks = _get_date_chunks(lookback_days)
+    for data_start, data_end in chunks:
+        try:
+            items = _fetch_all_pages(base_url, "appoints/search", headers,
+                                     {"data_start": data_start, "data_end": data_end})
+            all_items.extend(items)
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 409:
+                logging.info(f"[Feegow] appoints {data_start}–{data_end}: sem agendamentos (409)")
+                continue
+            raise
+    logging.info(f"[Feegow] Agendamentos: {len(all_items)} itens em {len(chunks)} janelas")
+    return all_items
+
+
 def extract_agendamentos(customer):
-    """Extrai agendamentos na janela de data."""
+    """Extrai agendamentos na janela (fatiada; 409 = período vazio)."""
     start_time = time.time()
     base_url, headers = _base_and_headers(customer)
-    data_start, data_end = _get_date_window(customer.get("lookback_days", DEFAULT_LOOKBACK_DAYS))
-    logging.info(f"[Feegow] Extraindo agendamentos ({data_start} a {data_end})...")
+    lookback = customer.get("lookback_days", DEFAULT_LOOKBACK_DAYS)
+    logging.info(f"[Feegow] Extraindo agendamentos (lookback {lookback}d) para {customer['project_id']}...")
 
-    data = _fetch_all_pages(base_url, "appoints/search", headers,
-                            {"data_start": data_start, "data_end": data_end})
+    data = _fetch_appointments(base_url, headers, lookback)
     _save_to_gcs(customer, data, "agendamentos")
     logging.info(f"[Feegow] Agendamentos: {len(data)} registros em {time.time() - start_time:.2f}s")
 
 
-def extract_financeiro_faturas(customer):
-    """Extrai faturas financeiras na janela de data."""
+def extract_financeiro(customer):
+    """
+    Módulo financeiro (OPCIONAL): contas, fornecedores e faturas.
+
+    Na licença testada (36514) a Feegow responde HTTP 422 (módulo não habilitado).
+    Best-effort: cada endpoint é tentado isoladamente; falhas só logam aviso e
+    NÃO interrompem a task.
+    """
     start_time = time.time()
     base_url, headers = _base_and_headers(customer)
     data_start, data_end = _get_date_window(customer.get("lookback_days", DEFAULT_LOOKBACK_DAYS))
-    logging.info(f"[Feegow] Extraindo faturas ({data_start} a {data_end})...")
 
-    data = _fetch_all_pages(base_url, "financial/invoice", headers,
-                            {"data_start": data_start, "data_end": data_end})
-    _save_to_gcs(customer, data, "financeiro_faturas")
-    logging.info(f"[Feegow] Faturas: {len(data)} registros em {time.time() - start_time:.2f}s")
+    for table, (endpoint, needs_date) in FINANCIAL_ENDPOINTS.items():
+        try:
+            if needs_date:
+                data = _fetch_all_pages(base_url, endpoint, headers,
+                                        {"data_start": data_start, "data_end": data_end})
+            else:
+                data = _fetch_single(base_url, endpoint, headers)
+            _save_to_gcs(customer, data, table)
+        except Exception as e:
+            logging.warning(f"[Feegow] {table}: módulo financeiro indisponível/sem dados — "
+                            f"pulando (opcional). Detalhe: {e}")
+
+    logging.info(f"[Feegow] Financeiro (opcional) concluído em {time.time() - start_time:.2f}s")
 
 
 def extract_pacientes(customer):
     """
-    Extrai pacientes. Estratégia via customer['patient_strategy']:
-      - 'date' (default): /patient/search por janela de data
-      - 'appointments': deriva paciente_id dos agendamentos e busca 1 a 1
+    Extrai pacientes derivando paciente_id dos agendamentos.
+
+    patient/search EXIGE paciente_id ou paciente_cpf (422 se buscar só por data),
+    por isso a estratégia 'date' não funciona — default e única suportada é
+    'appointments'. customer['patient_strategy'] mantido só por compat.
     """
     start_time = time.time()
     base_url, headers = _base_and_headers(customer)
-    strategy = (customer.get("patient_strategy") or "date").lower()
     lookback = customer.get("lookback_days", DEFAULT_LOOKBACK_DAYS)
-    data_start, data_end = _get_date_window(lookback)
 
-    if strategy == "appointments":
-        logging.info(f"[Feegow] Pacientes via agendamentos para {customer['project_id']}...")
-        appoints = _fetch_all_pages(base_url, "appoints/search", headers,
-                                    {"data_start": data_start, "data_end": data_end})
-        patient_ids = sorted({a.get("paciente_id") for a in appoints if a.get("paciente_id")})
-        logging.info(f"[Feegow] {len(patient_ids)} paciente_id únicos derivados")
+    logging.info(f"[Feegow] Pacientes via agendamentos para {customer['project_id']}...")
+    appoints = _fetch_appointments(base_url, headers, lookback)
+    patient_ids = sorted({a.get("paciente_id") for a in appoints if a.get("paciente_id")})
+    logging.info(f"[Feegow] {len(patient_ids)} paciente_id únicos derivados")
 
-        def fetch_one(pid):
-            try:
-                return _extract_items(_get(base_url, "patient/search", headers, {"paciente_id": pid}))
-            except Exception as e:
-                logging.error(f"[Feegow] Erro paciente {pid}: {e}")
-                return []
+    def fetch_one(pid):
+        try:
+            return _extract_items(_get(base_url, "patient/search", headers, {"paciente_id": pid}))
+        except Exception as e:
+            logging.error(f"[Feegow] Erro paciente {pid}: {e}")
+            return []
 
-        data = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for items in executor.map(fetch_one, patient_ids):
-                data.extend(items)
-    else:
-        logging.info(f"[Feegow] Pacientes por data ({data_start} a {data_end})...")
-        data = _fetch_all_pages(base_url, "patient/search", headers,
-                                {"data_start": data_start, "data_end": data_end})
+    data = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        for items in executor.map(fetch_one, patient_ids):
+            data.extend(items)
 
     _save_to_gcs(customer, data, "pacientes")
     logging.info(f"[Feegow] Pacientes: {len(data)} registros em {time.time() - start_time:.2f}s")
@@ -261,6 +309,6 @@ def get_extraction_tasks():
     return [
         {"task_id": "extract_cadastros", "python_callable": extract_cadastros},
         {"task_id": "extract_agendamentos", "python_callable": extract_agendamentos},
-        {"task_id": "extract_financeiro_faturas", "python_callable": extract_financeiro_faturas},
+        {"task_id": "extract_financeiro", "python_callable": extract_financeiro},
         {"task_id": "extract_pacientes", "python_callable": extract_pacientes},
     ]
