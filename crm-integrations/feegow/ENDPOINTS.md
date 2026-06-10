@@ -53,6 +53,15 @@
 | `especialidades` | `specialties/list` | GET |
 | `convenios` | `insurance/list` | GET |
 | `unidades` | `company/list-unity` | GET |
+| `status` | `appoints/status` | GET |
+| `motivos` | `appoints/motives` | GET |
+
+**Dimensão `status` (id → rótulo) — validada na licença 36514 (12 status):**
+`1` Marcado - não confirmado · `2` Em atendimento · `3` Atendido · `4` Aguardando ·
+`5` Chamando · `6` **Não compareceu (no-show)** · `7` Marcado - confirmado ·
+`11` Desmarcado pelo paciente · `15` Remarcado · `22` Cancelado pelo profissional ·
+`33` Em espera · `208` Aguardando pagamento.
+Join: `agendamentos.status_id` → `status.id`. **`motivos`** (`{id, motivo}`): 1=Solicitado pelo Paciente, 2=pelo Profissional, 3=pela Clínica.
 
 ### Agendamentos — `appoints/search` (janela FATIADA) ✅ validado
 | Tabela | Endpoint | Obrigatório | Observação |
@@ -96,7 +105,7 @@
 ---
 
 ## Endpoints mapeados mas NÃO extraídos (disponíveis se necessário)
-- Agenda: `appoints/available-schedule`, `appoints/status`, `appoints/motives`
+- Agenda: `appoints/available-schedule` (`appoints/status` e `appoints/motives` agora SÃO extraídos)
 - Bloqueios: `lock/list`
 - Prontuários/Laudos: `laudos/*`
 - Relatórios: `reports/list`, `reports/generate`

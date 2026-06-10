@@ -45,6 +45,11 @@ SIMPLE_ENDPOINTS = {
     "especialidades": "specialties/list",
     "convenios": "insurance/list",
     "unidades": "company/list-unity",
+    # Dimensões dos agendamentos (id -> rótulo). Validados na licença 36514:
+    # status -> {id, status} (3=Atendido, 6=Não compareceu, 11=Desmarcado pelo paciente);
+    # motivos -> {id, motivo}. Essenciais p/ taxa de comparecimento/no-show confiável.
+    "status": "appoints/status",
+    "motivos": "appoints/motives",
 }
 
 # Módulo financeiro — OPCIONAL: na licença testada (36514) retornam HTTP 422
