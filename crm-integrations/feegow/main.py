@@ -20,10 +20,12 @@ DD-MM-YYYY exigido pela Feegow.
 "sem agendamentos no período" (tratado como vazio, não como erro).
 
 ⚠️ Estratégia de pacientes (PATIENT_STRATEGY):
-  - "appointments" (default): deriva os paciente_id dos agendamentos e busca
-    paciente a paciente. patient/search EXIGE paciente_id ou paciente_cpf.
-  - "date": NÃO funciona — patient/search rejeita busca só por data (HTTP 422).
-    Mantido apenas por compatibilidade; não usar.
+  - "list" (default): patient/list paginado por limit/offset (500/página). Pega
+    TODOS os pacientes (inclusive sem agenda) em poucas chamadas, sem rate limit.
+    Campos enxutos (sem documento/endereço completo).
+  - "appointments": deriva paciente_id dos agendamentos e busca 1 a 1 via
+    patient/search (campos ricos, mas 1 request/paciente → lento + rate limit).
+  - "date": NÃO funciona — patient/search exige paciente_id/cpf (HTTP 422). Compat.
 """
 
 import concurrent.futures
@@ -51,6 +53,11 @@ MAX_PAGES_GUARD = 5000  # trava de segurança contra paginação infinita
 # appoints/search rejeita janelas grandes com HTTP 409 (validado: 90d OK, 180d 409).
 # Fatiamos a janela em pedaços com folga sob o limite real (entre 90 e 180 dias).
 APPOINTS_WINDOW_DAYS = 60
+
+# patient/list pagina via limit/offset (offset = registros a pular; 500 por página).
+# Pega TODOS os pacientes (inclusive sem agenda) em ~N/500 chamadas — muito melhor
+# que 1 request por paciente (que estoura o rate limit do Feegow).
+PATIENT_LIST_PAGE = 500
 
 DEFAULT_BASE_URL = "https://api.feegow.com/v1/api"
 
@@ -84,8 +91,8 @@ def get_arguments():
             .add("API_ACCESS_TOKEN", "Token estático (x-access-token)", required=True)
             .add("LOOKBACK_DAYS", "Janela de dias para dados por data", required=False,
                  default=365, arg_type=int)
-            .add("PATIENT_STRATEGY", "Estratégia de pacientes: date | appointments",
-                 required=False, default="appointments")
+            .add("PATIENT_STRATEGY", "Estratégia de pacientes: list | appointments | date",
+                 required=False, default="list")
             .add("PROJECT_ID", "ID do projeto Google Cloud", required=True)
             .add("CRM_TYPE", "Nome da ferramenta (dataset destino)", required=True)
             .add("GOOGLE_APPLICATION_CREDENTIALS", "Credencial GCS", required=True)
@@ -269,8 +276,38 @@ def process_optional_endpoint(name, fetch_fn):
     return data, stats
 
 
+def fetch_patients_list(http_client, headers):
+    """
+    Estratégia LIST (default): patient/list paginado via limit/offset.
+
+    `offset` = registros a pular (NÃO é igual ao start/offset dos outros endpoints);
+    página de PATIENT_LIST_PAGE (500). Pega TODOS os pacientes da clínica em ~N/500
+    chamadas — inclusive os sem agendamento — sem estourar o rate limit.
+    Campos mais enxutos que patient/search (sem documento/endereço completo).
+    """
+    all_items = []
+    offset = 0
+    page = 0
+    while page < MAX_PAGES_GUARD:
+        payload = http_client.get("patient/list", headers=headers,
+                                  params={"limit": PATIENT_LIST_PAGE, "offset": offset},
+                                  debug_info=f"list:o{offset}")
+        items = _extract_items(payload)
+        page += 1
+        if not items:
+            break
+        all_items.extend(items)
+        logger.info(f"📄 patient/list: offset {offset} +{len(items)} (acum: {len(all_items)})")
+        if len(items) < PATIENT_LIST_PAGE:
+            break
+        offset += PATIENT_LIST_PAGE
+    logger.info(f"✅ pacientes (list): {len(all_items)} em {page} páginas")
+    return all_items
+
+
 def fetch_patients_by_date(http_client, headers, data_start, data_end):
-    """Estratégia A: pacientes por janela de data."""
+    """Estratégia legada: pacientes por janela de data (NÃO funciona — patient/search
+    exige paciente_id/cpf; mantida só por compat)."""
     return fetch_all_pages(http_client, "patient/search", headers,
                            extra_params={"data_start": data_start, "data_end": data_end})
 
@@ -337,19 +374,20 @@ def main():
             )
             endpoint_stats[name] = stats
 
-        # 5. Pacientes (estratégia configurável; default = appointments, pois
-        #    patient/search exige paciente_id/cpf e NÃO aceita busca por data)
-        strategy = (args.PATIENT_STRATEGY or "appointments").lower()
-        if strategy == "appointments":
+        # 5. Pacientes (estratégia configurável; default = list via patient/list,
+        #    que pega todos os pacientes em ~N/500 chamadas sem estourar rate limit)
+        strategy = (args.PATIENT_STRATEGY or "list").lower()
+        if strategy == "list":
+            _, stats = process_endpoint(
+                "pacientes", lambda: fetch_patients_list(http_client, headers))
+        elif strategy == "appointments":
             _, stats = process_endpoint(
                 "pacientes",
-                lambda: fetch_patients_from_appointments(http_client, headers, appointments)
-            )
+                lambda: fetch_patients_from_appointments(http_client, headers, appointments))
         else:
             _, stats = process_endpoint(
                 "pacientes",
-                lambda: fetch_patients_by_date(http_client, headers, data_start, data_end)
-            )
+                lambda: fetch_patients_by_date(http_client, headers, data_start, data_end))
         endpoint_stats["pacientes"] = stats
 
         # 6. Resumo

@@ -59,10 +59,20 @@
 |---|---|---|---|
 | `agendamentos` | `appoints/search` | `data_start` + `data_end` (DD-MM-YYYY) | janela máx. entre 90 e 180 dias → fatiar em `APPOINTS_WINDOW_DAYS` (60). **HTTP 409 = período sem agendamentos** (tratado como vazio). Retorna a janela inteira numa resposta (a guarda de "paginação não avança" do `fetch_all_pages` cobre isso). |
 
-### Pacientes — `patient/search` ✅ validado
-- **EXIGE `paciente_id` OU `paciente_cpf`** (resposta 422 confirmada: *"O campo paciente id é obrigatório quando paciente cpf não está presente"*). **Não** aceita busca por data nem listar tudo.
-- `PATIENT_STRATEGY=appointments` (default): deriva `paciente_id` dos agendamentos e busca 1 a 1 (`patient/search?paciente_id=X` → 200). Cobre quem tem agenda.
-- `PATIENT_STRATEGY=date`: **não funciona** (422) — mantido só por compat.
+### Pacientes ✅ validado
+- **`PATIENT_STRATEGY=list` (default)** → **`patient/list`** paginado por **`limit`+`offset`**
+  (offset = registros a pular; 500/página). Pega TODOS os pacientes da clínica
+  (inclusive sem agenda) em ~N/500 chamadas, **sem rate limit**. Campos enxutos:
+  `patient_id, nome, nome_social, nascimento, bairro, tabela_id, sexo_id, email,
+  celular, criado_em, alterado_em, programa_de_saude`. ⚠️ `patient/list` ignora
+  `start`/`offset`-do-outro-padrão e o campo `total` é o tamanho da página (500),
+  não o total real — paginar por `offset += 500` até página < 500.
+- `PATIENT_STRATEGY=appointments` → deriva `paciente_id` dos agendamentos e busca
+  1 a 1 (`patient/search?paciente_id=X` → 200, campos ricos com endereço/documento).
+  ⚠️ 1 request/paciente → lento e **estoura o rate limit** (caso real: 6.357 pacientes).
+- `PATIENT_STRATEGY=date`: **não funciona** — `patient/search` exige `paciente_id`
+  ou `paciente_cpf` (422: *"O campo paciente id é obrigatório quando paciente cpf
+  não está presente"*). Mantido só por compat.
 
 ### Financeiro — OPCIONAL (módulo pode não estar habilitado)
 | Tabela | Endpoint | exige_data |
