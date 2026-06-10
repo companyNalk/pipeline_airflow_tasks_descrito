@@ -45,7 +45,7 @@
 
 ## Endpoints extraídos
 
-### Cadastros simples (sem filtro obrigatório — 1 chamada) ✅ validado
+### Cadastros simples (sem filtro obrigatório — 1 chamada)
 | Tabela | Endpoint | Método |
 |---|---|---|
 | `profissionais` | `professional/list` | GET |
@@ -53,45 +53,32 @@
 | `especialidades` | `specialties/list` | GET |
 | `convenios` | `insurance/list` | GET |
 | `unidades` | `company/list-unity` | GET |
+| `financeiro_contas` | `financial/accounts` | GET |
+| `financeiro_fornecedores` | `financial/suppliers` | GET |
 
-### Agendamentos — `appoints/search` (janela FATIADA) ✅ validado
-| Tabela | Endpoint | Obrigatório | Observação |
+### Por janela de data (paginados)
+| Tabela | Endpoint | Método | Obrigatório |
 |---|---|---|---|
-| `agendamentos` | `appoints/search` | `data_start` + `data_end` (DD-MM-YYYY) | janela máx. entre 90 e 180 dias → fatiar em `APPOINTS_WINDOW_DAYS` (60). **HTTP 409 = período sem agendamentos** (tratado como vazio). Retorna a janela inteira numa resposta (a guarda de "paginação não avança" do `fetch_all_pages` cobre isso). |
+| `agendamentos` | `appoints/search` | GET | `data_start` + `data_end` |
+| `financeiro_faturas` | `financial/invoice` | GET | filtros de data |
 
-### Pacientes ✅ validado
-- **`PATIENT_STRATEGY=list` (default)** → **`patient/list`** paginado por **`limit`+`offset`**
-  (offset = registros a pular; 500/página). Pega TODOS os pacientes da clínica
-  (inclusive sem agenda) em ~N/500 chamadas, **sem rate limit**. Campos enxutos:
-  `patient_id, nome, nome_social, nascimento, bairro, tabela_id, sexo_id, email,
-  celular, criado_em, alterado_em, programa_de_saude`. ⚠️ `patient/list` ignora
-  `start`/`offset`-do-outro-padrão e o campo `total` é o tamanho da página (500),
-  não o total real — paginar por `offset += 500` até página < 500.
-- `PATIENT_STRATEGY=appointments` → deriva `paciente_id` dos agendamentos e busca
-  1 a 1 (`patient/search?paciente_id=X` → 200, campos ricos com endereço/documento).
-  ⚠️ 1 request/paciente → lento e **estoura o rate limit** (caso real: 6.357 pacientes).
-- `PATIENT_STRATEGY=date`: **não funciona** — `patient/search` exige `paciente_id`
-  ou `paciente_cpf` (422: *"O campo paciente id é obrigatório quando paciente cpf
-  não está presente"*). Mantido só por compat.
-
-### Financeiro — OPCIONAL (módulo pode não estar habilitado)
-| Tabela | Endpoint | exige_data |
+### Pacientes (estratégia configurável — `PATIENT_STRATEGY`)
+| Estratégia | Como funciona | Trade-off |
 |---|---|---|
-| `financeiro_contas` | `financial/accounts` | não |
-| `financeiro_fornecedores` | `financial/suppliers` | não |
-| `financeiro_faturas` | `financial/invoice` | sim |
+| `date` (default) | `patient/search` por `data_start`/`data_end`, paginado | ⚠️ a doc lista data como *opcional* e exige "≥1 filtro" — pode rejeitar busca só por data |
+| `appointments` | deriva `paciente_id` dos agendamentos e busca 1 a 1 (`patient/search?paciente_id=X`) | cobre só quem tem agenda; perde pacientes sem agendamento |
 
-⚠️ Na licença testada (**36514**) **todos** os `financial/*` retornam **HTTP 422 com `message` vazio**, em qualquer variação de parâmetro/caminho — assinatura de **módulo financeiro não habilitado**. Tratados via `process_optional_endpoint`: logam aviso e **não derrubam o run**. Voltam a popular se a clínica contratar o módulo e o token tiver escopo.
+> Plano: usar `date`; se a API rejeitar, trocar `PATIENT_STRATEGY=appointments`.
 
 ---
 
-## Validação com token real (licença 36514) — 2026-06-10
-1. ✅ `/patient/search` **não** aceita só data → exige `paciente_id`/`cpf` → default = `appointments`.
-2. ✅ `appoints/search` ignora `start`/`offset` e devolve a janela inteira; **janela >~90d → 409**. Fix: fatiar em 60d + tratar 409 como vazio.
-3. ✅ `/financial/*` → 422 (módulo não habilitado) → tornados opcionais.
-4. ℹ️ Rate limit real não testado a fundo; `RATE_LIMIT=120/min` mantido. Backfill de 365d derivou ~6.3k pacientes (1 request cada) — considerar reduzir `LOOKBACK_DAYS` em runs incrementais.
-5. ✅ Chave da lista = `content` (confirmado). Resposta tem envelope `{"success":true,"content":[...]}`.
-6. 📊 Run real: 8 profissionais, 60 procedimentos, 24 convênios, 1 unidade, 1 especialidade, ~10k agendamentos, ~6.3k pacientes únicos.
+## Pendências de validação (teste com token real)
+1. `/patient/search` aceita busca **só por data**? (define a estratégia padrão)
+2. Semântica real de `start`/`offset` (tamanho de página vs. skip)
+3. Paginação dos `/financial/*` (a doc não detalha)
+4. Rate limit real (ajustar `RATE_LIMIT`)
+5. Janela de data adequada por cliente (`LOOKBACK_DAYS`)
+6. Formato exato da resposta (chave da lista — assumido `content`)
 
 ---
 

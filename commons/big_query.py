@@ -177,8 +177,8 @@ class DataPreprocessor:
     def convert_date_br_to_iso(csv_path, schema_json, logger):
         """
         Preprocessa dados do CSV para compatibilidade com BigQuery.
-        Converte APENAS datas no formato D/MM/AAAA ou DD/MM/AAAA (separador "/" ou "-")
-        para AAAA-MM-DD. NUNCA converte se houver componente de hora.
+        Converte APENAS datas no formato D/MM/AAAA ou DD/MM/AAAA para AAAA-MM-DD.
+        NUNCA converte se houver componente de hora.
         """
         try:
             logger.info("🔄 Iniciando preprocessamento de dados...")
@@ -216,11 +216,10 @@ class DataPreprocessor:
                             df.at[idx, field] = date_str
                             continue
 
-                        # Aceita D/MM/AAAA ou DD/MM/AAAA com separador "/" ou "-"
-                        # (ex.: "10/06/2025" ou "10-06-2025" da API Feegow)
-                        _m = re.match(r'^(\d{1,2})[/-](\d{2})[/-](\d{4})$', date_str)
-                        if _m:
-                            day, month, year = _m.group(1), _m.group(2), _m.group(3)
+                        # Aceita APENAS D/MM/AAAA ou DD/MM/AAAA
+                        if re.match(r'^\d{1,2}/\d{2}/\d{4}$', date_str):
+                            parts = date_str.split('/')
+                            day, month, year = parts
 
                             # Validar se mês e ano têm tamanho correto
                             if len(month) != 2 or len(year) != 4:
