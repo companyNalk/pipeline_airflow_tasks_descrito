@@ -6,7 +6,7 @@ Endpoints:
     - Cadastros (sem filtro): profissionais, procedimentos, especialidades,
       convenios, unidades
     - Agendamentos: appoints/search fatiado por janela (≤90d/chamada; 409 = vazio)
-    - Pacientes: derivados dos agendamentos (patient/search exige paciente_id/cpf)
+    - Pacientes: patient/list paginado (limit/offset) — default; ou via agendamentos
     - Financeiro (OPCIONAL): contas, fornecedores, faturas — só se o módulo
       estiver habilitado na licença (senão 422; não falha a task)
 
@@ -35,6 +35,8 @@ MAX_PAGES_GUARD = 5000
 MAX_WORKERS = 8
 # appoints/search rejeita janelas grandes com 409 (90d OK, 180d 409) → fatiar.
 APPOINTS_WINDOW_DAYS = 60
+# patient/list pagina via limit/offset (offset = registros a pular; 500/página).
+PATIENT_LIST_PAGE = 500
 
 # Cadastros sem filtro obrigatório (1 chamada)
 SIMPLE_ENDPOINTS = {
@@ -266,34 +268,57 @@ def extract_financeiro(customer):
     logging.info(f"[Feegow] Financeiro (opcional) concluído em {time.time() - start_time:.2f}s")
 
 
+def _fetch_patients_list(base_url, headers):
+    """patient/list paginado via limit/offset (offset = registros a pular; 500/pág)."""
+    all_items, offset, page = [], 0, 0
+    while page < MAX_PAGES_GUARD:
+        items = _extract_items(_get(base_url, "patient/list", headers,
+                                    {"limit": PATIENT_LIST_PAGE, "offset": offset}))
+        page += 1
+        if not items:
+            break
+        all_items.extend(items)
+        if len(items) < PATIENT_LIST_PAGE:
+            break
+        offset += PATIENT_LIST_PAGE
+        time.sleep(RATE_LIMIT_SLEEP)
+    return all_items
+
+
 def extract_pacientes(customer):
     """
-    Extrai pacientes derivando paciente_id dos agendamentos.
-
-    patient/search EXIGE paciente_id ou paciente_cpf (422 se buscar só por data),
-    por isso a estratégia 'date' não funciona — default e única suportada é
-    'appointments'. customer['patient_strategy'] mantido só por compat.
+    Extrai pacientes. Estratégia via customer['patient_strategy']:
+      - 'list' (default): patient/list paginado (limit/offset). Pega TODOS os
+        pacientes em poucas chamadas, sem rate limit. Campos enxutos.
+      - 'appointments': deriva paciente_id dos agendamentos e busca 1 a 1
+        (patient/search — campos ricos, mas lento + rate limit).
+    patient/search exige paciente_id/cpf → busca só por data ('date') não funciona.
     """
     start_time = time.time()
     base_url, headers = _base_and_headers(customer)
-    lookback = customer.get("lookback_days", DEFAULT_LOOKBACK_DAYS)
+    strategy = (customer.get("patient_strategy") or "list").lower()
 
-    logging.info(f"[Feegow] Pacientes via agendamentos para {customer['project_id']}...")
-    appoints = _fetch_appointments(base_url, headers, lookback)
-    patient_ids = sorted({a.get("paciente_id") for a in appoints if a.get("paciente_id")})
-    logging.info(f"[Feegow] {len(patient_ids)} paciente_id únicos derivados")
+    if strategy == "appointments":
+        logging.info(f"[Feegow] Pacientes via agendamentos para {customer['project_id']}...")
+        appoints = _fetch_appointments(base_url, headers,
+                                       customer.get("lookback_days", DEFAULT_LOOKBACK_DAYS))
+        patient_ids = sorted({a.get("paciente_id") for a in appoints if a.get("paciente_id")})
+        logging.info(f"[Feegow] {len(patient_ids)} paciente_id únicos derivados")
 
-    def fetch_one(pid):
-        try:
-            return _extract_items(_get(base_url, "patient/search", headers, {"paciente_id": pid}))
-        except Exception as e:
-            logging.error(f"[Feegow] Erro paciente {pid}: {e}")
-            return []
+        def fetch_one(pid):
+            try:
+                return _extract_items(_get(base_url, "patient/search", headers, {"paciente_id": pid}))
+            except Exception as e:
+                logging.error(f"[Feegow] Erro paciente {pid}: {e}")
+                return []
 
-    data = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        for items in executor.map(fetch_one, patient_ids):
-            data.extend(items)
+        data = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            for items in executor.map(fetch_one, patient_ids):
+                data.extend(items)
+    else:
+        logging.info(f"[Feegow] Pacientes via patient/list para {customer['project_id']}...")
+        data = _fetch_patients_list(base_url, headers)
 
     _save_to_gcs(customer, data, "pacientes")
     logging.info(f"[Feegow] Pacientes: {len(data)} registros em {time.time() - start_time:.2f}s")
