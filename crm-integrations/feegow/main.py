@@ -75,14 +75,24 @@ SIMPLE_ENDPOINTS = {
     "motivos": "appoints/motives",
 }
 
-# Endpoints do módulo financeiro. OPCIONAIS: na licença testada (36514) retornam
-# HTTP 422 com mensagem vazia em qualquer variação de parâmetro/caminho — assinatura
-# de módulo financeiro não habilitado. Não derrubam o run (process_optional_endpoint).
-# Se a clínica contratar o módulo financeiro e o token tiver escopo, voltam a popular.
+# Endpoints do módulo financeiro (paths conforme doc oficial docs.feegow.com).
+# OPCIONAIS: se o token NÃO tiver escopo financeiro, retornam HTTP 422 com
+# `message:""` + `cod_erro:0` (assinatura de "sem permissão", != falta de parâmetro,
+# que vem com mensagem descritiva). process_optional_endpoint não derruba o run.
+# Populam assim que o token com permissão financeira for usado.
+# (path, exige_data) — exige_data=True recebe data_start/data_end da janela.
 FINANCIAL_ENDPOINTS = {
-    "financeiro_contas": ("financial/accounts", False),       # (path, exige_data)
-    "financeiro_fornecedores": ("financial/suppliers", False),
-    "financeiro_faturas": ("financial/invoice", True),
+    # Transacionais (janela de data)
+    "financeiro_vendas": ("financial/sales-list", True),          # Listagem de Vendas (faturamento)
+    "financeiro_contas": ("financial/list-accounts", True),       # Listar contas (a pagar/receber)
+    "financeiro_repasses": ("financial/list-transfers", True),    # Repasses a profissionais
+    "financeiro_vouchers": ("financial/vouchers", True),          # Listagem de vouchers
+    # Dimensões (sem filtro de data)
+    "financeiro_fornecedores": ("financial/list-providers", False),
+    "financeiro_plano_contas": ("financial/chart-accounts", False),
+    "financeiro_centros_custo": ("financial/cost-centers", False),
+    "financeiro_conta_corrente": ("financial/current-accounts", False),
+    "financeiro_tabelas_particulares": ("financial/private-tables", False),
 }
 
 # Chaves onde a Feegow costuma entregar a lista de itens.

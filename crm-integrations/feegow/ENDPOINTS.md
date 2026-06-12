@@ -83,14 +83,22 @@ Join: `agendamentos.status_id` → `status.id`. **`motivos`** (`{id, motivo}`): 
   ou `paciente_cpf` (422: *"O campo paciente id é obrigatório quando paciente cpf
   não está presente"*). Mantido só por compat.
 
-### Financeiro — OPCIONAL (módulo pode não estar habilitado)
+### Financeiro — OPCIONAL (paths conforme doc oficial docs.feegow.com)
 | Tabela | Endpoint | exige_data |
 |---|---|---|
-| `financeiro_contas` | `financial/accounts` | não |
-| `financeiro_fornecedores` | `financial/suppliers` | não |
-| `financeiro_faturas` | `financial/invoice` | sim |
+| `financeiro_vendas` | `financial/sales-list` | sim |
+| `financeiro_contas` | `financial/list-accounts` | sim |
+| `financeiro_repasses` | `financial/list-transfers` | sim |
+| `financeiro_vouchers` | `financial/vouchers` | sim |
+| `financeiro_fornecedores` | `financial/list-providers` | não |
+| `financeiro_plano_contas` | `financial/chart-accounts` | não |
+| `financeiro_centros_custo` | `financial/cost-centers` | não |
+| `financeiro_conta_corrente` | `financial/current-accounts` | não |
+| `financeiro_tabelas_particulares` | `financial/private-tables` | não |
 
-⚠️ Na licença testada (**36514**) **todos** os `financial/*` retornam **HTTP 422 com `message` vazio**, em qualquer variação de parâmetro/caminho — assinatura de **módulo financeiro não habilitado**. Tratados via `process_optional_endpoint`: logam aviso e **não derrubam o run**. Voltam a popular se a clínica contratar o módulo e o token tiver escopo.
+⚠️ **Paths antigos (`financial/accounts`/`suppliers`/`invoice`) estavam ERRADOS** (chute inicial) — corrigidos via doc oficial.
+⚠️ **Distinção do 422:** mensagem **descritiva** = falta parâmetro; **`message:""` + `cod_erro:0`** = **token sem escopo financeiro** (não é módulo nem path). Confirmado: `financial/chart-accounts` (lista sem parâmetro) também dá 422 vazio com token sem permissão, enquanto endpoints não-financeiros respondem 200. Tratados via `process_optional_endpoint`: logam aviso e **não derrubam o run**. Populam quando o token tiver permissão financeira.
+⚠️ Nomes dos parâmetros de data dos transacionais ainda **a confirmar** com token de escopo (assumido `data_start`/`data_end` como nos demais).
 
 ---
 

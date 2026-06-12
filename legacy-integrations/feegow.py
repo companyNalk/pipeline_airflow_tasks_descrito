@@ -52,12 +52,21 @@ SIMPLE_ENDPOINTS = {
     "motivos": "appoints/motives",
 }
 
-# Módulo financeiro — OPCIONAL: na licença testada (36514) retornam HTTP 422
-# (módulo não habilitado). Tratados como best-effort, não derrubam a task.
+# Módulo financeiro — OPCIONAL (paths conforme doc oficial docs.feegow.com).
+# Se o token não tiver escopo financeiro: HTTP 422 com message:"" (sem permissão).
+# Best-effort: não derruba a task. Populam quando o token tiver permissão financeira.
 FINANCIAL_ENDPOINTS = {
-    "financeiro_contas": ("financial/accounts", False),       # (path, exige_data)
-    "financeiro_fornecedores": ("financial/suppliers", False),
-    "financeiro_faturas": ("financial/invoice", True),
+    # Transacionais (janela de data)
+    "financeiro_vendas": ("financial/sales-list", True),          # Listagem de Vendas (faturamento)
+    "financeiro_contas": ("financial/list-accounts", True),       # Listar contas (a pagar/receber)
+    "financeiro_repasses": ("financial/list-transfers", True),    # Repasses a profissionais
+    "financeiro_vouchers": ("financial/vouchers", True),          # Listagem de vouchers
+    # Dimensões (sem filtro de data)
+    "financeiro_fornecedores": ("financial/list-providers", False),
+    "financeiro_plano_contas": ("financial/chart-accounts", False),
+    "financeiro_centros_custo": ("financial/cost-centers", False),
+    "financeiro_conta_corrente": ("financial/current-accounts", False),
+    "financeiro_tabelas_particulares": ("financial/private-tables", False),
 }
 
 _LIST_KEYS = ("content", "data", "itens", "items", "registros")
