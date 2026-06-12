@@ -83,22 +83,32 @@ Join: `agendamentos.status_id` → `status.id`. **`motivos`** (`{id, motivo}`): 
   ou `paciente_cpf` (422: *"O campo paciente id é obrigatório quando paciente cpf
   não está presente"*). Mantido só por compat.
 
-### Financeiro — OPCIONAL (paths conforme doc oficial docs.feegow.com)
-| Tabela | Endpoint | exige_data |
-|---|---|---|
-| `financeiro_vendas` | `financial/sales-list` | sim |
-| `financeiro_contas` | `financial/list-accounts` | sim |
-| `financeiro_repasses` | `financial/list-transfers` | sim |
-| `financeiro_vouchers` | `financial/vouchers` | sim |
-| `financeiro_fornecedores` | `financial/list-providers` | não |
-| `financeiro_plano_contas` | `financial/chart-accounts` | não |
-| `financeiro_centros_custo` | `financial/cost-centers` | não |
-| `financeiro_conta_corrente` | `financial/current-accounts` | não |
-| `financeiro_tabelas_particulares` | `financial/private-tables` | não |
+### Financeiro READ-ONLY — VALIDADO na licença 36514 (12/06/2026)
 
-⚠️ **Paths antigos (`financial/accounts`/`suppliers`/`invoice`) estavam ERRADOS** (chute inicial) — corrigidos via doc oficial.
-⚠️ **Distinção do 422:** mensagem **descritiva** = falta parâmetro; **`message:""` + `cod_erro:0`** = **token sem escopo financeiro** (não é módulo nem path). Confirmado: `financial/chart-accounts` (lista sem parâmetro) também dá 422 vazio com token sem permissão, enquanto endpoints não-financeiros respondem 200. Tratados via `process_optional_endpoint`: logam aviso e **não derrubam o run**. Populam quando o token tiver permissão financeira.
-⚠️ Nomes dos parâmetros de data dos transacionais ainda **a confirmar** com token de escopo (assumido `data_start`/`data_end` como nos demais).
+**⚠️ Datas em ISO `YYYY-MM-DD`** (todo o resto da API é DD-MM-YYYY!). Dois envelopes:
+`financial/*` → `{success, content:[...]}`; `core/financial/*` → `{data:[...]}` paginado (page + perPage/limit, "version 3.0").
+
+**Transacionais** `financial/*` (janela ISO; nomes de param **inconsistentes** entre endpoints):
+| Tabela | Endpoint | Params | Obs |
+|---|---|---|---|
+| `financeiro_vendas` | `financial/list-sales` | `date_start`,`date_end`,**`unidade_id`** | varre todas as unidades. `{invoice_id,timestamp,amount,type}` |
+| `financeiro_repasses` | `financial/list-medical-transfer` | `data_start`,`data_end` | `{funcao,valor,associacao_id,conta_id,criado_em,situacao}` |
+
+**Dimensões** `financial/*` (sem params): `financeiro_fornecedores` = `financial/list-suppliers`; `financeiro_bandeiras_cartao` = `financial/credit-card-flags`.
+
+**`core/financial/*`** (paginado page+perPage/limit, lista em `data`):
+| Tabela | Endpoint |
+|---|---|
+| `financeiro_plano_contas` | `core/financial/base/financial-category` |
+| `financeiro_centro_custo` | `core/financial/base/cost-center` |
+| `financeiro_conta_corrente` | `core/financial/base/current-accounts` |
+| `financeiro_produtos` | `core/financial/base/product/list` |
+| `financeiro_estoque` | `core/financial/base/product/position` |
+| `financeiro_vouchers` | `core/financial/voucher/list` |
+
+**FORA (deliberado):** `financial/list-invoice` (exige `tipo_transacao` C/D/T + estrutura aninhada `{detalhes,pagamentos,itens}` — não encaixa no pipeline flat; revenue já vem de `list-sales`). `financial/dmed` (per-CPF, fiscal). Endpoints de escrita (create/pay/remove/voucher edit etc.) ignorados (read-only).
+
+⚠️ **Lição (12/06):** `422 {"success":false,"cod_erro":0,"message":""}` = **rota INEXISTENTE** (idêntico a `financial/banana`), NÃO falta de permissão. Os paths `sales-list`/`list-accounts`/`list-providers`/`chart-accounts` etc. (chutes/resumo impreciso) **não existem**. Sempre validar path real pela doc HTML crua de docs.feegow.com (tem as URLs embutidas) — o resumo via WebFetch erra os nomes.
 
 ---
 

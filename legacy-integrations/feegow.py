@@ -52,22 +52,32 @@ SIMPLE_ENDPOINTS = {
     "motivos": "appoints/motives",
 }
 
-# Módulo financeiro — OPCIONAL (paths conforme doc oficial docs.feegow.com).
-# Se o token não tiver escopo financeiro: HTTP 422 com message:"" (sem permissão).
-# Best-effort: não derruba a task. Populam quando o token tiver permissão financeira.
-FINANCIAL_ENDPOINTS = {
-    # Transacionais (janela de data)
-    "financeiro_vendas": ("financial/sales-list", True),          # Listagem de Vendas (faturamento)
-    "financeiro_contas": ("financial/list-accounts", True),       # Listar contas (a pagar/receber)
-    "financeiro_repasses": ("financial/list-transfers", True),    # Repasses a profissionais
-    "financeiro_vouchers": ("financial/vouchers", True),          # Listagem de vouchers
-    # Dimensões (sem filtro de data)
-    "financeiro_fornecedores": ("financial/list-providers", False),
-    "financeiro_plano_contas": ("financial/chart-accounts", False),
-    "financeiro_centros_custo": ("financial/cost-centers", False),
-    "financeiro_conta_corrente": ("financial/current-accounts", False),
-    "financeiro_tabelas_particulares": ("financial/private-tables", False),
-}
+# Módulo financeiro READ-ONLY (paths/params VALIDADOS via doc oficial + teste real).
+# Best-effort: rota inexistente devolve 422 message:"" — não derruba a task.
+# ⚠️ Datas em ISO YYYY-MM-DD (o resto da API usa DD-MM-YYYY!); dois envelopes
+#    (financial/* {content} | core/financial/* {data} paginado); list-sales exige unidade_id.
+CORE_PAGE_SIZE = 200
+
+# Transacionais financial/* {content}: (tabela, path, (param_ini, param_fim), needs_unidade)
+# (list-invoice fica de fora: exige tipo_transacao C/D/T e estrutura aninhada — revenue vem do list-sales.)
+FINANCIAL_TXN = [
+    ("financeiro_vendas",   "financial/list-sales",            ("date_start", "date_end"), True),
+    ("financeiro_repasses", "financial/list-medical-transfer", ("data_start", "data_end"), False),
+]
+# Dimensões financial/* {content}, sem params:
+FINANCIAL_SIMPLE = [
+    ("financeiro_fornecedores",     "financial/list-suppliers"),
+    ("financeiro_bandeiras_cartao", "financial/credit-card-flags"),
+]
+# core/financial/* {data}, paginado page + perPage/limit:
+FINANCIAL_CORE = [
+    ("financeiro_plano_contas",   "core/financial/base/financial-category"),
+    ("financeiro_centro_custo",   "core/financial/base/cost-center"),
+    ("financeiro_conta_corrente", "core/financial/base/current-accounts"),
+    ("financeiro_produtos",       "core/financial/base/product/list"),
+    ("financeiro_estoque",        "core/financial/base/product/position"),
+    ("financeiro_vouchers",       "core/financial/voucher/list"),
+]
 
 _LIST_KEYS = ("content", "data", "itens", "items", "registros")
 
@@ -179,6 +189,61 @@ def _fetch_all_pages(base_url, endpoint, headers, extra_params=None):
     return all_items
 
 
+def _get_iso_window(lookback_days):
+    """(date_start, date_end) em YYYY-MM-DD — formato do MÓDULO FINANCEIRO (ISO)."""
+    end = datetime.now()
+    start = end - timedelta(days=lookback_days)
+    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+
+
+def _get_unidade_ids(base_url, headers):
+    """unidade_id de todas as unidades (matriz + filiais) — list-sales exige unidade_id."""
+    payload = _get(base_url, "company/list-unity", headers, {})
+    content = payload.get("content", {}) if isinstance(payload, dict) else {}
+    ids = []
+    for group in ("matriz", "unidades"):
+        for u in (content.get(group) or []):
+            uid = u.get("unidade_id")
+            if uid is not None and uid not in ids:
+                ids.append(uid)
+    return ids or [0]
+
+
+def _fetch_financial_txn(base_url, headers, path, param_names, needs_unidade,
+                         iso_start, iso_end, unidade_ids):
+    """financial/* transacional ({content}): janela ISO; varre unidades se needs_unidade."""
+    p_ini, p_fim = param_names
+    targets = unidade_ids if needs_unidade else [None]
+    all_items = []
+    for uid in targets:
+        params = {p_ini: iso_start, p_fim: iso_end}
+        if uid is not None:
+            params["unidade_id"] = uid
+        items = _extract_items(_get(base_url, path, headers, params))
+        for it in items:
+            if uid is not None and isinstance(it, dict):
+                it.setdefault("unidade_id", uid)
+        all_items.extend(items)
+    return all_items
+
+
+def _fetch_financial_core(base_url, headers, path, page_size=CORE_PAGE_SIZE):
+    """core/financial/* ({data:[...]}): paginado por page + perPage/limit."""
+    all_items, page = [], 1
+    while page <= MAX_PAGES_GUARD:
+        payload = _get(base_url, path, headers,
+                       {"page": page, "perPage": page_size, "limit": page_size})
+        items = _extract_items(payload)
+        if not items:
+            break
+        all_items.extend(items)
+        if len(items) < page_size:
+            break
+        page += 1
+        time.sleep(RATE_LIMIT_SLEEP)
+    return all_items
+
+
 def _save_to_gcs(customer, data, file_name):
     """Salva lista de dicts como CSV no GCS."""
     if not data:
@@ -257,27 +322,39 @@ def extract_agendamentos(customer):
 
 def extract_financeiro(customer):
     """
-    Módulo financeiro (OPCIONAL): contas, fornecedores e faturas.
+    Módulo financeiro READ-ONLY (OPCIONAL): vendas, repasses, fornecedores,
+    bandeiras de cartão, plano de contas, centro de custo, conta corrente,
+    produtos, estoque e vouchers.
 
-    Na licença testada (36514) a Feegow responde HTTP 422 (módulo não habilitado).
-    Best-effort: cada endpoint é tentado isoladamente; falhas só logam aviso e
-    NÃO interrompem a task.
+    Datas em ISO (YYYY-MM-DD). Best-effort: cada endpoint é tentado isoladamente;
+    falhas (incl. rota inexistente -> 422 message:"") só logam aviso e NÃO
+    interrompem a task.
     """
     start_time = time.time()
     base_url, headers = _base_and_headers(customer)
-    data_start, data_end = _get_date_window(customer.get("lookback_days", DEFAULT_LOOKBACK_DAYS))
+    lookback = customer.get("lookback_days", DEFAULT_LOOKBACK_DAYS)
+    iso_start, iso_end = _get_iso_window(lookback)
 
-    for table, (endpoint, needs_date) in FINANCIAL_ENDPOINTS.items():
+    try:
+        unidade_ids = _get_unidade_ids(base_url, headers)
+    except Exception as e:
+        logging.warning(f"[Feegow] não consegui listar unidades p/ financeiro ({e}); usando [0]")
+        unidade_ids = [0]
+
+    def _try(table, fetch_fn):
         try:
-            if needs_date:
-                data = _fetch_all_pages(base_url, endpoint, headers,
-                                        {"data_start": data_start, "data_end": data_end})
-            else:
-                data = _fetch_single(base_url, endpoint, headers)
-            _save_to_gcs(customer, data, table)
+            _save_to_gcs(customer, fetch_fn(), table)
         except Exception as e:
-            logging.warning(f"[Feegow] {table}: módulo financeiro indisponível/sem dados — "
+            logging.warning(f"[Feegow] {table}: financeiro indisponível/sem dados — "
                             f"pulando (opcional). Detalhe: {e}")
+
+    for table, path, pnames, needs_unidade in FINANCIAL_TXN:
+        _try(table, lambda p=path, pn=pnames, nu=needs_unidade: _fetch_financial_txn(
+            base_url, headers, p, pn, nu, iso_start, iso_end, unidade_ids))
+    for table, path in FINANCIAL_SIMPLE:
+        _try(table, lambda p=path: _fetch_single(base_url, p, headers))
+    for table, path in FINANCIAL_CORE:
+        _try(table, lambda p=path: _fetch_financial_core(base_url, headers, p))
 
     logging.info(f"[Feegow] Financeiro (opcional) concluído em {time.time() - start_time:.2f}s")
 

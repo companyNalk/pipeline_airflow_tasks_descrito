@@ -75,25 +75,41 @@ SIMPLE_ENDPOINTS = {
     "motivos": "appoints/motives",
 }
 
-# Endpoints do módulo financeiro (paths conforme doc oficial docs.feegow.com).
-# OPCIONAIS: se o token NÃO tiver escopo financeiro, retornam HTTP 422 com
-# `message:""` + `cod_erro:0` (assinatura de "sem permissão", != falta de parâmetro,
-# que vem com mensagem descritiva). process_optional_endpoint não derruba o run.
-# Populam assim que o token com permissão financeira for usado.
-# (path, exige_data) — exige_data=True recebe data_start/data_end da janela.
-FINANCIAL_ENDPOINTS = {
-    # Transacionais (janela de data)
-    "financeiro_vendas": ("financial/sales-list", True),          # Listagem de Vendas (faturamento)
-    "financeiro_contas": ("financial/list-accounts", True),       # Listar contas (a pagar/receber)
-    "financeiro_repasses": ("financial/list-transfers", True),    # Repasses a profissionais
-    "financeiro_vouchers": ("financial/vouchers", True),          # Listagem de vouchers
-    # Dimensões (sem filtro de data)
-    "financeiro_fornecedores": ("financial/list-providers", False),
-    "financeiro_plano_contas": ("financial/chart-accounts", False),
-    "financeiro_centros_custo": ("financial/cost-centers", False),
-    "financeiro_conta_corrente": ("financial/current-accounts", False),
-    "financeiro_tabelas_particulares": ("financial/private-tables", False),
-}
+# ---------------------------------------------------------------------------
+# Módulo financeiro (READ-ONLY). Paths/params VALIDADOS na licença 36514 via doc
+# oficial (docs.feegow.com) + teste real. Tudo OPCIONAL (process_optional_endpoint):
+# rota inexistente devolve 422 `message:""` (NÃO é falta de permissão — é "não existe").
+#
+# ⚠️ Particularidades (por isso não cabe no esquema genérico dos outros endpoints):
+#  - Datas em ISO **YYYY-MM-DD** (o resto da API usa DD-MM-YYYY!).
+#  - Dois envelopes: `financial/*` → {success, content:[...]}; `core/financial/*`
+#    → {data:[...]} PAGINADO (page/perPage|limit, "version 3.0").
+#  - Nomes de params inconsistentes entre endpoints (date_start vs data_start).
+#  - `list-sales` exige `unidade_id` → varremos todas as unidades.
+CORE_PAGE_SIZE = 200
+
+# Transacionais financial/* {content}: (name, path, (param_ini, param_fim), needs_unidade)
+# (financial/list-invoice fica de fora: exige tipo_transacao C/D/T e devolve estrutura
+#  ANINHADA {detalhes,pagamentos,itens} por nota — não encaixa no pipeline flat;
+#  o faturamento já vem flat em list-sales.)
+FINANCIAL_TXN = [
+    ("financeiro_vendas",   "financial/list-sales",            ("date_start", "date_end"), True),
+    ("financeiro_repasses", "financial/list-medical-transfer", ("data_start", "data_end"), False),
+]
+# Dimensões financial/* {content}, sem params:
+FINANCIAL_SIMPLE = [
+    ("financeiro_fornecedores",     "financial/list-suppliers"),
+    ("financeiro_bandeiras_cartao", "financial/credit-card-flags"),
+]
+# core/financial/* {data}, paginado page/perPage|limit:
+FINANCIAL_CORE = [
+    ("financeiro_plano_contas",   "core/financial/base/financial-category"),
+    ("financeiro_centro_custo",   "core/financial/base/cost-center"),
+    ("financeiro_conta_corrente", "core/financial/base/current-accounts"),
+    ("financeiro_produtos",       "core/financial/base/product/list"),
+    ("financeiro_estoque",        "core/financial/base/product/position"),
+    ("financeiro_vouchers",       "core/financial/voucher/list"),
+]
 
 # Chaves onde a Feegow costuma entregar a lista de itens.
 _LIST_KEYS = ("content", "data", "itens", "items", "registros")
@@ -254,6 +270,72 @@ def fetch_appointments(http_client, headers, lookback_days):
     return all_items
 
 
+def get_iso_window(lookback_days):
+    """(date_start, date_end) em YYYY-MM-DD — formato do MÓDULO FINANCEIRO (ISO)."""
+    end = datetime.now()
+    start = end - timedelta(days=lookback_days)
+    iso_start, iso_end = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+    logger.info(f"📅 Janela financeira (ISO): {iso_start} a {iso_end}")
+    return iso_start, iso_end
+
+
+def get_unidade_ids(http_client, headers):
+    """unidade_id de todas as unidades (matriz + filiais) via company/list-unity.
+    Necessário porque financial/list-sales exige unidade_id."""
+    payload = http_client.get("company/list-unity", headers=headers, params={},
+                              debug_info="unidades-ids")
+    content = payload.get("content", {}) if isinstance(payload, dict) else {}
+    ids = []
+    for group in ("matriz", "unidades"):
+        for u in (content.get(group) or []):
+            uid = u.get("unidade_id")
+            if uid is not None and uid not in ids:
+                ids.append(uid)
+    logger.info(f"🏥 unidades para varredura financeira: {ids or [0]}")
+    return ids or [0]
+
+
+def fetch_financial_txn(http_client, headers, path, param_names, needs_unidade,
+                        iso_start, iso_end, unidade_ids):
+    """Endpoint financeiro transacional (financial/* -> {content}). Janela ISO;
+    quando needs_unidade, varre todas as unidades (list-sales exige unidade_id)."""
+    p_ini, p_fim = param_names
+    targets = unidade_ids if needs_unidade else [None]
+    all_items = []
+    for uid in targets:
+        params = {p_ini: iso_start, p_fim: iso_end}
+        if uid is not None:
+            params["unidade_id"] = uid
+        items = _extract_items(http_client.get(path, headers=headers, params=params,
+                                               debug_info=f"{path}:u{uid}"))
+        for it in items:
+            if uid is not None and isinstance(it, dict):
+                it.setdefault("unidade_id", uid)
+        all_items.extend(items)
+    return all_items
+
+
+def fetch_financial_core(http_client, headers, path, page_size=CORE_PAGE_SIZE):
+    """Endpoint core/financial/* (-> {data:[...]}): paginado por page + perPage/limit.
+    Envia ambos perPage e limit (cada endpoint ignora o que não usa)."""
+    all_items = []
+    page = 1
+    while page <= MAX_PAGES_GUARD:
+        payload = http_client.get(
+            path, headers=headers,
+            params={"page": page, "perPage": page_size, "limit": page_size},
+            debug_info=f"{path}:p{page}")
+        items = _extract_items(payload)
+        if not items:
+            break
+        all_items.extend(items)
+        if len(items) < page_size:
+            break
+        page += 1
+    logger.info(f"✅ {path}: {len(all_items)} itens ({page} páginas)")
+    return all_items
+
+
 def process_endpoint(name, fetch_fn):
     """Executa a coleta de um endpoint e devolve (dados, stats)."""
     try:
@@ -361,7 +443,6 @@ def main():
         args = get_arguments()
         api_base_url = args.API_BASE_URL.rstrip('/')
         data_start, data_end = get_date_window(args.LOOKBACK_DAYS)
-        date_params = {"data_start": data_start, "data_end": data_end}
 
         # 2. Cliente HTTP + rate limiter + headers
         rate_limiter = RateLimiter(requests_per_window=RATE_LIMIT, logger=logger)
@@ -380,13 +461,25 @@ def main():
             "agendamentos", lambda: fetch_appointments(http_client, headers, args.LOOKBACK_DAYS)
         )
 
-        # 4b. Módulo financeiro (OPCIONAL — não derruba o run se indisponível)
-        for name, (path, needs_date) in FINANCIAL_ENDPOINTS.items():
-            params = date_params if needs_date else None
+        # 4b. Módulo financeiro READ-ONLY (OPCIONAL — não derruba o run).
+        #     Datas ISO; vendas varrem todas as unidades; core/* é paginado.
+        iso_start, iso_end = get_iso_window(args.LOOKBACK_DAYS)
+        unidade_ids = get_unidade_ids(http_client, headers)
+
+        for name, path, pnames, needs_unidade in FINANCIAL_TXN:
             _, stats = process_optional_endpoint(
-                name, lambda p=path, pa=params: fetch_all_pages(http_client, p, headers, pa)
-                if pa else fetch_single(http_client, p, headers)
-            )
+                name, lambda p=path, pn=pnames, nu=needs_unidade: fetch_financial_txn(
+                    http_client, headers, p, pn, nu, iso_start, iso_end, unidade_ids))
+            endpoint_stats[name] = stats
+
+        for name, path in FINANCIAL_SIMPLE:
+            _, stats = process_optional_endpoint(
+                name, lambda p=path: fetch_single(http_client, p, headers))
+            endpoint_stats[name] = stats
+
+        for name, path in FINANCIAL_CORE:
+            _, stats = process_optional_endpoint(
+                name, lambda p=path: fetch_financial_core(http_client, headers, p))
             endpoint_stats[name] = stats
 
         # 5. Pacientes (estratégia configurável; default = list via patient/list,
