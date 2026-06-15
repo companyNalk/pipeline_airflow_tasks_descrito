@@ -1,0 +1,28 @@
+services:
+  contaazul-callback:
+    build: .
+    container_name: contaazul-callback
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data            # refresh_token.txt persiste aqui
+    expose:
+      - "8010"                  # interno; quem expõe pra internet é o cloudflared
+    networks:
+      - ca-net
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: contaazul-cloudflared
+    restart: unless-stopped
+    # Tunnel via token (criado no painel Cloudflare Zero Trust).
+    # No painel, mapeie o public hostname -> http://contaazul-callback:8010
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    depends_on:
+      - contaazul-callback
+    networks:
+      - ca-net
+
+networks:
+  ca-net:
+    driver: bridge
